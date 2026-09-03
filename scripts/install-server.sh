@@ -44,6 +44,7 @@ if not sub2api_key:
 content = (
     f"QQ_APP_ID={qq_values['QQ_APP_ID']}\n"
     f"QQ_CLIENT_SECRET={qq_values['QQ_CLIENT_SECRET']}\n"
+    "QQ_SANDBOX=true\n"
     f"SUB2API_API_KEY={sub2api_key}\n"
 )
 target.write_text(content, encoding="utf-8")

@@ -6,6 +6,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 - `QQ_APP_ID`：Hermes QQ Bot 适配器使用的 AppID。
 - `QQ_CLIENT_SECRET`：Hermes QQ Bot 适配器使用的 AppSecret。
+- `QQ_SANDBOX`：开发体验阶段启用 QQ 官方沙箱 API；当前固定为 `true`。
 - `SUB2API_API_KEY`：为 Hermes 单独签发的 Sub2API key；内部地址保存在非秘密配置中。
 - 本机真实参数保存在 `.env.local`，该文件被 Git 忽略，禁止提交。
 - 可提交的字段模板见 `.env.example`。
@@ -22,7 +23,9 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 Hermes 仅展示这三个 Sub2API 模型。主模型和备用 1 使用 Chat Completions 协议，备用 2 使用 Responses 协议。
 
-QQ 私聊和群聊均采用 `pairing` 策略。首次发送消息后，需要在服务器上批准配对请求；未批准的 QQ 用户不能使用机器人。
+QQ 私聊和群聊均采用 `pairing` 策略。首次发送私聊消息后，需要在服务器上批准配对请求；未批准的 QQ 用户不能使用机器人。QQ 开放平台中的数字 QQ 号用于“开发体验号”资格；Hermes 运行时白名单使用入站事件提供的用户/群 OpenID，二者不可混用。
+
+官方 Hermes Agent v0.21.0 镜像声明了 `QQ_SANDBOX`，但其 QQBot 常量仍固定指向生产 API。本仓库只读挂载 `overrides/qqbot-constants.py`，让该开关选择 QQ 官方沙箱 API；机器人发布后应关闭沙箱并移除此覆盖。
 
 生产目录：
 
