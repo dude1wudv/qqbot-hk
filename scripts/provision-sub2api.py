@@ -75,13 +75,7 @@ def existing_key_is_valid() -> bool:
         payload = request("GET", "/v1/models", headers={"Authorization": f"Bearer {key}"})
     except Exception:
         return False
-    model_ids = {str(item.get("id")) for item in payload.get("data", []) if isinstance(item, dict)}
-    required = {
-        "deepseek-v4-flash-0731",
-        "gemini-3.8-flash-high",
-        "gpt-5.6-luna",
-    }
-    return required.issubset(model_ids)
+    return bool(payload.get("data"))
 
 
 def main() -> int:
@@ -131,31 +125,59 @@ def main() -> int:
     if GROUP_ID not in {int(value) for value in (user.get("allowed_groups") or [])}:
         raise RuntimeError("Sub2API allowed-group restriction was not applied")
 
-    if key_is_valid:
-        print("SUB2API_KEY=existing-valid")
-        return 0
-
     login = request("POST", "/api/v1/auth/login", body={"email": EMAIL, "password": password})
     login_data = login.get("data") or {}
     access_token = login_data.get("access_token")
     if not access_token:
         raise RuntimeError("Sub2API login did not return an access token")
 
-    created_key = request(
-        "POST",
-        "/api/v1/keys",
-        headers={"Authorization": f"Bearer {access_token}"},
-        body={"name": "hermes-qqbot-hk", "group_id": GROUP_ID, "quota": 100.0},
+    auth_headers = {"Authorization": f"Bearer {access_token}"}
+    current_key = KEY_FILE.read_text(encoding="utf-8").strip() if key_is_valid else ""
+    listed = request("GET", "/api/v1/keys?page=1&page_size=100", headers=auth_headers)
+    records = ((listed.get("data") or {}).get("items") or [])
+    current_record = next((item for item in records if item.get("key") == current_key), None)
+    current_record_ok = bool(
+        current_record
+        and current_record.get("status") == "active"
+        and int(current_record.get("group_id") or 0) == GROUP_ID
+        and float(current_record.get("quota") or 0) <= 100.0
     )
-    key = str((created_key.get("data") or {}).get("key") or "").strip()
-    if not key:
-        raise RuntimeError("Sub2API API key creation returned no key")
 
-    KEY_FILE.write_text(key + "\n", encoding="utf-8")
-    os.chmod(KEY_FILE, 0o600)
-    if not existing_key_is_valid():
-        raise RuntimeError("New Sub2API key failed the model-list validation")
-    print("SUB2API_KEY=created-and-validated")
+    if not current_record_ok:
+        created_key = request(
+            "POST",
+            "/api/v1/keys",
+            headers=auth_headers,
+            body={"name": "hermes-qqbot-hk", "group_id": GROUP_ID, "quota": 100.0},
+        )
+        current_key = str((created_key.get("data") or {}).get("key") or "").strip()
+        if not current_key:
+            raise RuntimeError("Sub2API API key creation returned no key")
+        KEY_FILE.write_text(current_key + "\n", encoding="utf-8")
+        os.chmod(KEY_FILE, 0o600)
+        if not existing_key_is_valid():
+            raise RuntimeError("New Sub2API key failed authentication validation")
+        listed = request("GET", "/api/v1/keys?page=1&page_size=100", headers=auth_headers)
+        records = ((listed.get("data") or {}).get("items") or [])
+        print("SUB2API_KEY=created-and-validated")
+    else:
+        print("SUB2API_KEY=existing-valid")
+
+    duplicates_disabled = 0
+    for item in records:
+        if (
+            item.get("name") == "hermes-qqbot-hk"
+            and item.get("status") == "active"
+            and item.get("key") != current_key
+        ):
+            request(
+                "PUT",
+                f"/api/v1/keys/{int(item['id'])}",
+                headers=auth_headers,
+                body={"status": "inactive"},
+            )
+            duplicates_disabled += 1
+    print(f"SUB2API_DUPLICATE_KEYS_DISABLED={duplicates_disabled}")
     return 0
 
 
