@@ -11,7 +11,7 @@ health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}
 test "$state" = "running"
 test "$health" = "healthy"
 
-docker exec hermes-qqbot python - <<'PY'
+docker exec -i hermes-qqbot python - <<'PY'
 import json
 import os
 import urllib.request
