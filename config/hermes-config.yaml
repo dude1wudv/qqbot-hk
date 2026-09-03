@@ -1,0 +1,41 @@
+_config_version: 12
+
+model:
+  provider: sub2api
+  default: gpt-5.6-luna
+  api_mode: codex_responses
+  context_length: 330000
+  streaming: true
+
+providers:
+  sub2api:
+    base_url: http://sub2api:8080/v1
+    key_env: SUB2API_API_KEY
+    api_mode: codex_responses
+    discover_models: true
+    models:
+      gpt-5.6-luna:
+        context_length: 330000
+      gpt-5.6-terra:
+        context_length: 372000
+      gpt-5.6-sol:
+        context_length: 372000
+
+platforms:
+  qqbot:
+    enabled: true
+    extra:
+      dm_policy: pairing
+      group_policy: pairing
+      markdown_support: false
+
+terminal:
+  backend: local
+
+tool_loop_guardrails:
+  non_interactive_hard_stop_enabled: true
+
+updates:
+  pre_update_backup: quick
+  backup_keep: 5
+  non_interactive_local_changes: stash

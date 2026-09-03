@@ -1,0 +1,30 @@
+services:
+  hermes-qqbot:
+    image: nousresearch/hermes-agent@sha256:76d5d17a201bb623268c02d43e397925e8f0127eb29b2e00fc48632d74945b05
+    container_name: hermes-qqbot
+    restart: unless-stopped
+    command: ["gateway", "run"]
+    environment:
+      HERMES_UID: "10000"
+      HERMES_GID: "10000"
+    volumes:
+      - /opt/qqbot-hk-deploy/hermes-data:/opt/data
+    networks:
+      - sub2api-network
+    shm_size: 1gb
+    mem_limit: 3g
+    cpus: 2.0
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "hermes gateway status >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+networks:
+  sub2api-network:
+    external: true
+    name: sub2api_sub2api-network
