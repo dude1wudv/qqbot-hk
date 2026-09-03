@@ -40,7 +40,7 @@ def request(method: str, path: str, *, headers: dict[str, str] | None = None, bo
                 message += f": {public_message}"
         except Exception:
             pass
-        raise RuntimeError(message) from exc
+        raise RuntimeError(f"{method} {path}: {message}") from exc
 
 
 def admin_key() -> str:
@@ -126,7 +126,7 @@ def main() -> int:
 
     created_key = request(
         "POST",
-        "/api/v1/api-keys",
+        "/api/v1/keys",
         headers={"Authorization": f"Bearer {access_token}"},
         body={"name": "hermes-qqbot-hk", "group_id": GROUP_ID, "quota": 100.0},
     )
