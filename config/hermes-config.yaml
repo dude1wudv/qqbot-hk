@@ -2,24 +2,43 @@ _config_version: 12
 
 model:
   provider: sub2api
-  default: gpt-5.6-luna
-  api_mode: codex_responses
-  context_length: 330000
+  default: deepseek-v4-flash-0731
+  api_mode: chat_completions
+  context_length: 1000000
   streaming: true
 
 providers:
   sub2api:
     base_url: http://sub2api:8080/v1
     key_env: SUB2API_API_KEY
-    api_mode: codex_responses
-    discover_models: true
+    api_mode: chat_completions
+    discover_models: false
     models:
+      deepseek-v4-flash-0731:
+        context_length: 1000000
+      gemini-3.8-flash-high:
+        context_length: 1048576
       gpt-5.6-luna:
         context_length: 330000
-      gpt-5.6-terra:
-        context_length: 372000
-      gpt-5.6-sol:
-        context_length: 372000
+
+fallback_providers:
+  - provider: sub2api
+    model: gemini-3.8-flash-high
+    base_url: http://sub2api:8080/v1
+    key_env: SUB2API_API_KEY
+    api_mode: chat_completions
+  - provider: sub2api
+    model: gpt-5.6-luna
+    base_url: http://sub2api:8080/v1
+    key_env: SUB2API_API_KEY
+    api_mode: codex_responses
+
+agent:
+  reasoning_effort: medium
+  reasoning_overrides:
+    deepseek-v4-flash-0731: low
+    gemini-3.8-flash-high: high
+    gpt-5.6-luna: medium
 
 platforms:
   qqbot:

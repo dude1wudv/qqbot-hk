@@ -6,8 +6,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 - `QQ_APP_ID`：Hermes QQ Bot 适配器使用的 AppID。
 - `QQ_CLIENT_SECRET`：Hermes QQ Bot 适配器使用的 AppSecret。
-- `OPENAI_BASE_URL`：Sub2API 的 OpenAI 兼容入口。
-- `OPENAI_API_KEY`：为 Hermes 单独签发的 Sub2API key。
+- `SUB2API_API_KEY`：为 Hermes 单独签发的 Sub2API key；内部地址保存在非秘密配置中。
 - 本机真实参数保存在 `.env.local`，该文件被 Git 忽略，禁止提交。
 - 可提交的字段模板见 `.env.example`。
 
@@ -15,7 +14,13 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 ## 当前状态
 
-部署基于官方 `Hermes Agent v0.21.0 (2026.8.31)` 镜像，并固定到镜像摘要。容器不开放宿主机或公网端口，只加入现有的 `sub2api_sub2api-network`，默认模型为 `gpt-5.6-luna`，同时登记 `gpt-5.6-sol` 和 `gpt-5.6-terra`。
+部署基于官方 `Hermes Agent v0.21.0 (2026.8.31)` 镜像，并固定到镜像摘要。容器不开放宿主机或公网端口，只加入现有的 `sub2api_sub2api-network`。三种模型都通过 0.25 倍率的 `ChatGPT-Pro 20×【Luna 可用】` 分组（group 81）调用：
+
+1. 主模型：`deepseek-v4-flash-0731`，推理强度 `low`。
+2. 备用 1：`gemini-3.8-flash-high`，推理强度 `high`。
+3. 备用 2：`gpt-5.6-luna`，推理强度 `medium`。
+
+Hermes 仅展示这三个 Sub2API 模型。主模型和备用 1 使用 Chat Completions 协议，备用 2 使用 Responses 协议。
 
 QQ 私聊和群聊均采用 `pairing` 策略。首次发送消息后，需要在服务器上批准配对请求；未批准的 QQ 用户不能使用机器人。
 

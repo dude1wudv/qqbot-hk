@@ -34,10 +34,10 @@ request = urllib.request.Request(
 with urllib.request.urlopen(request, timeout=20) as response:
     payload = json.load(response)
 models = {str(item.get("id")) for item in payload.get("data", []) if isinstance(item, dict)}
-for required in ("gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"):
+for required in ("deepseek-v4-flash-0731", "gemini-3.8-flash-high", "gpt-5.6-luna"):
     if required not in models:
         raise SystemExit(f"missing model: {required}")
-print("SUB2API_MODELS=validated")
+print("SUB2API_MODELS=deepseek-primary,gemini-fallback-1,luna-fallback-2")
 PY
 
 docker exec hermes-qqbot hermes config check >/dev/null

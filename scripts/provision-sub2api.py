@@ -76,16 +76,19 @@ def existing_key_is_valid() -> bool:
     except Exception:
         return False
     model_ids = {str(item.get("id")) for item in payload.get("data", []) if isinstance(item, dict)}
-    return "gpt-5.6-luna" in model_ids
+    required = {
+        "deepseek-v4-flash-0731",
+        "gemini-3.8-flash-high",
+        "gpt-5.6-luna",
+    }
+    return required.issubset(model_ids)
 
 
 def main() -> int:
     KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(KEY_FILE.parent, 0o700)
 
-    if existing_key_is_valid():
-        print("SUB2API_KEY=existing-valid")
-        return 0
+    key_is_valid = existing_key_is_valid()
 
     password = random_password()
     admin_headers = {"x-api-key": admin_key()}
@@ -115,8 +118,22 @@ def main() -> int:
         update_body = dict(user_body)
         update_body.pop("email", None)
         update_body.pop("role", None)
-        request("PUT", f"/api/v1/admin/users/{user_id}", headers=admin_headers, body=update_body)
+        updated = request("PUT", f"/api/v1/admin/users/{user_id}", headers=admin_headers, body=update_body)
+        user = updated.get("data") or {}
         print("SUB2API_USER=existing-updated")
+
+    if int(user.get("concurrency") or 0) != 2:
+        raise RuntimeError("Sub2API user concurrency limit was not applied")
+    if int(user.get("rpm_limit") or 0) != 30:
+        raise RuntimeError("Sub2API user RPM limit was not applied")
+    if not bool(user.get("restrict_public_groups")):
+        raise RuntimeError("Sub2API public-group restriction was not applied")
+    if GROUP_ID not in {int(value) for value in (user.get("allowed_groups") or [])}:
+        raise RuntimeError("Sub2API allowed-group restriction was not applied")
+
+    if key_is_valid:
+        print("SUB2API_KEY=existing-valid")
+        return 0
 
     login = request("POST", "/api/v1/auth/login", body={"email": EMAIL, "password": password})
     login_data = login.get("data") or {}
