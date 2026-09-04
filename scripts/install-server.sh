@@ -63,8 +63,8 @@ if not groups:
     raise SystemExit("QQ_GROUP_ALLOWED_USERS is empty")
 
 sandbox = qq_values.get("QQ_SANDBOX", "true").strip().lower()
-if sandbox not in {"true", "false"}:
-    raise SystemExit("QQ_SANDBOX must be true or false")
+if sandbox != "true":
+    raise SystemExit("dm_policy=open requires QQ_SANDBOX=true")
 
 sub2api_key = key_source.read_text(encoding="utf-8").strip()
 if not sub2api_key:
@@ -81,6 +81,7 @@ env_target.write_text(
     f"QQ_APP_ID={qq_values['QQ_APP_ID']}\n"
     f"QQ_CLIENT_SECRET={qq_values['QQ_CLIENT_SECRET']}\n"
     f"QQ_SANDBOX={sandbox}\n"
+    "QQ_ALLOW_ALL_USERS=true\n"
     f"QQ_GROUP_ALLOWED_USERS={','.join(groups)}\n"
     f"SUB2API_API_KEY={sub2api_key}\n",
     encoding="utf-8",

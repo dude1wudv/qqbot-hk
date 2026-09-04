@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
@@ -120,6 +121,14 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(decision.blocked)
         self.assertEqual(decision.source, "semantic_error")
+
+    def test_config_pins_qq_access_boundaries(self):
+        config = yaml.safe_load((ROOT / "config" / "hermes-config.yaml").read_text(encoding="utf-8"))
+        qq_extra = config["platforms"]["qqbot"]["extra"]
+        self.assertEqual(qq_extra["dm_policy"], "open")
+        self.assertEqual(qq_extra["group_policy"], "allowlist")
+        self.assertEqual(qq_extra["group_allow_from"], [])
+
 
 
 if __name__ == "__main__":

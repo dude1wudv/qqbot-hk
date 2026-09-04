@@ -116,6 +116,17 @@ if plugin is None or plugin.get("status") not in {"enabled", "loaded"}:
     raise SystemExit("smart_group_qq is not enabled")
 
 import yaml
+config = yaml.safe_load(Path("/opt/data/config.yaml").read_text(encoding="utf-8")) or {}
+qq_extra = (((config.get("platforms") or {}).get("qqbot") or {}).get("extra") or {})
+if qq_extra.get("dm_policy") != "open":
+    raise SystemExit("QQ DM policy is not open")
+if qq_extra.get("group_policy") != "allowlist":
+    raise SystemExit("QQ group policy is not allowlist")
+if env.get("QQ_SANDBOX", "").lower() != "true":
+    raise SystemExit("QQ sandbox mode is not enabled")
+if env.get("QQ_ALLOW_ALL_USERS", "").lower() != "true":
+    raise SystemExit("QQ sandbox DM opt-in is not enabled")
+
 declaration = yaml.safe_load(Path("/opt/data/smart-group-schedules.yaml").read_text(encoding="utf-8")) or {}
 enabled_ids = {
     item.get("id") for item in declaration.get("schedules", [])
@@ -141,6 +152,7 @@ gateway = json.loads(Path("/opt/data/gateway_state.json").read_text(encoding="ut
 qq = gateway.get("platforms", {}).get("qqbot", {})
 if gateway.get("gateway_state") != "running" or qq.get("state") != "connected":
     raise SystemExit("QQ gateway is not connected")
+print("DM_POLICY=open SANDBOX=true")
 print(f"GROUP_ALLOWLIST_COUNT={len(groups)}")
 print(f"PLUGIN_STATUS={plugin.get('status')}")
 print(f"OWNED_CRON_COUNT={len(owned)}")

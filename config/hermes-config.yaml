@@ -49,7 +49,7 @@ platforms:
   qqbot:
     enabled: true
     extra:
-      dm_policy: pairing
+      dm_policy: open
       group_policy: allowlist
       group_allow_from: []
       markdown_support: false

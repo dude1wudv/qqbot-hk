@@ -17,7 +17,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 部署固定使用 Hermes Agent v0.21.0 镜像摘要。容器不开放宿主机端口、不挂载 Docker socket，只加入 `sub2api_sub2api-network`。
 
-- 私聊：`pairing`。首次私聊返回配对码，管理员在服务器批准后才能使用。
+- 私聊：仅在 `QQ_SANDBOX=true` 时使用 `dm_policy: open`，并显式设置 Hermes 的 `QQ_ALLOW_ALL_USERS=true`；实际可发起私聊的人仍由 QQ 开放平台“开发体验号码”名单限制，无需 Hermes 配对。
 - 群聊：只接受 `QQ_GROUP_ALLOWED_USERS` 中群的 `@机器人 + 问题`。QQ 官方不投递未 @ 的普通群消息。
 - 同一群共享 Hermes 会话；私聊、其他群和当前群严格隔离。
 - QQ 工具集限制为 `web`、`vision`、`skills`、`todo`，不暴露 terminal/file/code execution。
@@ -51,11 +51,11 @@ bash /opt/qqbot-hk/scripts/install-server.sh
 bash /opt/qqbot-hk/scripts/verify-server.sh
 ```
 
-`install-server.sh` 会校验群白名单、把 OpenID 注入部署态配置、原子安装 SOUL/plugin/schedule/reconciler、只重建 `hermes-qqbot`、等待健康并运行 cron 对账。源码配置不含真实 OpenID。
+`install-server.sh` 会校验沙箱私聊边界和群白名单，把群 OpenID 注入部署态配置，写入 Hermes 的沙箱私聊 opt-in，原子安装 SOUL/plugin/schedule/reconciler，只重建 `hermes-qqbot`，等待健康并运行 cron 对账。源码配置不含真实 OpenID。
 
-`verify-server.sh` 验证三个模型、容器健康、QQ 网关连接、配置、插件加载、白名单计数、owned cron 数量和插件 SQLite 完整性；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证三个模型、容器健康、QQ 网关连接、沙箱私聊策略、配置、插件加载、白名单计数、owned cron 数量和插件 SQLite 完整性；不会输出 OpenID、消息正文或秘密。
 
-部署后用新群会话或 `/reset` 验证：白名单群 @ 可回复、非白名单群无回复、两名群成员共享上下文、关键词和审核各只发送一次。官方平台不支持用未 @ 消息作为验收输入。
+部署后先由 QQ 开放平台“开发体验号码”名单中的新用户直接私聊，确认无需配对即可回复；名单外账号应无法从沙箱测试通道发起有效会话。群聊再用新群会话或 `/reset` 验证：白名单群 @ 可回复、非白名单群无回复、两名群成员共享上下文、关键词和审核各只发送一次。官方平台不支持用未 @ 消息作为验收输入。
 
 ## 回滚
 
