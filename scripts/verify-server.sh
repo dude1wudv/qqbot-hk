@@ -124,6 +124,7 @@ import os
 from pathlib import Path
 import sqlite3
 import subprocess
+from datetime import datetime, timezone
 
 required = [
     Path("/opt/data/SOUL.md"),
@@ -157,14 +158,24 @@ if plugin is None or plugin.get("status") not in {"enabled", "loaded"}:
 import yaml
 config = yaml.safe_load(Path("/opt/data/config.yaml").read_text(encoding="utf-8")) or {}
 qq_extra = (((config.get("platforms") or {}).get("qqbot") or {}).get("extra") or {})
-if qq_extra.get("dm_policy") != "open":
-    raise SystemExit("QQ DM policy is not open")
+if qq_extra.get("dm_policy") != "pairing":
+    raise SystemExit("QQ DM policy is not pairing")
 if qq_extra.get("group_policy") != "allowlist":
     raise SystemExit("QQ group policy is not allowlist")
 if env.get("QQ_SANDBOX", "").lower() != "true":
     raise SystemExit("QQ sandbox mode is not enabled")
-if env.get("QQ_ALLOW_ALL_USERS", "").lower() != "true":
-    raise SystemExit("QQ sandbox DM opt-in is not enabled")
+if env.get("QQ_ALLOW_ALL_USERS", "").lower() in {"true", "1", "yes"}:
+    raise SystemExit("QQ allow-all bypass must be disabled while pairing is active")
+
+auto_pair = (((config.get("plugins") or {}).get("entries") or {}).get("smart_group_qq") or {}).get("settings", {}).get("auto_pair", {})
+until_raw = str(auto_pair.get("until_utc") or "")
+try:
+    until = datetime.fromisoformat(until_raw.replace("Z", "+00:00"))
+except ValueError as exc:
+    raise SystemExit("QQ auto-pair deadline is invalid") from exc
+if until.tzinfo is None or not auto_pair.get("enabled"):
+    raise SystemExit("QQ auto-pair window is not configured")
+auto_pair_state = "active" if datetime.now(timezone.utc) < until.astimezone(timezone.utc) else "expired"
 
 declaration = yaml.safe_load(Path("/opt/data/smart-group-schedules.yaml").read_text(encoding="utf-8")) or {}
 enabled_ids = {
@@ -202,7 +213,7 @@ gateway = json.loads(Path("/opt/data/gateway_state.json").read_text(encoding="ut
 qq = gateway.get("platforms", {}).get("qqbot", {})
 if gateway.get("gateway_state") != "running" or qq.get("state") != "connected":
     raise SystemExit("QQ gateway is not connected")
-print("DM_POLICY=open SANDBOX=true")
+print(f"DM_POLICY=pairing SANDBOX=true AUTO_PAIR={auto_pair_state} UNTIL_UTC={until_raw}")
 print(f"GROUP_ALLOWLIST_COUNT={len(groups)}")
 print(f"PLUGIN_STATUS={plugin.get('status')}")
 print(f"OWNED_CRON_COUNT={len(owned)}")

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Mapping
 
 from .commands import clean_text, help_text, parse_command, rules_text, status_text
+from .duty_roster import duty_roster_text
 from .formatter import format_for_qq, split_message
 from .knowledge import KnowledgeBase, KnowledgeError, kb_help_text, parse_kb_command
 from .memory import GroupMemory, normalize_member_message
@@ -422,6 +423,8 @@ def build_handler(ctx: Any, store: Store):
                     generated = summary_reply(group_id)
                 elif command.name == "rules":
                     reply = rules_text(settings)
+                elif command.name == "duty_roster":
+                    reply = duty_roster_text()
             else:
                 decision = policy.keyword(text)
                 if decision.replied:
@@ -532,8 +535,16 @@ def register(ctx: Any) -> None:
     except Exception:
         logger.exception("smart_group_qq storage initialization failed")
         return
+    from .auto_pair import build_auto_pair_handler
+
     handler = build_handler(ctx, store)
-    ctx.register_hook("pre_gateway_dispatch", handler)
+    auto_pair_handler = build_auto_pair_handler(ctx)
+
+    def pre_gateway_dispatch(**kwargs: Any):
+        auto_pair_handler(**kwargs)
+        return handler(**kwargs)
+
+    ctx.register_hook("pre_gateway_dispatch", pre_gateway_dispatch)
     ctx.register_hook("post_llm_call", handler.post_llm_call)
     try:
         install_nonmention_observer(handler.observe_nonmention, logger=logger)

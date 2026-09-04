@@ -70,7 +70,9 @@ platforms:
   qqbot:
     enabled: true
     extra:
-      dm_policy: open
+      # Unknown DMs reach Hermes' pairing gate. The plugin may approve them only
+      # during the explicit, expiring enrollment window below.
+      dm_policy: pairing
       group_policy: allowlist
       group_allow_from: []
       markdown_support: false
@@ -94,6 +96,9 @@ plugins:
       settings:
         status_model: deepseek-v4-flash-0731
         status_reasoning: low
+        auto_pair:
+          enabled: true
+          until_utc: "2026-09-05T08:00:00Z"
         keyword_replies:
           - id: bot-help
             match: exact

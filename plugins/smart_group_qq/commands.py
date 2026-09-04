@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 _MENTION = re.compile(r"(?:<@!?[^>]+>|^@\S+)\s*")
-_COMMAND = re.compile(r"^[／/]([A-Za-z]+)(?:\s+.*)?$")
-_ALIASES = {"clear": "reset"}
-_SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules"})
+_COMMAND = re.compile(r"^[／/]([A-Za-z]+|值日表)(?:\s+.*)?$")
+_ALIASES = {"clear": "reset", "值日表": "duty_roster"}
+_SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules", "duty_roster"})
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,8 @@ def help_text() -> str:
     return (
         "【群聊助手】\n"
         "/help 功能说明\n/reset 或 /clear 重置本群上下文\n"
-        "/status 运行状态\n/summary 本群近期互动摘要\n/rules 已启用规则"
+        "/status 运行状态\n/summary 本群近期互动摘要\n/rules 已启用规则\n"
+        "/值日表 查看本周轮值安排"
     )
 
 

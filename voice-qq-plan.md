@@ -182,7 +182,7 @@ docker compose run --rm --no-deps hermes-qqbot python /opt/hermes/verify-hermes-
 4. 在 `qqbot-hk` 提交、经代理推送精确 SHA；HK 构建固定 digest 的派生镜像，备份 Compose 与 `/opt/qqbot-hk-deploy/hermes-data/{config.yaml,SOUL.md,plugins}` 后只重建 `hermes-qqbot`。
 5. 运行扩展后的 `scripts/verify-server.sh`：检查派生镜像标签/摘要、补丁标记、五个语音环境变量存在性、TTS 配置、`tts` 工具集、Sub2API 两个音频端点可达、容器健康；只输出布尔值和计数。
 6. 使用新 QQ session 或 `/reset` 执行验收矩阵：
-   - QQ 开放平台“开发体验号码”名单中的好友直接发送语音，不 `@`、无需 pairing：Sub2API 产生一笔 Qwen ASR usage，机器人返回一条 QQ 原生语音。
+   - 已 pairing 的 QQ 好友直接发送语音，不 `@`：Sub2API 产生一笔 Qwen ASR usage，机器人返回一条 QQ 原生语音。
    - 白名单群 `@机器人` 后发送语音：同样识别并语音回复；不泄漏其他群/私聊上下文。
    - 群内未 `@` 语音：机器人收不到事件、无回复；这是官方边界，不记作失败。
    - 普通文本问题：只返回文本，不产生 TTS usage。

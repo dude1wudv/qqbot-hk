@@ -17,11 +17,12 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 部署固定使用 Hermes Agent v0.21.0 镜像摘要。容器不开放宿主机端口、不挂载 Docker socket，只加入 `sub2api_sub2api-network`。
 
-- 私聊：仅在 `QQ_SANDBOX=true` 时使用 `dm_policy: open`，并显式设置 Hermes 的 `QQ_ALLOW_ALL_USERS=true`；实际可发起私聊的人仍由 QQ 开放平台“开发体验号码”名单限制，无需 Hermes 配对。
+- 私聊：使用 Hermes `dm_policy: pairing`。截至 `2026-09-05T08:00:00Z` 的临时登记窗口内，QQ 私聊发送者会在中央鉴权前自动写入 pairing 批准名单并继续处理；窗口结束后，新的未批准用户恢复标准配对码流程。QQ 开放平台仍必须先实际投递该用户消息。
 - 群聊回复：只接受 `QQ_GROUP_ALLOWED_USERS` 中群的 `@机器人 + 问题`。若 QQ 开放平台已为机器人投递普通群消息，插件会旁听 `GROUP_MESSAGE_CREATE`，但该事件只进入本群记忆/检索链路，绝不触发回复、命令或普通 Agent 会话。
 - 同一群共享 Hermes 会话；私聊、其他群和当前群严格隔离。
 - QQ 工具集限制为 `web`、`vision`、`skills`、`todo`，不暴露 terminal/file/code execution。
-- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、AI 结构化长期记忆、非 @ 消息旁听、群知识库/RAG，以及 `/help`、`/reset`、`/clear`、`/status`、`/summary`、`/rules`、`/kb`。
+- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、AI 结构化长期记忆、非 @ 消息旁听、群知识库/RAG，以及 `/help`、`/reset`、`/clear`、`/status`、`/summary`、`/rules`、`/kb`、`/值日表`。
+- `@机器人 /值日表` 按北京时间即时计算本周日到周六的轮值安排；2026 年 9 月 13 日开始，每周日轮换一次，开始前显示首轮预告。该功能不依赖主动群发或模型调用。
 - `/summary` 使用模型生成本群摘要、话题、决定、待办和未决问题；每群独立持久化，`/reset` 只清理会话与记忆，不删除知识库。
 - `/kb add 标题 | 正文` 添加资料；`/kb list`、`/kb search 关键词`、`/kb remove 文档ID`、`/kb clear confirm` 管理本群知识。支持缓存目录中的 TXT/Markdown/CSV/JSON/YAML/XML/TOML/DOCX，PDF 需镜像提供 `pypdf`。
 - 审计表只保存动作元数据，不保存原消息或回复正文。
@@ -53,11 +54,11 @@ bash /opt/qqbot-hk/scripts/install-server.sh
 bash /opt/qqbot-hk/scripts/verify-server.sh
 ```
 
-`install-server.sh` 会校验沙箱私聊边界和群白名单，把群 OpenID 注入部署态配置，写入 Hermes 的沙箱私聊 opt-in，原子安装 SOUL/plugin/schedule/reconciler，只重建 `hermes-qqbot`，等待健康并运行 cron 对账。源码配置不含真实 OpenID。
+`install-server.sh` 会校验沙箱和群白名单，把群 OpenID 注入部署态配置，明确移除全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，只重建 `hermes-qqbot`，等待健康并运行 cron 对账。源码配置不含真实 OpenID。
 
 `verify-server.sh` 验证三个文本模型、Gemini/Luna 识图、容器健康、QQ 网关连接、沙箱私聊策略、配置、插件加载、白名单计数、owned cron 数量，以及插件 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
-部署后先由 QQ 开放平台“开发体验号码”名单中的新用户直接私聊，确认无需配对即可回复；名单外账号应无法从沙箱测试通道发起有效会话。群聊再用新群会话或 `/reset` 验证：白名单群 @ 可回复、非白名单群无回复、两名群成员共享上下文、关键词和审核各只发送一次。普通群消息能否被旁听取决于 QQ 开放平台对该机器人的消息事件权限/投递配置；代码不会绕过平台边界。平台确实投递时，再验证“非 @ 不回复，但下一次 @ 提问可引用其内容”。
+部署后先由 QQ 开放平台“开发体验号码”名单中的新用户直接私聊：在上述登记窗口内，首条消息应自动完成 pairing 并直接进入问答；窗口结束后，新的未批准用户应收到标准配对码。群聊再用新群会话或 `/reset` 验证：白名单群 @ 可回复、非白名单群无回复、两名群成员共享上下文、关键词和审核各只发送一次。普通群消息能否被旁听取决于 QQ 开放平台对该机器人的消息事件权限/投递配置；代码不会绕过平台边界。平台确实投递时，再验证“非 @ 不回复，但下一次 @ 提问可引用其内容”。
 
 ## 回滚
 

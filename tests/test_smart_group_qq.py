@@ -4,6 +4,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +73,22 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handler(item, self.gateway)["reason"], "duplicate")
         await asyncio.sleep(0)
         self.assertEqual(self.adapter.sent, [("group-a", "blocked", "msg-1")])
+
+    async def test_duty_roster_is_local_and_idempotent(self):
+        handler = build_handler(FakeContext(), self.store)
+        item = self.make_event("<@bot> /值日表", "roster-1")
+        expected = "【本周值日表｜2026年9月13日—9月19日】\n孙：轮休"
+
+        with patch("smart_group_qq.duty_roster_text", return_value=expected) as render:
+            first = handler(item, self.gateway)
+            second = handler(item, self.gateway)
+            await asyncio.sleep(0)
+
+        self.assertEqual(first["action"], "skip")
+        self.assertEqual(second["reason"], "duplicate")
+        self.assertEqual(render.call_count, 2)
+        render.assert_called_with()
+        self.assertEqual(self.adapter.sent, [("group-a", expected, "roster-1")])
 
     async def test_keyword_send_failure_fails_open_and_can_retry(self):
         self.adapter.success = False
@@ -170,9 +187,12 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(vision["model"], "gemini-3.8-flash-high")
         self.assertEqual(vision["fallback_chain"][0]["model"], "gpt-5.6-luna")
         qq_extra = config["platforms"]["qqbot"]["extra"]
-        self.assertEqual(qq_extra["dm_policy"], "open")
+        self.assertEqual(qq_extra["dm_policy"], "pairing")
         self.assertEqual(qq_extra["group_policy"], "allowlist")
         self.assertEqual(qq_extra["group_allow_from"], [])
+        auto_pair = config["plugins"]["entries"]["smart_group_qq"]["settings"]["auto_pair"]
+        self.assertTrue(auto_pair["enabled"])
+        self.assertEqual(auto_pair["until_utc"], "2026-09-05T08:00:00Z")
 
 
 class PolicyTests(unittest.IsolatedAsyncioTestCase):
