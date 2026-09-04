@@ -1,11 +1,13 @@
 name: smart_group_qq
-version: 1.0.0
-description: Hermes-native QQ group governance and memory plugin
+version: 1.1.0
+description: Hermes-native QQ group governance, AI memory, RAG and ambient observer
 entrypoint: __init__:register
 hooks:
   - pre_gateway_dispatch
+  - post_llm_call
 provides_hooks:
   - pre_gateway_dispatch
+  - post_llm_call
 settings_schema:
   type: object
   additionalProperties: true
