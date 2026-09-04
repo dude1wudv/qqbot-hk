@@ -20,7 +20,9 @@ for path in \
   test -e "$path" || { echo "ERROR: required deployment input missing" >&2; exit 1; }
 done
 
-install -d -m 0700 "$data_dir" "$data_dir/plugins" "$data_dir/scripts"
+install -d -o 10000 -g 10000 -m 0700 "$data_dir"
+install -d -o 10000 -g 10000 -m 0755 "$data_dir/plugins" "$data_dir/scripts" "$data_dir/plugin-data"
+install -d -o 10000 -g 10000 -m 0700 "$data_dir/plugin-data/smart_group_qq"
 stage_dir="$(mktemp -d "$data_dir/.smart-group-install.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
 
@@ -108,7 +110,7 @@ if test -d "$data_dir/plugins/smart_group_qq"; then
 fi
 mv "$stage_dir/smart_group_qq" "$data_dir/plugins/smart_group_qq"
 rm -rf "$data_dir/plugins/smart_group_qq.old"
-chown -R 10000:10000 "$data_dir/plugins/smart_group_qq" "$data_dir/scripts"
+chown -R 10000:10000 "$data_dir/plugins/smart_group_qq" "$data_dir/plugin-data/smart_group_qq" "$data_dir/scripts"
 chmod 0700 "$data_dir"
 chmod 0600 "$data_dir/.env"
 
