@@ -11,6 +11,12 @@ health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}
 test "$state" = "running"
 test "$health" = "healthy"
 
+image_id="$(docker inspect -f '{{.Image}}' "$container_id")"
+base_digest_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.hermes-base-digest"}}' "$image_id")"
+audio_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.audio-patch"}}' "$image_id")"
+test "$base_digest_label" = "sha256:76d5d17a201bb623268c02d43e397925e8f0127eb29b2e00fc48632d74945b05"
+test "$audio_patch_label" = "v1"
+
 docker exec -i hermes-qqbot python - <<'PY'
 import json
 import base64
@@ -43,6 +49,28 @@ def post(path, body):
             return json.load(response)
     except urllib.error.HTTPError as exc:
         raise SystemExit(f"{body.get('model')}: HTTP {exc.code}") from exc
+
+
+def assert_audio_route(path, content_type):
+    request = urllib.request.Request(
+        "http://sub2api:8080" + path,
+        data=b"{}",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": content_type},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15):
+            pass
+    except urllib.error.HTTPError as exc:
+        if exc.code in {404, 405}:
+            raise SystemExit(f"audio route missing: {path}") from exc
+        if exc.code >= 500:
+            raise SystemExit(f"audio route unhealthy: {path} HTTP {exc.code}") from exc
+
+
+assert_audio_route("/v1/audio/speech", "application/json")
+assert_audio_route("/v1/audio/transcriptions", "application/json")
+print("AUDIO_ROUTES=reachable")
 
 
 for model, effort in (
@@ -118,6 +146,7 @@ PY
 
 docker exec hermes-qqbot hermes config check >/dev/null
 docker exec hermes-qqbot hermes plugins doctor /opt/data/plugins/smart_group_qq --ci >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-audio.py --config /opt/data/config.yaml >/dev/null
 docker exec -i hermes-qqbot python - <<'PY'
 import json
 import os
@@ -148,6 +177,15 @@ for raw in Path("/opt/data/.env").read_text(encoding="utf-8").splitlines():
 groups = tuple(dict.fromkeys(item.strip() for item in env.get("QQ_GROUP_ALLOWED_USERS", "").split(",") if item.strip()))
 if not groups:
     raise SystemExit("QQ group allow-list is empty")
+if env.get("QQ_STT_PREFER_BUILTIN", "").lower() != "false":
+    raise SystemExit("QQ built-in STT preference must be disabled")
+for name in ("SUB2API_API_KEY", "QQ_STT_API_KEY", "VOICE_TOOLS_OPENAI_KEY"):
+    if not env.get(name):
+        raise SystemExit(f"required audio secret missing: {name}")
+if env["QQ_STT_API_KEY"] != env["SUB2API_API_KEY"] or env["VOICE_TOOLS_OPENAI_KEY"] != env["SUB2API_API_KEY"]:
+    raise SystemExit("audio secret wiring mismatch")
+if env.get("QQ_STT_BASE_URL") or env.get("QQ_STT_MODEL"):
+    raise SystemExit("QQ STT base URL/model must come from config.yaml, not environment")
 
 plugins = json.loads(subprocess.check_output(["hermes", "plugins", "list", "--json", "--no-bundled"], text=True))
 items = plugins if isinstance(plugins, list) else plugins.get("plugins", [])
@@ -224,10 +262,14 @@ print(f"OWNED_CRON_COUNT={len(owned)}")
 print(f"PLUGIN_DB_INTEGRITY=ok AUDIT_COUNT={audit_count}")
 print("PLUGIN_MEMORY_KB_SCHEMA=ok")
 print("QQ_GATEWAY=connected")
+print("AUDIO_ENV_WIRING=ok")
 PY
 docker exec hermes-qqbot hermes doctor >/tmp/hermes-qqbot-doctor.txt
 echo "CONTAINER_STATE=$state"
 echo "CONTAINER_HEALTH=$health"
+echo "HERMES_BASE_DIGEST=verified"
+echo "HERMES_AUDIO_PATCH=verified"
 echo "CONFIG_CHECK=passed"
+echo "AUDIO_SMOKE=passed"
 echo "PLUGIN_CHECK=passed"
 echo "DOCTOR=completed"

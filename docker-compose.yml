@@ -1,6 +1,9 @@
 services:
   hermes-qqbot:
-    image: nousresearch/hermes-agent@sha256:76d5d17a201bb623268c02d43e397925e8f0127eb29b2e00fc48632d74945b05
+    image: qqbot-hk/hermes-agent:v0.21.0-audio-v1
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: hermes-qqbot
     restart: unless-stopped
     command: ["gateway", "run"]

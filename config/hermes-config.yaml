@@ -66,6 +66,16 @@ auxiliary:
         timeout: 90
         reasoning_effort: medium
 
+voice:
+  auto_tts: true
+
+tts:
+  provider: openai
+  openai:
+    base_url: http://sub2api:8080/v1
+    model: qwen-audio-3.0-tts-plus
+    voice: longanhuan_v3.6
+
 platforms:
   qqbot:
     enabled: true
@@ -76,12 +86,17 @@ platforms:
       group_policy: allowlist
       group_allow_from: []
       markdown_support: false
+      stt:
+        provider: openai
+        baseUrl: http://sub2api:8080/v1
+        model: qwen-audio-3.0-asr-flash
 
 platform_toolsets:
   qqbot:
     - web
     - vision
     - skills
+    - tts
     - todo
 
 plugins:

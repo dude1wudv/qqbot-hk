@@ -62,6 +62,23 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["text"].endswith("[群成员:member]: hello"))
         self.assertNotIn("摘要后新增上下文", result["text"])
 
+    async def test_voice_transcript_keeps_group_policy_and_session_isolation(self):
+        handler = build_handler(FakeContext(), self.store)
+        voice = self.make_event("[Voice] 项目口令是北斗", "voice-1")
+        voice.message_type = "voice"
+        result = handler(voice, self.gateway)
+        self.assertEqual(result["action"], "rewrite")
+        self.assertIn("[群成员:member]: [Voice] 项目口令是北斗", result["text"])
+
+        other = self.make_event("这个群知道什么？", "other-1")
+        other.source.chat_id = "group-b"
+        other_result = handler(other, self.gateway)
+        self.assertNotIn("项目口令是北斗", other_result["text"])
+
+        dm = event("[Voice] 私聊内容", platform="qqbot", chat_type="dm")
+        dm.message_type = "voice"
+        self.assertEqual(handler(dm, self.gateway)["action"], "allow")
+
     async def test_static_precedes_keyword_and_is_idempotent(self):
         settings = {
             "moderation": {"static_rules": [{"id": "block", "match": "contains", "pattern": "bad", "notice": "blocked"}]},
@@ -190,6 +207,18 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(qq_extra["dm_policy"], "pairing")
         self.assertEqual(qq_extra["group_policy"], "allowlist")
         self.assertEqual(qq_extra["group_allow_from"], [])
+        self.assertEqual(qq_extra["stt"]["provider"], "openai")
+        self.assertEqual(qq_extra["stt"]["baseUrl"], "http://sub2api:8080/v1")
+        self.assertEqual(qq_extra["stt"]["model"], "qwen-audio-3.0-asr-flash")
+        self.assertNotIn("apiKey", qq_extra["stt"])
+        self.assertTrue(config["voice"]["auto_tts"])
+        self.assertEqual(config["tts"]["provider"], "openai")
+        self.assertEqual(config["tts"]["openai"]["base_url"], "http://sub2api:8080/v1")
+        self.assertEqual(config["tts"]["openai"]["model"], "qwen-audio-3.0-tts-plus")
+        self.assertEqual(config["tts"]["openai"]["voice"], "longanhuan_v3.6")
+        tools = set(config["platform_toolsets"]["qqbot"])
+        self.assertIn("tts", tools)
+        self.assertFalse(tools.intersection({"terminal", "file", "files", "code", "shell", "computer"}))
         auto_pair = config["plugins"]["entries"]["smart_group_qq"]["settings"]["auto_pair"]
         self.assertTrue(auto_pair["enabled"])
         self.assertEqual(auto_pair["until_utc"], "2026-09-05T08:00:00Z")

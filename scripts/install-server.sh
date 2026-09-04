@@ -10,11 +10,14 @@ service="hermes-qqbot"
 test "$(id -u)" -eq 0 || { echo "ERROR: run as root" >&2; exit 1; }
 for path in \
   "$project_dir/docker-compose.yml" \
+  "$project_dir/Dockerfile" \
   "$project_dir/config/hermes-config.yaml" \
   "$project_dir/config/SOUL.md" \
   "$project_dir/config/scheduled-messages.yaml" \
   "$project_dir/plugins/smart_group_qq/plugin.yaml" \
   "$project_dir/scripts/reconcile-smart-group-cron.py" \
+  "$project_dir/scripts/patch-hermes-audio.py" \
+  "$project_dir/scripts/verify-hermes-audio.py" \
   "$secrets_dir/qqbot.env" \
   "$secrets_dir/sub2api-api-key"; do
   test -e "$path" || { echo "ERROR: required deployment input missing" >&2; exit 1; }
@@ -77,7 +80,10 @@ env_target.write_text(
     f"QQ_APP_ID={qq_values['QQ_APP_ID']}\n"
     f"QQ_CLIENT_SECRET={qq_values['QQ_CLIENT_SECRET']}\n"
     f"QQ_GROUP_ALLOWED_USERS={','.join(groups)}\n"
-    f"SUB2API_API_KEY={sub2api_key}\n",
+    f"SUB2API_API_KEY={sub2api_key}\n"
+    "QQ_STT_PREFER_BUILTIN=false\n"
+    f"QQ_STT_API_KEY={sub2api_key}\n"
+    f"VOICE_TOOLS_OPENAI_KEY={sub2api_key}\n",
     encoding="utf-8",
 )
 os.chmod(env_target, 0o600)
@@ -111,7 +117,7 @@ chmod 0600 "$data_dir/.env"
 
 docker network inspect sub2api_sub2api-network >/dev/null
 docker compose -f "$project_dir/docker-compose.yml" config --quiet
-docker compose -f "$project_dir/docker-compose.yml" up -d --force-recreate --no-deps "$service"
+docker compose -f "$project_dir/docker-compose.yml" up -d --build --force-recreate --no-deps "$service"
 
 container_id="$(docker compose -f "$project_dir/docker-compose.yml" ps -q "$service")"
 test -n "$container_id"
