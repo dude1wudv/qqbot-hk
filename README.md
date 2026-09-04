@@ -6,10 +6,10 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 生产秘密位于 `/opt/qqbot-hk-deploy/secrets`，不得提交：
 
-- `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_SANDBOX`、`QQ_GROUP_ALLOWED_USERS`。
+- `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_GROUP_ALLOWED_USERS`。
 - `sub2api-api-key`：Hermes 专用 Sub2API key。
 - `QQ_GROUP_ALLOWED_USERS` 是逗号分隔的 QQ 群 OpenID；不能使用数字群号、用户 OpenID、空值或 `*`。
-- 开发体验阶段保持 `QQ_SANDBOX=true`。机器人完成发布后才切换生产 API。
+- 开发体验阶段也使用 QQ 官方生产 API/Gateway；开放平台按“开发体验用户”名单限制可访问账号。
 
 可提交占位模板见 `.env.example`。本机 `.env.local` 被 Git 忽略。
 
@@ -28,7 +28,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - 审计表只保存动作元数据，不保存原消息或回复正文。
 - QQ 群主动推送已受官方限制；`scheduled-messages.yaml` 中示例默认禁用。
 
-官方 Hermes v0.21.0 声明了 `QQ_SANDBOX`，但其 QQBot 常量仍固定指向生产 API。本仓库只读挂载 `overrides/qqbot-constants.py` 使该开关选择官方沙箱或生产 API；上游修复并完成生产发布后再移除覆盖。
+QQ 当前“开发体验用户”机制使用生产 API/Gateway，并由开放平台限制体验范围。不要设置旧的 `QQ_SANDBOX` 路由；它会使新增开发体验用户的 C2C 事件无法到达当前网关。
 
 ## 模型
 
@@ -54,9 +54,9 @@ bash /opt/qqbot-hk/scripts/install-server.sh
 bash /opt/qqbot-hk/scripts/verify-server.sh
 ```
 
-`install-server.sh` 会校验沙箱和群白名单，把群 OpenID 注入部署态配置，明确移除全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，只重建 `hermes-qqbot`，等待健康并运行 cron 对账。源码配置不含真实 OpenID。
+`install-server.sh` 会校验群白名单，把群 OpenID 注入部署态配置，明确移除旧沙箱路由和全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，只重建 `hermes-qqbot`，等待健康并运行 cron 对账。源码配置不含真实 OpenID。
 
-`verify-server.sh` 验证三个文本模型、Gemini/Luna 识图、容器健康、QQ 网关连接、沙箱私聊策略、配置、插件加载、白名单计数、owned cron 数量，以及插件 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证三个文本模型、Gemini/Luna 识图、容器健康、QQ 生产网关、私聊策略、配置、插件加载、白名单计数、owned cron 数量，以及插件 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
 部署后先由 QQ 开放平台“开发体验号码”名单中的新用户直接私聊：在上述登记窗口内，首条消息应自动完成 pairing 并直接进入问答；窗口结束后，新的未批准用户应收到标准配对码。群聊再用新群会话或 `/reset` 验证：白名单群 @ 可回复、非白名单群无回复、两名群成员共享上下文、关键词和审核各只发送一次。普通群消息能否被旁听取决于 QQ 开放平台对该机器人的消息事件权限/投递配置；代码不会绕过平台边界。平台确实投递时，再验证“非 @ 不回复，但下一次 @ 提问可引用其内容”。
 

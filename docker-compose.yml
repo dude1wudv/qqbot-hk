@@ -9,7 +9,6 @@ services:
       HERMES_GID: "10000"
     volumes:
       - /opt/qqbot-hk-deploy/hermes-data:/opt/data
-      - /opt/qqbot-hk/overrides/qqbot-constants.py:/opt/hermes/gateway/platforms/qqbot/constants.py:ro
     networks:
       - sub2api-network
     shm_size: 1gb

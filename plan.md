@@ -296,7 +296,7 @@ docker run --rm \
 修改 `qqbot-hk/scripts/verify-server.sh`，保留现有三模型真实探针，并新增：
 
 - `/opt/data/SOUL.md`、plugin manifest/code、schedule YAML、reconciler 存在且归属 10000；不输出内容。
-- `/opt/data/.env` 中 `QQ_GROUP_ALLOWED_USERS` 存在且非空、`QQ_SANDBOX=true`，并且未启用 `QQ_ALLOW_ALL_USERS`；部署态 `dm_policy=pairing`、`group_policy=allowlist`。只输出策略、布尔值和数量，不输出真实值。
+- `/opt/data/.env` 中 `QQ_GROUP_ALLOWED_USERS` 存在且非空、不含旧 `QQ_SANDBOX` 路由，并且未启用 `QQ_ALLOW_ALL_USERS`；运行时 `API_BASE` 必须是 `https://api.sgroup.qq.com`，部署态 `dm_policy=pairing`、`group_policy=allowlist`。只输出策略、布尔值和数量，不输出真实值。
 - `hermes config check` 成功；plugin manager 报告 `smart_group_qq` enabled/loaded。
 - 直接查询 `cron.jobs.list_jobs(include_disabled=True)`，确认 expected owned job 数 = enabled schedules × unique allowed groups，name 唯一、`no_agent=true`、delivery platform 为 qqbot；只输出计数和 schedule id。
 - SQLite schema/`PRAGMA integrity_check` 成功；只输出状态和行数。
@@ -316,7 +316,7 @@ docker run --rm \
    - 关键词样例：收到一次固定回复，模型调用计数不增加。
    - 若决定开启语义审核：先在单一测试群开启，验证 allow/block/阈值/超时，再扩到全部白名单群。
    - `hermes cron run <owned-job-name>` 强制触发一条固定公告；目标群只收到一次，Hermes execution ledger 为 success。
-7. 观察至少一个 QQ WebSocket reconnect 周期，确认 reconnect 后沙箱私聊边界、群白名单、plugin 和 cron 仍有效。
+7. 观察至少一个 QQ WebSocket reconnect 周期，确认 reconnect 后开发体验用户边界、群白名单、plugin 和 cron 仍有效。
 
 ## 回滚
 

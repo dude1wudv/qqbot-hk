@@ -194,6 +194,13 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(auto_pair["enabled"])
         self.assertEqual(auto_pair["until_utc"], "2026-09-05T08:00:00Z")
 
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertNotIn("qqbot-constants.py", compose)
+        installer = (ROOT / "scripts" / "install-server.sh").read_text(encoding="utf-8")
+        self.assertNotIn("QQ_SANDBOX", installer)
+        verifier = (ROOT / "scripts" / "verify-server.sh").read_text(encoding="utf-8")
+        self.assertIn('API_BASE.rstrip("/") != "https://api.sgroup.qq.com"', verifier)
+
 
 class PolicyTests(unittest.IsolatedAsyncioTestCase):
     def test_invalid_rule_config_fails_open(self):

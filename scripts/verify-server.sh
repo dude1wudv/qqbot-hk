@@ -162,10 +162,14 @@ if qq_extra.get("dm_policy") != "pairing":
     raise SystemExit("QQ DM policy is not pairing")
 if qq_extra.get("group_policy") != "allowlist":
     raise SystemExit("QQ group policy is not allowlist")
-if env.get("QQ_SANDBOX", "").lower() != "true":
-    raise SystemExit("QQ sandbox mode is not enabled")
+if "QQ_SANDBOX" in env:
+    raise SystemExit("deprecated QQ sandbox routing must not be enabled")
 if env.get("QQ_ALLOW_ALL_USERS", "").lower() in {"true", "1", "yes"}:
     raise SystemExit("QQ allow-all bypass must be disabled while pairing is active")
+
+from gateway.platforms.qqbot.constants import API_BASE
+if API_BASE.rstrip("/") != "https://api.sgroup.qq.com":
+    raise SystemExit("QQ API base is not the production gateway")
 
 auto_pair = (((config.get("plugins") or {}).get("entries") or {}).get("smart_group_qq") or {}).get("settings", {}).get("auto_pair", {})
 until_raw = str(auto_pair.get("until_utc") or "")
@@ -213,7 +217,7 @@ gateway = json.loads(Path("/opt/data/gateway_state.json").read_text(encoding="ut
 qq = gateway.get("platforms", {}).get("qqbot", {})
 if gateway.get("gateway_state") != "running" or qq.get("state") != "connected":
     raise SystemExit("QQ gateway is not connected")
-print(f"DM_POLICY=pairing SANDBOX=true AUTO_PAIR={auto_pair_state} UNTIL_UTC={until_raw}")
+print(f"DM_POLICY=pairing API_BASE=production AUTO_PAIR={auto_pair_state} UNTIL_UTC={until_raw}")
 print(f"GROUP_ALLOWLIST_COUNT={len(groups)}")
 print(f"PLUGIN_STATUS={plugin.get('status')}")
 print(f"OWNED_CRON_COUNT={len(owned)}")
