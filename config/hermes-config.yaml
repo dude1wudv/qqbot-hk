@@ -1,5 +1,10 @@
 _config_version: 12
 
+timezone: Asia/Hong_Kong
+
+gateway:
+  group_sessions_per_user: false
+
 model:
   provider: sub2api
   default: deepseek-v4-flash-0731
@@ -45,8 +50,47 @@ platforms:
     enabled: true
     extra:
       dm_policy: pairing
-      group_policy: pairing
+      group_policy: allowlist
+      group_allow_from: []
       markdown_support: false
+
+platform_toolsets:
+  qqbot:
+    - web
+    - vision
+    - skills
+    - todo
+
+plugins:
+  enabled:
+    - smart_group_qq
+  entries:
+    smart_group_qq:
+      settings:
+        status_model: deepseek-v4-flash-0731
+        status_reasoning: low
+        keyword_replies:
+          - id: bot-help
+            match: exact
+            pattern: 机器人帮助
+            reply: 请发送 /help 查看本群可用功能。
+            enabled: true
+        moderation:
+          static_rules:
+            - id: credential-pattern
+              match: regex
+              pattern: '(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{16,})\b'
+              notice: 检测到疑似凭据，消息未提交给机器人。请立即撤回并轮换相关凭据。
+              enabled: true
+          semantic:
+            enabled: false
+            timeout_seconds: 5
+            min_confidence: 0.92
+            notice: 此消息未能通过群聊安全审核。
+        memory:
+          window_size: 20
+          idle_seconds: 1800
+          summary_chars: 200
 
 terminal:
   backend: local

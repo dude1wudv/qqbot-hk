@@ -78,8 +78,78 @@ print("MODEL=gpt-5.6-luna EFFORT=medium RESULT=OK")
 PY
 
 docker exec hermes-qqbot hermes config check >/dev/null
+docker exec hermes-qqbot hermes plugins doctor /opt/data/plugins/smart_group_qq --ci >/dev/null
+docker exec -i hermes-qqbot python - <<'PY'
+import json
+import os
+from pathlib import Path
+import sqlite3
+import subprocess
+
+required = [
+    Path("/opt/data/SOUL.md"),
+    Path("/opt/data/plugins/smart_group_qq/plugin.yaml"),
+    Path("/opt/data/plugins/smart_group_qq/__init__.py"),
+    Path("/opt/data/smart-group-schedules.yaml"),
+    Path("/opt/data/scripts/reconcile-smart-group-cron.py"),
+]
+for path in required:
+    if not path.is_file():
+        raise SystemExit("required runtime file missing")
+    stat = path.stat()
+    if stat.st_uid != 10000 or stat.st_gid != 10000:
+        raise SystemExit("runtime file ownership mismatch")
+
+env = {}
+for raw in Path("/opt/data/.env").read_text(encoding="utf-8").splitlines():
+    if "=" in raw and not raw.lstrip().startswith("#"):
+        name, value = raw.split("=", 1)
+        env[name.strip()] = value.strip()
+groups = tuple(dict.fromkeys(item.strip() for item in env.get("QQ_GROUP_ALLOWED_USERS", "").split(",") if item.strip()))
+if not groups:
+    raise SystemExit("QQ group allow-list is empty")
+
+plugins = json.loads(subprocess.check_output(["hermes", "plugins", "list", "--json", "--no-bundled"], text=True))
+items = plugins if isinstance(plugins, list) else plugins.get("plugins", [])
+plugin = next((item for item in items if item.get("name") == "smart_group_qq"), None)
+if plugin is None or plugin.get("status") not in {"enabled", "loaded"}:
+    raise SystemExit("smart_group_qq is not enabled")
+
+import yaml
+declaration = yaml.safe_load(Path("/opt/data/smart-group-schedules.yaml").read_text(encoding="utf-8")) or {}
+enabled_ids = {
+    item.get("id") for item in declaration.get("schedules", [])
+    if isinstance(item, dict) and item.get("enabled") is True
+}
+from cron import jobs as cron_jobs
+owned = [job for job in cron_jobs.list_jobs(include_disabled=True) if str(job.get("name", "")).startswith("smart-group-qq::")]
+expected = len(enabled_ids) * len(groups)
+if len(owned) != expected:
+    raise SystemExit("owned cron count mismatch")
+if any(job.get("no_agent") is not True or not str(job.get("deliver", "")).startswith("qqbot:") for job in owned):
+    raise SystemExit("owned cron safety mismatch")
+
+db_path = Path("/opt/data/plugin-data/smart_group_qq/data.db")
+if not db_path.is_file():
+    raise SystemExit("plugin database is missing")
+with sqlite3.connect(db_path) as connection:
+    if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+        raise SystemExit("plugin database integrity check failed")
+    audit_count = int(connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0])
+
+gateway = json.loads(Path("/opt/data/gateway_state.json").read_text(encoding="utf-8"))
+qq = gateway.get("platforms", {}).get("qqbot", {})
+if gateway.get("gateway_state") != "running" or qq.get("state") != "connected":
+    raise SystemExit("QQ gateway is not connected")
+print(f"GROUP_ALLOWLIST_COUNT={len(groups)}")
+print(f"PLUGIN_STATUS={plugin.get('status')}")
+print(f"OWNED_CRON_COUNT={len(owned)}")
+print(f"PLUGIN_DB_INTEGRITY=ok AUDIT_COUNT={audit_count}")
+print("QQ_GATEWAY=connected")
+PY
 docker exec hermes-qqbot hermes doctor >/tmp/hermes-qqbot-doctor.txt
 echo "CONTAINER_STATE=$state"
 echo "CONTAINER_HEALTH=$health"
 echo "CONFIG_CHECK=passed"
+echo "PLUGIN_CHECK=passed"
 echo "DOCTOR=completed"

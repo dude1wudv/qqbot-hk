@@ -1,0 +1,11 @@
+name: smart_group_qq
+version: 1.0.0
+description: Hermes-native QQ group governance and memory plugin
+entrypoint: __init__:register
+hooks:
+  - pre_gateway_dispatch
+provides_hooks:
+  - pre_gateway_dispatch
+settings_schema:
+  type: object
+  additionalProperties: true

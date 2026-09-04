@@ -1,0 +1,6 @@
+schedules:
+  - id: daily-reminder
+    enabled: false
+    cron: "0 9 * * *"
+    target: allowed_groups
+    text: "待替换的固定群公告"
