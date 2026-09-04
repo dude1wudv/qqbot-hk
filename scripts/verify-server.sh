@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_dir="/opt/qqbot-hk"
+project_dir="${QQBOT_PROJECT_DIR:-/opt/qqbot-hk}"
 
 container_id="$(docker compose -f "$project_dir/docker-compose.yml" ps -q hermes-qqbot)"
 test -n "$container_id"
@@ -13,9 +13,12 @@ test "$health" = "healthy"
 
 docker exec -i hermes-qqbot python - <<'PY'
 import json
+import base64
+import io
 import os
 import urllib.error
 import urllib.request
+from PIL import Image
 
 key = os.environ.get("SUB2API_API_KEY", "")
 if not key:
@@ -75,6 +78,42 @@ luna = post(
 if not luna.get("id") or luna.get("error"):
     raise SystemExit("gpt-5.6-luna: invalid Responses payload")
 print("MODEL=gpt-5.6-luna EFFORT=medium RESULT=OK")
+
+image_buffer = io.BytesIO()
+Image.new("RGB", (16, 16), (0, 120, 255)).save(image_buffer, format="PNG")
+image_url = "data:image/png;base64," + base64.b64encode(image_buffer.getvalue()).decode("ascii")
+
+gemini_vision = post(
+    "/v1/chat/completions",
+    {
+        "model": "gemini-3.8-flash-high",
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "Reply only IMAGE_OK if you can inspect this image."},
+            {"type": "image_url", "image_url": {"url": image_url}},
+        ]}],
+        "stream": False,
+        "max_tokens": 128,
+    },
+)
+if not (gemini_vision.get("choices") or []):
+    raise SystemExit("gemini-3.8-flash-high: invalid vision response")
+print("VISION=gemini-3.8-flash-high RESULT=OK")
+
+luna_vision = post(
+    "/v1/responses",
+    {
+        "model": "gpt-5.6-luna",
+        "input": [{"role": "user", "content": [
+            {"type": "input_text", "text": "Reply only IMAGE_OK if you can inspect this image."},
+            {"type": "input_image", "image_url": image_url},
+        ]}],
+        "stream": False,
+        "max_output_tokens": 128,
+    },
+)
+if not luna_vision.get("id") or luna_vision.get("error"):
+    raise SystemExit("gpt-5.6-luna: invalid vision response")
+print("VISION=gpt-5.6-luna RESULT=OK")
 PY
 
 docker exec hermes-qqbot hermes config check >/dev/null
@@ -147,6 +186,17 @@ with sqlite3.connect(db_path) as connection:
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise SystemExit("plugin database integrity check failed")
     audit_count = int(connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0])
+    tables = {
+        row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    required_tables = {"group_memories", "group_history", "knowledge_documents", "knowledge_chunks"}
+    if not required_tables.issubset(tables):
+        raise SystemExit("plugin memory/knowledge schema is incomplete")
+    memory_columns = {row[1] for row in connection.execute("PRAGMA table_info(group_memories)")}
+    if not {"structured_json", "last_history_id", "model", "version"}.issubset(memory_columns):
+        raise SystemExit("plugin AI memory migration is incomplete")
 
 gateway = json.loads(Path("/opt/data/gateway_state.json").read_text(encoding="utf-8"))
 qq = gateway.get("platforms", {}).get("qqbot", {})
@@ -157,6 +207,7 @@ print(f"GROUP_ALLOWLIST_COUNT={len(groups)}")
 print(f"PLUGIN_STATUS={plugin.get('status')}")
 print(f"OWNED_CRON_COUNT={len(owned)}")
 print(f"PLUGIN_DB_INTEGRITY=ok AUDIT_COUNT={audit_count}")
+print("PLUGIN_MEMORY_KB_SCHEMA=ok")
 print("QQ_GATEWAY=connected")
 PY
 docker exec hermes-qqbot hermes doctor >/tmp/hermes-qqbot-doctor.txt

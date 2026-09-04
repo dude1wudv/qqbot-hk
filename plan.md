@@ -4,7 +4,7 @@
 
 目标是在现有 `qqbot-hk` Hermes 部署上复刻 `Smart_Group_Bot` 的核心思路，而不是移植其 Telegram/aiogram 实现：
 
-- QQ 好友继续使用 Hermes 原生 C2C 会话和 pairing。
+- QQ 好友继续使用 Hermes 原生 C2C 会话；开发体验阶段仅向 QQ 开放平台名单中的测试用户开放，无需 Hermes pairing。
 - QQ 群仅开放给明确配置的群，使用 Hermes 原生 `GROUP_AT_MESSAGE_CREATE` 群 @ 入口。
 - 以 Hermes 原生会话保存机器人可见的群聊上下文；同一群共享会话，不把好友私聊或其他群的历史带入。
 - 增加专门的群聊人格、关键词自动回复、轻量内容审核、审计与群会话管理。
@@ -50,7 +50,7 @@
 
 1. **不 fork Hermes，不移植 aiogram。** 新增一个 Hermes native plugin，挂在 `pre_gateway_dispatch`。
 2. **群白名单只保留一个权威来源。** 使用 `/opt/qqbot-hk-deploy/secrets/qqbot.env` 中的 `QQ_GROUP_ALLOWED_USERS`；Hermes QQ adapter 在产生 `MessageEvent` 前已按此值 fail-closed。插件不再维护第二份群白名单。
-3. **私聊保持 pairing，群聊改 allowlist。** `dm_policy: pairing`；`group_policy: allowlist`；已批准好友配对不等价于获得群访问权。
+3. **沙箱私聊 open，群聊 allowlist。** `dm_policy: open` 仅与 `QQ_SANDBOX=true`、`QQ_ALLOW_ALL_USERS=true` 同时部署；私聊用户由 QQ 开放平台“开发体验号码”名单约束。`group_policy: allowlist` 独立使用群 OpenID 白名单。
 4. **同群共享记忆与发言人归一化。** 显式设置 `gateway.group_sessions_per_user: false`；群与好友的 session key 仍由 Hermes 分隔。在入站消息前缀标准化注入 `[成员:<member_openid_short>]`，让模型准确理解多人对话脉络。
 5. **指令清洗与本地短路。** 在 `pre_gateway_dispatch` 钩子中剥离 `@机器人` 占位符；对 `/reset`、`/clear`、`/help`、`/status` 等常用指令在插件层就地短路处理，无需唤醒 Agent 模型。
 6. **发消息格式优雅降级与智能分片。** 针对未获官方 Markdown 内邀的现状（`markdown_support: false`），设计纯文本排版美化器，将 Markdown 标题、代码块、列表、引用转换为 QQ 纯文本可读排版；单条消息超长时按段落拆分，利用同一 `msg_id` 的 `msg_seq` 连续发送。
@@ -94,7 +94,7 @@ qqbot-hk/
 
 修改 `qqbot-hk/config/hermes-config.yaml`：
 
-- `platforms.qqbot.extra.dm_policy: pairing` 保持不变。
+- 将 `platforms.qqbot.extra.dm_policy` 设为 `open`；安装和验证必须同时锁定 `QQ_SANDBOX=true` 与 `QQ_ALLOW_ALL_USERS=true`，生产 API 下禁止该组合。
 - 将 `platforms.qqbot.extra.group_policy` 从 `pairing` 改为 `allowlist`。
 - 保持 `markdown_support: false`。
 - 新增 `gateway.group_sessions_per_user: false`，使同一群的机器人可见对话共享上下文；不得设为 `true`，否则会按发言人切碎群记忆。
@@ -296,7 +296,7 @@ docker run --rm \
 修改 `qqbot-hk/scripts/verify-server.sh`，保留现有三模型真实探针，并新增：
 
 - `/opt/data/SOUL.md`、plugin manifest/code、schedule YAML、reconciler 存在且归属 10000；不输出内容。
-- `/opt/data/.env` 中 `QQ_GROUP_ALLOWED_USERS` 存在且非空；只输出数量，不输出值。
+- `/opt/data/.env` 中 `QQ_GROUP_ALLOWED_USERS` 存在且非空，并且 `QQ_SANDBOX=true`、`QQ_ALLOW_ALL_USERS=true`；部署态 `dm_policy=open`、`group_policy=allowlist`。只输出策略、布尔值和数量，不输出真实值。
 - `hermes config check` 成功；plugin manager 报告 `smart_group_qq` enabled/loaded。
 - 直接查询 `cron.jobs.list_jobs(include_disabled=True)`，确认 expected owned job 数 = enabled schedules × unique allowed groups，name 唯一、`no_agent=true`、delivery platform 为 qqbot；只输出计数和 schedule id。
 - SQLite schema/`PRAGMA integrity_check` 成功；只输出状态和行数。
@@ -309,14 +309,14 @@ docker run --rm \
 4. 运行 `scripts/install-server.sh`，只重建/重启 `hermes-qqbot`；不触碰 Sub2API/Postgres/Redis/Caddy。
 5. 运行 `scripts/verify-server.sh`。
 6. 执行真实 QQ 验收矩阵：
-   - 未批准好友首次私聊收到 pairing code；服务器批准后可正常问答。
+   - QQ 开放平台“开发体验号码”名单中的新用户首次私聊直接正常问答，不返回 pairing code；名单外账号不能从沙箱测试通道建立有效会话。
    - 白名单群 @ 机器人可正常问答；连续两位群成员 @ 后由同一群 session 保持上下文。
    - 非白名单群 @ 无回复，gateway 日志显示 adapter ACL 拒绝但不泄露内容。
    - 静态审核样例：原消息不进入 Agent，群内收到一次提示；重放同 message id 不重复提示。
    - 关键词样例：收到一次固定回复，模型调用计数不增加。
    - 若决定开启语义审核：先在单一测试群开启，验证 allow/block/阈值/超时，再扩到全部白名单群。
    - `hermes cron run <owned-job-name>` 强制触发一条固定公告；目标群只收到一次，Hermes execution ledger 为 success。
-7. 观察至少一个 QQ WebSocket reconnect 周期，确认 reconnect 后群白名单、plugin 和 cron 仍有效。
+7. 观察至少一个 QQ WebSocket reconnect 周期，确认 reconnect 后沙箱私聊边界、群白名单、plugin 和 cron 仍有效。
 
 ## 回滚
 

@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 import yaml
@@ -8,7 +9,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 
-from smart_group_qq import build_handler
+from smart_group_qq import _describe_images, build_handler
 from smart_group_qq.policy import PolicyEngine, compile_rule_list, semantic_moderation
 from smart_group_qq.store import Store
 
@@ -55,7 +56,10 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         dm = event("hello", platform="qqbot", chat_type="dm")
         self.assertEqual(handler(dm, self.gateway)["action"], "allow")
         result = handler(self.make_event("<@bot> hello"), self.gateway)
-        self.assertEqual(result, {"action": "rewrite", "text": "[群成员:member]: hello"})
+        self.assertEqual(result["action"], "rewrite")
+        self.assertRegex(result["text"], r"^\[群记忆键:[0-9a-f]{12}\]\n")
+        self.assertTrue(result["text"].endswith("[群成员:member]: hello"))
+        self.assertNotIn("摘要后新增上下文", result["text"])
 
     async def test_static_precedes_keyword_and_is_idempotent(self):
         settings = {
@@ -91,6 +95,85 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("needle-secret", dump)
         self.assertNotIn("reply-secret", dump)
 
+    async def test_knowledge_add_and_rag_injection_are_group_scoped(self):
+        handler = build_handler(FakeContext({"knowledge": {"allow_group_members_manage": True}}), self.store)
+        added = handler(self.make_event("/kb add 发布手册 | 蓝色环境在周五发布", "kb-1"), self.gateway)
+        self.assertEqual(added["action"], "skip")
+        await asyncio.sleep(0)
+        query = handler(self.make_event("周五发布哪个环境？", "ask-1"), self.gateway)
+        self.assertIn("知识库:发布手册#", query["text"])
+        self.assertIn("蓝色环境在周五发布", query["text"])
+
+        other = self.make_event("周五发布哪个环境？", "ask-2")
+        other.source.chat_id = "group-b"
+        result = handler(other, self.gateway)
+        self.assertNotIn("发布手册", result["text"])
+
+    async def test_static_moderation_precedes_knowledge_commands(self):
+        settings = {
+            "knowledge": {"allow_group_members_manage": True},
+            "moderation": {"static_rules": [{
+                "id": "credential", "match": "contains", "pattern": "sk-secret-value", "notice": "blocked",
+            }]},
+        }
+        handler = build_handler(FakeContext(settings), self.store)
+        result = handler(self.make_event("/kb add 密钥 | sk-secret-value", "kb-secret"), self.gateway)
+        self.assertEqual(result["action"], "skip")
+        await asyncio.sleep(0)
+        self.assertEqual(handler.knowledge.list_documents("group-a"), [])
+
+    async def test_ambient_message_is_context_only_and_never_sends(self):
+        handler = build_handler(FakeContext(), self.store)
+        await handler.observe_nonmention({
+            "group_id": "group-a", "member_id": "member-b", "message_id": "ambient-1",
+            "text": "项目代号是北斗", "timestamp": None, "image_paths": [],
+        })
+        self.assertEqual(self.adapter.sent, [])
+        result = handler(self.make_event("项目代号是什么？", "ask-ambient"), self.gateway)
+        self.assertIn("项目代号是北斗", result["text"])
+        row = self.store.get_history("group-a", 2)[0]
+        self.assertEqual(row["source_kind"], "ambient")
+
+    async def test_post_llm_records_assistant_output(self):
+        handler = build_handler(FakeContext(), self.store)
+        result = handler(self.make_event("你好", "ask-post"), self.gateway)
+        handler.post_llm_call(
+            session_id="qqbot:group:group-a", user_message=result["text"],
+            assistant_response="你好，群友。", model="deepseek-v4-flash-0731",
+            platform=SimpleNamespace(value="qqbot"),
+        )
+        rows = self.store.get_history("group-a")
+        self.assertEqual(rows[-1]["role"], "assistant")
+        self.assertEqual(rows[-1]["text"], "你好，群友。")
+
+    async def test_vision_helper_uses_auxiliary_vision_task(self):
+        class LLM:
+            async def acomplete_structured(inner_self, **kwargs):
+                inner_self.kwargs = kwargs
+                return {"parsed": {"description": "一张流程图", "visible_text": "发布", "facts": ["箭头向右"]}}
+
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "sample.png"
+            image.write_bytes(b"not-a-real-image-but-valid-for-routing-test")
+            ctx = FakeContext({"media_cache_roots": [directory]})
+            ctx.llm = LLM()
+            description = await _describe_images(ctx, [str(image)])
+        self.assertIn("一张流程图", description)
+        self.assertEqual(ctx.llm.kwargs["task"], "vision")
+        self.assertEqual(ctx.llm.kwargs["input"][1]["type"], "image")
+
+    def test_config_pins_models_and_qq_access_boundaries(self):
+        config = yaml.safe_load((ROOT / "config" / "hermes-config.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(config["model"]["default"], "deepseek-v4-flash-0731")
+        self.assertEqual(config["agent"]["image_input_mode"], "text")
+        vision = config["auxiliary"]["vision"]
+        self.assertEqual(vision["model"], "gemini-3.8-flash-high")
+        self.assertEqual(vision["fallback_chain"][0]["model"], "gpt-5.6-luna")
+        qq_extra = config["platforms"]["qqbot"]["extra"]
+        self.assertEqual(qq_extra["dm_policy"], "open")
+        self.assertEqual(qq_extra["group_policy"], "allowlist")
+        self.assertEqual(qq_extra["group_allow_from"], [])
+
 
 class PolicyTests(unittest.IsolatedAsyncioTestCase):
     def test_invalid_rule_config_fails_open(self):
@@ -121,14 +204,6 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(decision.blocked)
         self.assertEqual(decision.source, "semantic_error")
-
-    def test_config_pins_qq_access_boundaries(self):
-        config = yaml.safe_load((ROOT / "config" / "hermes-config.yaml").read_text(encoding="utf-8"))
-        qq_extra = config["platforms"]["qqbot"]["extra"]
-        self.assertEqual(qq_extra["dm_policy"], "open")
-        self.assertEqual(qq_extra["group_policy"], "allowlist")
-        self.assertEqual(qq_extra["group_allow_from"], [])
-
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_dir="/opt/qqbot-hk"
+project_dir="${QQBOT_PROJECT_DIR:-/opt/qqbot-hk}"
 deploy_dir="/opt/qqbot-hk-deploy"
 data_dir="$deploy_dir/hermes-data"
 secrets_dir="$deploy_dir/secrets"
