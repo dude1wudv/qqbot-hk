@@ -67,8 +67,7 @@ auxiliary:
         reasoning_effort: medium
 
 voice:
-  auto_tts: true
-
+  auto_tts: false
 tts:
   provider: openai
   openai:

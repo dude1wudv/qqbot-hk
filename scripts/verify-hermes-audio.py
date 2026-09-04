@@ -38,7 +38,7 @@ def load_and_verify_config(path: Path) -> dict[str, Any]:
     openai_tts = tts.get("openai") or {}
     tools = ((config.get("platform_toolsets") or {}).get("qqbot") or [])
 
-    require((config.get("voice") or {}).get("auto_tts") is True, "voice.auto_tts mismatch")
+    require((config.get("voice") or {}).get("auto_tts") is False, "voice.auto_tts mismatch")
     require(stt.get("provider") == "openai", "QQ STT provider mismatch")
     require(stt.get("baseUrl") == EXPECTED["stt_base_url"], "QQ STT baseUrl mismatch")
     require(stt.get("model") == EXPECTED["stt_model"], "QQ STT model mismatch")

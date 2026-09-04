@@ -211,7 +211,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(qq_extra["stt"]["baseUrl"], "http://sub2api:8080/v1")
         self.assertEqual(qq_extra["stt"]["model"], "qwen-audio-3.0-asr-flash")
         self.assertNotIn("apiKey", qq_extra["stt"])
-        self.assertTrue(config["voice"]["auto_tts"])
+        self.assertFalse(config["voice"]["auto_tts"])
         self.assertEqual(config["tts"]["provider"], "openai")
         self.assertEqual(config["tts"]["openai"]["base_url"], "http://sub2api:8080/v1")
         self.assertEqual(config["tts"]["openai"]["model"], "qwen-audio-3.0-tts-plus")
