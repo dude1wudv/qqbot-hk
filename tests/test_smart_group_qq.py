@@ -54,8 +54,11 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_group_passes_and_normal_message_rewrites(self):
         handler = build_handler(FakeContext(), self.store)
+        self.gateway.adapters = {self.source_platform: self.adapter}
         dm = event("hello", platform="qqbot", chat_type="dm")
         self.assertEqual(handler(dm, self.gateway)["action"], "allow")
+        self.assertTrue(self.adapter._smart_group_qq_formatting)
+        self.assertEqual(self.adapter.format_message("**你好**"), "你好")
         result = handler(self.make_event("<@bot> hello"), self.gateway)
         self.assertEqual(result["action"], "rewrite")
         self.assertRegex(result["text"], r"^\[群记忆键:[0-9a-f]{12}\]\n")

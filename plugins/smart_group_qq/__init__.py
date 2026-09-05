@@ -32,7 +32,12 @@ def _platform_name(source: Any) -> str:
 
 def _adapter(gateway: Any, source: Any) -> Any:
     adapters = getattr(gateway, "adapters", {}) or {}
-    return adapters.get(getattr(source, "platform", None)) or adapters.get("qqbot")
+    platform = getattr(source, "platform", None)
+    try:
+        direct = adapters.get(platform)
+    except TypeError:
+        direct = None
+    return direct or adapters.get(_platform_name(source)) or adapters.get("qqbot")
 
 
 def _configure_adapter(adapter: Any) -> None:
@@ -349,10 +354,12 @@ def build_handler(ctx: Any, store: Store):
 
     def handle(event: Any = None, gateway: Any = None, session_store: Any = None, **_: Any):
         source = getattr(event, "source", None)
-        if source is None or _platform_name(source) != "qqbot" or getattr(source, "chat_type", "") != "group":
+        if source is None or _platform_name(source) != "qqbot":
             return {"action": "allow"}
         adapter = _adapter(gateway, source)
         _configure_adapter(adapter)
+        if getattr(source, "chat_type", "") != "group":
+            return {"action": "allow"}
         group_id = str(getattr(source, "chat_id", "") or "")
         member_id = str(getattr(source, "user_id", "") or "")
         message_id = str(getattr(event, "message_id", "") or "")

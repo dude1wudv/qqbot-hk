@@ -24,7 +24,7 @@ class MessageChunk:
 
 
 def format_for_qq(text: Any, *, markdown_support: bool = False) -> str:
-    """Downgrade the supported Markdown subset to readable QQ plain text."""
+    """Turn common Markdown into quiet, readable QQ plain text."""
     value = "" if text is None else str(text)
     if markdown_support:
         return value
@@ -36,10 +36,9 @@ def format_for_qq(text: Any, *, markdown_support: bool = False) -> str:
 
     def flush_code() -> None:
         nonlocal code_lines, language
-        label = language or "text"
-        output.append(f"┌── [{label}] ──")
+        if language:
+            output.append(f"代码（{language}）：")
         output.extend(code_lines)
-        output.append("└──")
         code_lines = []
         language = ""
 
@@ -56,22 +55,35 @@ def format_for_qq(text: Any, *, markdown_support: bool = False) -> str:
         if in_code:
             code_lines.append(line)
             continue
-        # Keep transformations line-oriented so Markdown inside a code block
-        # remains code.  The order avoids link URLs being altered by emphasis.
-        line = re.sub(r"^\s*#{1}\s+(.+?)\s*$", r"【 \1 】", line)
-        line = re.sub(r"^\s*#{2}\s+(.+?)\s*$", r"📌 \1", line)
-        line = re.sub(r"^\s*#{3}\s+(.+?)\s*$", r"▫️ \1", line)
-        line = re.sub(r"^\s*[-*]\s+", "• ", line)
-        line = re.sub(r"^\s*>\s?", "▎ ", line)
+        # Keep transformations line-oriented so Markdown inside code remains
+        # untouched. QQ output deliberately avoids decorative replacements.
+        if re.match(r"^\s*(?:[-*_]\s*){3,}$", line):
+            continue
+        if re.match(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*$", line):
+            continue
+        line = re.sub(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$", r"\1", line)
+        line = re.sub(r"^\s*>+\s?", "", line)
+        line = re.sub(r"^\s*[-*+]\s+\[x\]\s+", "已完成：", line, flags=re.IGNORECASE)
+        line = re.sub(r"^\s*[-*+]\s+\[\s\]\s+", "待办：", line)
+        line = re.sub(r"^\s*[-*+]\s+", "· ", line)
+        line = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", r"图片：\1 (\2)", line)
         line = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", line)
-        line = re.sub(r"\*\*([^*]+?)\*\*", r"「\1」", line)
-        line = re.sub(r"__([^_]+?)__", r"「\1」", line)
+        line = re.sub(r"\*\*([^*]+?)\*\*", r"\1", line)
+        line = re.sub(r"__([^_]+?)__", r"\1", line)
+        line = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"\1", line)
+        line = re.sub(r"(?<!_)_([^_\n]+?)_(?!_)", r"\1", line)
+        line = re.sub(r"~~([^~]+?)~~", r"\1", line)
+        line = re.sub(r"`([^`\n]+)`", r"\1", line)
+        if line.strip().startswith("|") and line.strip().endswith("|"):
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            line = "；".join(cell for cell in cells if cell)
         output.append(line)
     if in_code:
-        # An unfinished fence is still rendered as a code card, rather than
+        # An unfinished fence is still rendered as plain code, rather than
         # leaking Markdown syntax into clients.
         flush_code()
-    return "\n".join(output).strip()
+    value = "\n".join(output).strip()
+    return re.sub(r"\n{3,}", "\n\n", value)
 
 
 format_text = format_for_qq
