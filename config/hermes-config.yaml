@@ -138,10 +138,28 @@ plugins:
           compact_after_messages: 12
           max_history_rows: 2000
           recent_context_messages: 12
+          recent_context_seconds: 900
+          context_char_budget: 6000
+          ambient_retention_days: 7
+          addressed_retention_days: 30
+          audit_retention_days: 90
+          claim_retention_days: 7
         ambient:
           enabled: true
           analyze_images: true
           max_text_chars: 4000
+          queue_max_size: 2000
+          per_group_concurrency: 1
+          flush_interval_seconds: 30
+          context_window_messages: 10
+          context_window_seconds: 900
+        member_memory:
+          enabled: true
+          auto_extract: true
+          extract_from_ambient: true
+          min_confidence: 0.85
+          fact_retention_days: 180
+          max_profile_facts: 20
         media_cache_roots:
           - /opt/data/cache
         knowledge:

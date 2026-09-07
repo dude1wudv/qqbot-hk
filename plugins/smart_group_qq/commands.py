@@ -7,6 +7,10 @@ from typing import Any, Mapping, Sequence
 
 _MENTION = re.compile(r"(?:<@!?[^>]+>|^@\S+)\s*")
 _COMMAND = re.compile(r"^[／/]([A-Za-z]+|值日表)(?:\s+.*)?$")
+_PROFILE_COMMAND = re.compile(
+    r"^[／/](我的记忆|记住我|纠正记忆|忘记我|停止记忆)(?:\s*[:：]?\s*(.*))?$",
+    re.DOTALL,
+)
 _ALIASES = {"clear": "reset", "值日表": "duty_roster"}
 _SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules", "duty_roster"})
 
@@ -14,6 +18,12 @@ _SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules", "duty_ros
 @dataclass(frozen=True)
 class Command:
     name: str
+
+
+@dataclass(frozen=True)
+class ProfileCommand:
+    action: str
+    argument: str = ""
 
 
 def clean_text(value: Any) -> str:
@@ -36,11 +46,28 @@ def parse_command(value: Any) -> Command | None:
     return Command(name) if name in _SUPPORTED else None
 
 
+def parse_profile_command(value: Any) -> ProfileCommand | None:
+    text = clean_text(value).replace("／", "/", 1)
+    match = _PROFILE_COMMAND.fullmatch(text)
+    if not match:
+        return None
+    actions = {
+        "我的记忆": "show",
+        "记住我": "remember",
+        "纠正记忆": "correct",
+        "忘记我": "forget",
+        "停止记忆": "opt_out",
+    }
+    return ProfileCommand(actions[match.group(1)], str(match.group(2) or "").strip())
+
+
 def help_text() -> str:
     return (
         "【群聊助手】\n"
         "/help 功能说明\n/reset 或 /clear 重置本群上下文\n"
         "/status 运行状态\n/summary 本群近期互动摘要\n/rules 已启用规则\n"
+        "/我的记忆 查看个人记忆\n/记住我：内容 保存或更新个人信息\n"
+        "/忘记我 删除个人记忆\n/停止记忆 禁止继续建立个人记忆\n"
         "/值日表 查看本周轮值安排"
     )
 
@@ -69,4 +96,7 @@ def rules_text(settings: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["Command", "clean_text", "parse_command", "help_text", "status_text", "rules_text"]
+__all__ = [
+    "Command", "ProfileCommand", "clean_text", "parse_command", "parse_profile_command",
+    "help_text", "status_text", "rules_text",
+]

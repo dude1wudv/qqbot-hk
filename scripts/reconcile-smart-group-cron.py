@@ -221,7 +221,11 @@ def _script_source(text: str) -> str:
     # repr() is source-code escaping, not interpolation. sys.stdout.write avoids
     # print's extra newline so stdout equals the configured text byte-for-byte
     # after UTF-8 decoding.
-    return "#!/usr/bin/env python3\nimport sys\nsys.stdout.write(" + repr(text) + ")\n"
+    return (
+        "#!/usr/bin/env python3\nimport sys\n"
+        "sys.stdout.reconfigure(encoding='utf-8')\n"
+        "sys.stdout.write(" + repr(text) + ")\n"
+    )
 
 
 def write_generated_script(path: PathLike, text: str) -> None:

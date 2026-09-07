@@ -45,8 +45,17 @@ class FakeQQAdapter:
         self.handled += 1
 
 
-def payload(message_id="message-1", *, group="group-1", member="member-1", text="hello"):
-    return {
+def payload(
+    message_id="message-1",
+    *,
+    group="group-1",
+    member="member-1",
+    text="hello",
+    sequence=None,
+    display_name="",
+    username="",
+):
+    value = {
         "op": 0,
         "t": "GROUP_MESSAGE_CREATE",
         "d": {
@@ -62,6 +71,13 @@ def payload(message_id="message-1", *, group="group-1", member="member-1", text=
             }],
         },
     }
+    if display_name:
+        value["d"]["author"]["display_name"] = display_name
+    if username:
+        value["d"]["author"]["username"] = username
+    if sequence is not None:
+        value["s"] = sequence
+    return value
 
 
 class ObserverTests(IsolatedAsyncioTestCase):
@@ -83,7 +99,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
         qq_observer.install_nonmention_observer(callback)
         adapter = FakeQQAdapter()
         result = adapter._dispatch_payload(payload())
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.1)
 
         self.assertIsNone(result)
         self.assertEqual(adapter.original_calls, [])
@@ -99,6 +115,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
         self.assertEqual(records[0]["media_types"], ["image/jpeg"])
         self.assertEqual(records[0]["attachment_info"], "[file: note.txt (/opt/data/media/note.txt)]")
         self.assertEqual(records[0]["timestamp"].year, 2026)
+        self.assertIsNone(records[0]["sequence"])
         self.assertEqual(adapter.parsed_timestamps, ["2026-09-03T01:02:03+00:00"])
         self.assertEqual(adapter.attachment_calls, [payload()["d"]["attachments"]])
         self.assertNotIn("message-1", adapter.normal_seen)
@@ -110,7 +127,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
         adapter = FakeQQAdapter(allowed=False)
 
         adapter._dispatch_payload(payload())
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
 
         self.assertEqual(records, [])
         self.assertEqual(adapter.attachment_calls, [])
@@ -124,7 +141,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
         at_event["t"] = "GROUP_AT_MESSAGE_CREATE"
 
         result = adapter._dispatch_payload(at_event)
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
 
         self.assertEqual(result, "original-result")
         self.assertEqual(len(adapter.original_calls), 1)
@@ -138,12 +155,144 @@ class ObserverTests(IsolatedAsyncioTestCase):
 
         adapter._dispatch_payload(payload())
         adapter._dispatch_payload(payload())
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
 
         self.assertEqual(len(records), 1)
         self.assertEqual(len(adapter.attachment_calls), 1)
         self.assertEqual(adapter.normal_seen, {})
         self.assertEqual(len(adapter._smart_group_qq_nonmention_seen), 1)
+
+    async def test_captures_gateway_sequence_timestamp_and_member_identity(self):
+        records = []
+        qq_observer.install_nonmention_observer(records.append)
+        adapter = FakeQQAdapter()
+
+        adapter._dispatch_payload(
+            payload(
+                message_id="metadata-1",
+                sequence=42,
+                display_name="小明",
+                username="xiaoming",
+            )
+        )
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(record["sequence"], 42)
+        self.assertEqual(record["gateway_sequence"], 42)
+        self.assertEqual(record["event_timestamp_raw"], "2026-09-03T01:02:03+00:00")
+        self.assertEqual(record["event_timestamp"], record["timestamp"])
+        self.assertEqual(record["display_name"], "小明")
+        self.assertEqual(record["username"], "xiaoming")
+        self.assertEqual(record["raw"]["sequence"], 42)
+        self.assertEqual(record["raw"]["author"]["display_name"], "小明")
+        self.assertEqual(record["raw"]["author"]["username"], "xiaoming")
+
+    async def test_slow_media_does_not_block_fast_text_callback(self):
+        class SlowQQAdapter(FakeQQAdapter):
+            async def _process_attachments(self, attachments):
+                self.attachment_calls.append(attachments)
+                await asyncio.sleep(0.2)
+                return {
+                    "image_paths": ["/opt/data/media/slow.jpg"],
+                    "image_media_types": ["image/jpeg"],
+                }
+
+        records = []
+        qq_observer.install_nonmention_observer(records.append)
+        adapter = SlowQQAdapter()
+
+        adapter._dispatch_payload(payload("slow-media"))
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["text"], "hello")
+        self.assertTrue(records[0]["attachments_pending"])
+        self.assertEqual(records[0]["attachment_status"], "pending")
+
+        await asyncio.sleep(0.5)
+        self.assertFalse(records[0]["attachments_pending"])
+        self.assertEqual(records[0]["attachment_status"], "ready")
+        self.assertEqual(records[0]["image_paths"], ["/opt/data/media/slow.jpg"])
+
+    def test_seen_cache_periodically_expires_stale_ids_and_remains_bounded(self):
+        adapter = FakeQQAdapter()
+        adapter._smart_group_qq_nonmention_seen = {"old": 0.0}
+        adapter._smart_group_qq_nonmention_seen_cleanup = -100.0
+
+        with patch.object(qq_observer.time, "monotonic", return_value=4000.0):
+            self.assertTrue(qq_observer._claim_message_id(adapter, "new"))
+
+        self.assertNotIn("old", adapter._smart_group_qq_nonmention_seen)
+        self.assertIn("new", adapter._smart_group_qq_nonmention_seen)
+
+    async def test_out_of_order_events_keep_sequence_metadata_without_rolling_back_state(self):
+        records = []
+        qq_observer.install_nonmention_observer(records.append)
+        adapter = FakeQQAdapter()
+
+        adapter._dispatch_payload(payload("sequence-12", sequence=12))
+        adapter._dispatch_payload(payload("sequence-7", sequence=7))
+        await asyncio.sleep(0.1)
+
+        self.assertEqual(adapter._last_seq, 12)
+        self.assertEqual({record["sequence"] for record in records}, {7, 12})
+        self.assertEqual({record["raw"]["sequence"] for record in records}, {7, 12})
+
+    async def test_callback_failure_retries_and_redelivery_can_succeed(self):
+        calls = 0
+        records = []
+
+        async def callback(record):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("transient observer failure")
+            records.append(record)
+
+        qq_observer.install_nonmention_observer(callback)
+        adapter = FakeQQAdapter()
+        item = payload("retry-1")
+        adapter._dispatch_payload(item)
+        await asyncio.sleep(0.2)
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(len(adapter._smart_group_qq_nonmention_seen), 1)
+
+        # A successful claim remains idempotent after the retry settles.
+        adapter._dispatch_payload(item)
+        await asyncio.sleep(0.01)
+        self.assertEqual(calls, 2)
+
+    async def test_exhausted_callback_failure_releases_id_for_gateway_redelivery(self):
+        calls = 0
+        succeed = False
+        records = []
+
+        async def callback(record):
+            nonlocal calls
+            calls += 1
+            if not succeed:
+                raise RuntimeError("persistent observer failure")
+            records.append(record)
+
+        qq_observer.install_nonmention_observer(callback)
+        adapter = FakeQQAdapter()
+        item = payload("retry-after-give-up")
+        adapter._dispatch_payload(item)
+        await asyncio.sleep(0.6)
+
+        self.assertEqual(calls, qq_observer._RETRY_ATTEMPTS)
+        self.assertEqual(records, [])
+        self.assertNotIn("retry-after-give-up", adapter._smart_group_qq_nonmention_seen)
+
+        succeed = True
+        adapter._dispatch_payload(item)
+        await asyncio.sleep(0.01)
+        self.assertEqual(calls, qq_observer._RETRY_ATTEMPTS + 1)
+        self.assertEqual(len(records), 1)
 
     async def test_callback_exception_isolated_and_dispatch_survives(self):
         logger = Mock()
@@ -154,7 +303,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
         qq_observer.install_nonmention_observer(callback, logger=logger)
         adapter = FakeQQAdapter()
         result = adapter._dispatch_payload(payload())
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.6)
 
         self.assertIsNone(result)
         self.assertEqual(adapter.original_calls, [])
@@ -171,7 +320,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
         self.assertIs(FakeQQAdapter._dispatch_payload, dispatch)
         adapter = FakeQQAdapter()
         adapter._dispatch_payload(payload())
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
 
         self.assertEqual(first, [])
         self.assertEqual(len(second), 1)

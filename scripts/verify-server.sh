@@ -153,6 +153,7 @@ import os
 from pathlib import Path
 import sqlite3
 import subprocess
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 required = [
@@ -200,6 +201,64 @@ if qq_extra.get("dm_policy") != "pairing":
     raise SystemExit("QQ DM policy is not pairing")
 if qq_extra.get("group_policy") != "allowlist":
     raise SystemExit("QQ group policy is not allowlist")
+
+plugin_settings = (
+    (((config.get("plugins") or {}).get("entries") or {}).get("smart_group_qq") or {})
+    .get("settings")
+    or {}
+)
+if not isinstance(plugin_settings, Mapping):
+    raise SystemExit("smart_group_qq settings are invalid")
+memory_config = plugin_settings.get("memory")
+if not isinstance(memory_config, Mapping):
+    raise SystemExit("smart_group_qq memory config is missing")
+for name in (
+    "compact_after_messages", "max_history_rows", "recent_context_messages",
+    "recent_context_seconds", "context_char_budget",
+    "ambient_retention_days", "addressed_retention_days",
+    "audit_retention_days", "claim_retention_days",
+):
+    try:
+        if int(memory_config.get(name, 0)) <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise SystemExit(f"smart_group_qq memory config is invalid: {name}")
+ambient_config = plugin_settings.get("ambient")
+if not isinstance(ambient_config, Mapping):
+    raise SystemExit("smart_group_qq ambient config is missing")
+if not isinstance(ambient_config.get("enabled"), bool):
+    raise SystemExit("smart_group_qq ambient enabled flag is invalid")
+if not isinstance(ambient_config.get("analyze_images"), bool):
+    raise SystemExit("smart_group_qq ambient analyze_images flag is invalid")
+for name in (
+    "max_text_chars", "queue_max_size", "per_group_concurrency",
+    "flush_interval_seconds", "context_window_messages", "context_window_seconds",
+):
+    try:
+        if int(ambient_config.get(name, 0)) <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise SystemExit(f"smart_group_qq ambient config is invalid: {name}")
+if int(ambient_config.get("per_group_concurrency", 0)) != 1:
+    raise SystemExit("smart_group_qq currently requires per_group_concurrency=1")
+member_memory_config = plugin_settings.get("member_memory")
+if not isinstance(member_memory_config, Mapping):
+    raise SystemExit("smart_group_qq member_memory config is missing")
+for name in ("enabled", "auto_extract", "extract_from_ambient"):
+    if not isinstance(member_memory_config.get(name), bool):
+        raise SystemExit(f"smart_group_qq member_memory {name} flag is invalid")
+try:
+    confidence = float(member_memory_config.get("min_confidence"))
+    if not 0.0 <= confidence <= 1.0:
+        raise ValueError
+except (TypeError, ValueError):
+    raise SystemExit("smart_group_qq member_memory min_confidence is invalid")
+for name in ("fact_retention_days", "max_profile_facts"):
+    try:
+        if int(member_memory_config.get(name, 0)) <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise SystemExit(f"smart_group_qq member_memory config is invalid: {name}")
 if "QQ_SANDBOX" in env:
     raise SystemExit("deprecated QQ sandbox routing must not be enabled")
 if env.get("QQ_ALLOW_ALL_USERS", "").lower() in {"true", "1", "yes"}:
@@ -238,18 +297,47 @@ if not db_path.is_file():
 with sqlite3.connect(db_path) as connection:
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise SystemExit("plugin database integrity check failed")
+    schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if schema_version < 2:
+        raise SystemExit("plugin database schema version is too old")
+    foreign_key_errors = list(connection.execute("PRAGMA foreign_key_check"))
+    if foreign_key_errors:
+        raise SystemExit("plugin database foreign-key check failed")
     audit_count = int(connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0])
     tables = {
         row[0] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )
     }
-    required_tables = {"group_memories", "group_history", "knowledge_documents", "knowledge_chunks"}
+    required_tables = {
+        "group_memories", "group_history", "knowledge_documents", "knowledge_chunks",
+        "compaction_jobs", "group_members", "member_memory_facts",
+    }
     if not required_tables.issubset(tables):
         raise SystemExit("plugin memory/knowledge schema is incomplete")
     memory_columns = {row[1] for row in connection.execute("PRAGMA table_info(group_memories)")}
     if not {"structured_json", "last_history_id", "model", "version"}.issubset(memory_columns):
         raise SystemExit("plugin AI memory migration is incomplete")
+    compaction_columns = {row[1] for row in connection.execute("PRAGMA table_info(compaction_jobs)")}
+    if not {"group_id", "from_history_id", "to_history_id", "status", "next_retry_at", "created_at", "updated_at"}.issubset(compaction_columns):
+        raise SystemExit("compaction job schema is incomplete")
+    profile_columns = {row[1] for row in connection.execute("PRAGMA table_info(group_members)")}
+    if not {"group_id", "member_ref", "member_digest", "consent_status", "first_seen_at", "last_seen_at"}.issubset(profile_columns):
+        raise SystemExit("group member schema is incomplete")
+    fact_columns = {row[1] for row in connection.execute("PRAGMA table_info(member_memory_facts)")}
+    if not {"group_id", "member_ref", "category", "fact_key", "fact_value", "confidence", "explicitness", "expires_at", "status", "created_at", "updated_at"}.issubset(fact_columns):
+        raise SystemExit("member memory fact schema is incomplete")
+    indexes = {
+        row[1]
+        for table in ("group_history", "group_memories", "compaction_jobs", "group_members", "member_memory_facts")
+        for row in connection.execute(f"PRAGMA index_list({table})")
+    }
+    required_indexes = {
+        "idx_compaction_jobs_ready", "idx_compaction_jobs_group", "idx_group_members_seen",
+        "idx_member_facts_active", "idx_member_facts_key",
+    }
+    if not required_indexes.issubset(indexes):
+        raise SystemExit("member memory indexes are incomplete")
 
 gateway = json.loads(Path("/opt/data/gateway_state.json").read_text(encoding="utf-8"))
 qq = gateway.get("platforms", {}).get("qqbot", {})
@@ -259,8 +347,11 @@ print(f"DM_POLICY=pairing API_BASE=production AUTO_PAIR={auto_pair_state} UNTIL_
 print(f"GROUP_ALLOWLIST_COUNT={len(groups)}")
 print(f"PLUGIN_STATUS={plugin.get('status')}")
 print(f"OWNED_CRON_COUNT={len(owned)}")
-print(f"PLUGIN_DB_INTEGRITY=ok AUDIT_COUNT={audit_count}")
+print(f"PLUGIN_DB_INTEGRITY=ok AUDIT_COUNT={audit_count} SCHEMA_VERSION={schema_version}")
 print("PLUGIN_MEMORY_KB_SCHEMA=ok")
+print("MEMBER_MEMORY_SCHEMA=ok")
+print("MEMBER_MEMORY_CONFIG=ok")
+print("COMPACTION_SCHEMA=ok")
 print("QQ_GATEWAY=connected")
 print("AUDIO_ENV_WIRING=ok")
 PY

@@ -10,7 +10,9 @@ from __future__ import annotations
 import sqlite3
 import time
 import hashlib
+import hmac
 import json
+import os
 import re
 import threading
 import unicodedata
@@ -20,12 +22,19 @@ from typing import Any, Iterator
 
 
 PENDING_STALE_SECONDS = 300.0
+SCHEMA_VERSION = 2
+_MEMBER_REF_NAMESPACE = b"smart_group_qq/member-ref/v1"
+_SECRET_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
+    re.compile(r"\bghp_[A-Za-z0-9]{12,}\b"),
+    re.compile(r"(?i)\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*\S+"),
+)
 
 
 class Store:
     """Small SQLite repository backed by Hermes ``plugin_storage.plugin_db()``."""
 
-    def __init__(self, database: Any = None):
+    def __init__(self, database: Any = None, *, member_secret: str | bytes | None = None):
         self._owned = False
         if database is None:
             database = ":memory:"
@@ -35,13 +44,25 @@ class Store:
         else:
             self.db = database
         self._lock = threading.RLock()
+        self._member_secret = (
+            str(member_secret).encode("utf-8")
+            if isinstance(member_secret, str)
+            else bytes(member_secret)
+            if member_secret is not None
+            else _MEMBER_REF_NAMESPACE
+        )
         # A plugin_db connection is a sqlite3 connection in Hermes 0.21.0.
         # Keep this setup deliberately narrow so no alternate storage backend
         # is silently invented.
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
-        self._init_schema()
+        try:
+            self._init_schema()
+        except Exception:
+            if self._owned:
+                self.db.close()
+            raise
 
     @classmethod
     def from_context(cls, ctx: Any) -> "Store":
@@ -51,12 +72,22 @@ class Store:
         if storage is not None:
             db_factory = getattr(storage, "plugin_db", None)
             if callable(db_factory):
-                return cls(db_factory())
+                return cls(db_factory(), member_secret=os.environ.get("QQ_CLIENT_SECRET"))
         # This fallback is only useful for import/unit tests.  A running
         # Hermes context always supplies plugin_storage.plugin_db().
         return cls(":memory:")
 
     def _init_schema(self) -> None:
+        version_row = self.db.execute("PRAGMA user_version").fetchone()
+        try:
+            schema_version = int(version_row[0]) if version_row else 0
+        except (TypeError, ValueError, IndexError):
+            schema_version = 0
+        stored_schema_version = schema_version
+        if schema_version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"smart_group_qq database schema {schema_version} is newer than supported {SCHEMA_VERSION}"
+            )
         self.db.executescript(
             """
             CREATE TABLE IF NOT EXISTS message_claims (
@@ -130,12 +161,88 @@ class Store:
                 ON knowledge_chunks(group_id, document_id, chunk_index);
             """
         )
-        self._ensure_column("group_memories", "structured_json", "TEXT NOT NULL DEFAULT '{}'")
-        self._ensure_column("group_memories", "last_history_id", "INTEGER NOT NULL DEFAULT 0")
-        self._ensure_column("group_memories", "model", "TEXT NOT NULL DEFAULT ''")
-        self._ensure_column("group_memories", "version", "INTEGER NOT NULL DEFAULT 1")
-        self._ensure_column("group_history", "source_kind", "TEXT NOT NULL DEFAULT 'addressed'")
-        self._ensure_column("group_history", "media_json", "TEXT NOT NULL DEFAULT '[]'")
+        # Version 1 contains the structured-memory/history columns added after
+        # the original summary-only schema. Keep the migration explicit for
+        # databases created before PRAGMA user_version was introduced.
+        if schema_version < 1:
+            self._ensure_column("group_memories", "structured_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column("group_memories", "last_history_id", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column("group_memories", "model", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column("group_memories", "version", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column("group_history", "source_kind", "TEXT NOT NULL DEFAULT 'addressed'")
+            self._ensure_column("group_history", "media_json", "TEXT NOT NULL DEFAULT '[]'")
+            schema_version = 1
+        else:
+            # Handle a database whose previous migration was interrupted.
+            self._ensure_column("group_memories", "structured_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column("group_memories", "last_history_id", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column("group_memories", "model", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column("group_memories", "version", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column("group_history", "source_kind", "TEXT NOT NULL DEFAULT 'addressed'")
+            self._ensure_column("group_history", "media_json", "TEXT NOT NULL DEFAULT '[]'")
+        if schema_version < 2:
+            self.db.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS compaction_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id TEXT NOT NULL,
+                    from_history_id INTEGER NOT NULL DEFAULT 0,
+                    to_history_id INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempt INTEGER NOT NULL DEFAULT 0,
+                    next_retry_at REAL NOT NULL DEFAULT 0,
+                    lease_until REAL,
+                    error TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    UNIQUE(group_id, from_history_id, to_history_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_compaction_jobs_ready
+                    ON compaction_jobs(status, next_retry_at, id);
+                CREATE INDEX IF NOT EXISTS idx_compaction_jobs_group
+                    ON compaction_jobs(group_id, id DESC);
+                CREATE TABLE IF NOT EXISTS group_members (
+                    group_id TEXT NOT NULL,
+                    member_ref TEXT NOT NULL,
+                    member_digest TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    consent_status TEXT NOT NULL DEFAULT 'unknown',
+                    first_seen_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    profile_version INTEGER NOT NULL DEFAULT 1,
+                    deleted_at REAL,
+                    PRIMARY KEY (group_id, member_ref),
+                    UNIQUE (group_id, member_digest)
+                );
+                CREATE INDEX IF NOT EXISTS idx_group_members_seen
+                    ON group_members(group_id, last_seen_at DESC);
+                CREATE TABLE IF NOT EXISTS member_memory_facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id TEXT NOT NULL,
+                    member_ref TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    fact_key TEXT NOT NULL,
+                    fact_value TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    explicitness TEXT NOT NULL DEFAULT 'inferred',
+                    source_history_id INTEGER,
+                    expires_at REAL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    supersedes_id INTEGER,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_member_facts_active
+                    ON member_memory_facts(group_id, member_ref, status, expires_at);
+                CREATE INDEX IF NOT EXISTS idx_member_facts_key
+                    ON member_memory_facts(group_id, member_ref, category, fact_key, id DESC);
+                """
+            )
+            schema_version = 2
+        if stored_schema_version < SCHEMA_VERSION:
+            self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.db.commit()
 
     def _ensure_column(self, table: str, column: str, declaration: str) -> None:
@@ -263,6 +370,13 @@ class Store:
 
     audit = record_audit
 
+    @staticmethod
+    def redact_text(value: Any) -> str:
+        text = str(value or "")
+        for pattern in _SECRET_PATTERNS:
+            text = pattern.sub("[已隐藏敏感信息]", text)
+        return text
+
     def append_history(
         self,
         group_id: str,
@@ -289,7 +403,7 @@ class Store:
                 "VALUES (?,?,?,?,?,?,?,?)",
                 (
                     str(group_id), str(role),
-                    None if member_id is None else str(member_id), str(text),
+                    None if member_id is None else str(member_id), self.redact_text(text),
                     None if message_id is None else str(message_id), str(source_kind or "addressed"),
                     json.dumps(media or [], ensure_ascii=False, separators=(",", ":")),
                     time.time() if created_at is None else float(created_at),
@@ -322,12 +436,116 @@ class Store:
             ).fetchall()
         return list(rows)
 
+    def get_recent_history_since(self, group_id: str, after_id: int = 0, limit: int = 12) -> list[sqlite3.Row]:
+        """Return the newest history rows after a cursor in chronological order."""
+
+        with self._lock:
+            rows = self.db.execute(
+                "SELECT * FROM (SELECT * FROM group_history "
+                "WHERE group_id=? AND id>? ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
+                (str(group_id), max(0, int(after_id)), max(1, int(limit))),
+            ).fetchall()
+        return list(rows)
+
+    def recent_ambient_history(
+        self,
+        group_id: str,
+        *,
+        before_id: int | None = None,
+        before_time: float | None = None,
+        limit: int = 12,
+        max_age_seconds: float | None = 900,
+        now: float | None = None,
+    ) -> list[sqlite3.Row]:
+        """Return recent non-@ rows before an event, oldest-to-newest.
+
+        ``before_id`` and ``before_time`` are exclusive upper bounds.  Supplying
+        both is useful when event IDs and timestamps can arrive out of order.
+        ``max_age_seconds`` is relative to ``now`` and may be ``None`` to disable
+        the age bound.  The query is deliberately group-scoped.
+        """
+
+        conditions = ["group_id=?", "source_kind='ambient'"]
+        params: list[Any] = [str(group_id)]
+        if before_id is not None:
+            conditions.append("id<?")
+            params.append(max(0, int(before_id)))
+        if before_time is not None:
+            conditions.append("created_at<?")
+            params.append(float(before_time))
+        if max_age_seconds is not None:
+            age = max(0.0, float(max_age_seconds))
+            stamp = time.time() if now is None else float(now)
+            conditions.append("created_at>=?")
+            params.append(stamp - age)
+        where = " AND ".join(conditions)
+        params.append(max(1, int(limit)))
+        with self._lock:
+            rows = self.db.execute(
+                f"SELECT * FROM (SELECT * FROM group_history WHERE {where} "
+                "ORDER BY created_at DESC, id DESC LIMIT ?) "
+                "ORDER BY created_at ASC, id ASC",
+                tuple(params),
+            ).fetchall()
+        return list(rows)
+
     def latest_history_id(self, group_id: str) -> int:
         with self._lock:
             row = self.db.execute(
                 "SELECT COALESCE(MAX(id),0) AS n FROM group_history WHERE group_id=?", (str(group_id),)
             ).fetchone()
         return int(row["n"])
+
+    def enrich_history(
+        self,
+        group_id: str,
+        message_id: str,
+        text: str | None = None,
+        media: Any = None,
+    ) -> bool:
+        """Atomically enrich an existing ambient row after media processing.
+
+        The operation is intentionally update-only: a late media callback must
+        never create a history row for an event that was not ingested. Text and
+        media are merged idempotently so a retried callback cannot duplicate
+        the same transcript/description.
+        """
+
+        incoming_text = self.redact_text(text).strip()
+        with self.transaction() as db:
+            row = db.execute(
+                "SELECT id,text,media_json FROM group_history "
+                "WHERE group_id=? AND role='user' AND message_id=? AND source_kind='ambient' "
+                "ORDER BY id DESC LIMIT 1",
+                (str(group_id), str(message_id)),
+            ).fetchone()
+            if row is None:
+                return False
+            current_text = str(row["text"] or "").strip()
+            if incoming_text and incoming_text not in current_text:
+                merged_text = "\n\n".join(item for item in (current_text, incoming_text) if item)
+            else:
+                merged_text = current_text
+            try:
+                current_media = json.loads(str(row["media_json"] or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                current_media = []
+            if not isinstance(current_media, list):
+                current_media = []
+            incoming_media = media if isinstance(media, (list, tuple, set)) else ([] if media is None else [media])
+            merged_media = list(current_media)
+            for item in incoming_media:
+                if item not in merged_media:
+                    merged_media.append(item)
+            db.execute(
+                "UPDATE group_history SET text=?, media_json=? WHERE id=?",
+                (
+                    merged_text,
+                    json.dumps(merged_media, ensure_ascii=False, separators=(",", ":")),
+                    int(row["id"]),
+                ),
+            )
+            return True
 
     def clear_group(self, group_id: str) -> None:
         with self.transaction() as db:
@@ -395,6 +613,170 @@ class Store:
             "updated_at": float(row["updated_at"]),
         }
 
+    def enqueue_compaction_job(
+        self,
+        group_id: str,
+        from_history_id: int = 0,
+        to_history_id: int | None = None,
+        *,
+        now: float | None = None,
+    ) -> int:
+        """Create or extend one durable compaction job for a group."""
+
+        group = str(group_id)
+        start = max(0, int(from_history_id))
+        target = self.latest_history_id(group) if to_history_id is None else max(0, int(to_history_id))
+        if target <= start:
+            return 0
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            active = db.execute(
+                "SELECT id,to_history_id,status FROM compaction_jobs "
+                "WHERE group_id=? AND status IN ('pending','running','failed') "
+                "ORDER BY id DESC LIMIT 1",
+                (group,),
+            ).fetchone()
+            if active is not None:
+                # A failed job retains its original cursor; only extend its
+                # target.  A running lease remains owned by its worker.
+                new_target = max(int(active["to_history_id"]), target)
+                if str(active["status"]) == "failed":
+                    db.execute(
+                        "UPDATE compaction_jobs SET to_history_id=?, updated_at=? WHERE id=?",
+                        (new_target, stamp, int(active["id"])),
+                    )
+                elif new_target != int(active["to_history_id"]):
+                    db.execute(
+                        "UPDATE compaction_jobs SET to_history_id=?, updated_at=? WHERE id=?",
+                        (new_target, stamp, int(active["id"])),
+                    )
+                return int(active["id"])
+            cur = db.execute(
+                "INSERT INTO compaction_jobs "
+                "(group_id,from_history_id,to_history_id,status,attempt,next_retry_at,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (group, start, target, "pending", 0, stamp, stamp, stamp),
+            )
+            return int(cur.lastrowid)
+
+    def get_compaction_job(self, group_id: str, *, include_completed: bool = False) -> sqlite3.Row | None:
+        statuses = "" if include_completed else "AND status NOT IN ('completed','cancelled')"
+        with self._lock:
+            return self.db.execute(
+                f"SELECT * FROM compaction_jobs WHERE group_id=? {statuses} ORDER BY id DESC LIMIT 1",
+                (str(group_id),),
+            ).fetchone()
+
+    def list_compaction_jobs(self, group_id: str | None = None, *, limit: int = 100) -> list[sqlite3.Row]:
+        with self._lock:
+            if group_id is None:
+                rows = self.db.execute(
+                    "SELECT * FROM compaction_jobs ORDER BY id DESC LIMIT ?", (max(1, int(limit)),)
+                ).fetchall()
+            else:
+                rows = self.db.execute(
+                    "SELECT * FROM compaction_jobs WHERE group_id=? ORDER BY id DESC LIMIT ?",
+                    (str(group_id), max(1, int(limit))),
+                ).fetchall()
+        return list(rows)
+
+    def claim_compaction_job(
+        self,
+        job_id: int | None = None,
+        *,
+        group_id: str | None = None,
+        lease_seconds: float = PENDING_STALE_SECONDS,
+        now: float | None = None,
+        force: bool = False,
+    ) -> sqlite3.Row | None:
+        """Lease a pending/failed compaction job atomically."""
+
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            if job_id is not None:
+                row = db.execute(
+                    "SELECT * FROM compaction_jobs WHERE id=?", (int(job_id),)
+                ).fetchone()
+            else:
+                group_clause = " AND group_id=?" if group_id is not None else ""
+                params: list[Any] = [stamp]
+                if group_id is not None:
+                    params.append(str(group_id))
+                row = db.execute(
+                    "SELECT * FROM compaction_jobs WHERE "
+                    "((status IN ('pending','failed') AND (next_retry_at<=? OR ?)) OR "
+                    "(status='running' AND lease_until IS NOT NULL AND lease_until<=?))"
+                    + group_clause + " ORDER BY id ASC LIMIT 1",
+                    (stamp, bool(force), stamp, *params[1:]),
+                ).fetchone()
+            if row is None:
+                return None
+            status = str(row["status"])
+            ready = status in {"pending", "failed"} and (force or float(row["next_retry_at"] or 0) <= stamp)
+            expired = status == "running" and row["lease_until"] is not None and float(row["lease_until"]) <= stamp
+            if not (ready or expired):
+                return None
+            lease_until = stamp + max(1.0, float(lease_seconds))
+            db.execute(
+                "UPDATE compaction_jobs SET status='running', attempt=attempt+1, "
+                "lease_until=?, updated_at=? WHERE id=?",
+                (lease_until, stamp, int(row["id"])),
+            )
+            return db.execute("SELECT * FROM compaction_jobs WHERE id=?", (int(row["id"]),)).fetchone()
+
+    def finish_compaction_job(
+        self,
+        job_id: int,
+        success: bool,
+        *,
+        error: str | None = None,
+        retry_delay: float | None = None,
+        now: float | None = None,
+    ) -> None:
+        """Complete a job or retain it as a retryable failure."""
+
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            row = db.execute("SELECT attempt FROM compaction_jobs WHERE id=?", (int(job_id),)).fetchone()
+            if row is None:
+                return
+            if success:
+                db.execute(
+                    "UPDATE compaction_jobs SET status='completed', lease_until=NULL, "
+                    "error='', next_retry_at=0, updated_at=? WHERE id=?",
+                    (stamp, int(job_id)),
+                )
+                return
+            attempt = max(1, int(row["attempt"] or 1))
+            delay = min(3600.0, max(1.0, float(retry_delay) if retry_delay is not None else 5.0 * (2 ** min(attempt - 1, 8))))
+            db.execute(
+                "UPDATE compaction_jobs SET status='failed', lease_until=NULL, error=?, "
+                "next_retry_at=?, updated_at=? WHERE id=?",
+                (str(error or "compaction failed")[:500], stamp + delay, stamp, int(job_id)),
+            )
+
+    def defer_compaction_job(
+        self,
+        job_id: int,
+        *,
+        from_history_id: int,
+        to_history_id: int | None = None,
+        now: float | None = None,
+    ) -> None:
+        """Return a leased job to the queue after a bounded batch."""
+
+        stamp = time.time() if now is None else float(now)
+        target = max(0, int(to_history_id)) if to_history_id is not None else max(0, int(from_history_id))
+        with self.transaction() as db:
+            if to_history_id is None:
+                row = db.execute("SELECT group_id FROM compaction_jobs WHERE id=?", (int(job_id),)).fetchone()
+                target = self.latest_history_id(str(row["group_id"])) if row else max(0, int(from_history_id))
+            db.execute(
+                "UPDATE compaction_jobs SET from_history_id=?, to_history_id=?, status='pending', "
+                "lease_until=NULL, next_retry_at=?, error='', updated_at=? WHERE id=?",
+                (max(0, int(from_history_id)), target, stamp, stamp, int(job_id)),
+            )
+
     def count_history(self, group_id: str) -> int:
         with self._lock:
             row = self.db.execute(
@@ -403,13 +785,415 @@ class Store:
         return int(row["n"])
 
     def trim_history(self, group_id: str, keep: int) -> int:
-        """Keep only the newest bounded rows for one group."""
+        """Trim summarized rows while never deleting data ahead of the memory cursor."""
         keep = max(0, int(keep))
         with self.transaction() as db:
             cursor = db.execute(
-                "DELETE FROM group_history WHERE group_id=? AND id NOT IN "
+                "DELETE FROM group_history WHERE group_id=? "
+                "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=?),0) "
+                "AND id NOT IN "
                 "(SELECT id FROM group_history WHERE group_id=? ORDER BY id DESC LIMIT ?)",
-                (str(group_id), str(group_id), keep),
+                (str(group_id), str(group_id), str(group_id), keep),
+            )
+            return max(0, int(cursor.rowcount))
+
+    def purge_expired_history(
+        self,
+        group_id: str | None = None,
+        *,
+        max_age_seconds: float,
+        now: float | None = None,
+    ) -> int:
+        """Delete history older than the configured retention window."""
+
+        cutoff = (time.time() if now is None else float(now)) - max(0.0, float(max_age_seconds))
+        with self.transaction() as db:
+            if group_id is None:
+                cursor = db.execute(
+                    "DELETE FROM group_history WHERE created_at<? AND id<=COALESCE("
+                    "(SELECT last_history_id FROM group_memories WHERE group_id=group_history.group_id),0)",
+                    (cutoff,),
+                )
+            else:
+                cursor = db.execute(
+                    "DELETE FROM group_history WHERE group_id=? AND created_at<? "
+                    "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=?),0)",
+                    (str(group_id), cutoff, str(group_id)),
+                )
+            return max(0, int(cursor.rowcount))
+
+    def purge_history_by_source(
+        self,
+        source_kind: str,
+        max_age_seconds: float,
+        *,
+        group_id: str | None = None,
+        now: float | None = None,
+    ) -> int:
+        """Delete old history of one source kind for scheduled maintenance."""
+
+        source = str(source_kind or "").strip()
+        if not source:
+            raise ValueError("source_kind is required")
+        cutoff = (time.time() if now is None else float(now)) - max(0.0, float(max_age_seconds))
+        with self.transaction() as db:
+            if group_id is None:
+                cursor = db.execute(
+                    "DELETE FROM group_history WHERE source_kind=? AND created_at<? "
+                    "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=group_history.group_id),0)",
+                    (source, cutoff),
+                )
+            else:
+                cursor = db.execute(
+                    "DELETE FROM group_history WHERE group_id=? AND source_kind=? AND created_at<? "
+                    "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=?),0)",
+                    (str(group_id), source, cutoff, str(group_id)),
+                )
+            return max(0, int(cursor.rowcount))
+
+    def purge_operational_metadata(
+        self,
+        *,
+        audit_age_seconds: float,
+        claim_age_seconds: float,
+        now: float | None = None,
+    ) -> dict[str, int]:
+        """Bound metadata growth without touching conversation content."""
+
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            audits = db.execute(
+                "DELETE FROM audit_events WHERE created_at<?",
+                (stamp - max(0.0, float(audit_age_seconds)),),
+            )
+            claims = db.execute(
+                "DELETE FROM message_claims WHERE COALESCE(completed_at,claimed_at)<? "
+                "AND status<>'pending'",
+                (stamp - max(0.0, float(claim_age_seconds)),),
+            )
+        return {
+            "audit_events": max(0, int(audits.rowcount)),
+            "message_claims": max(0, int(claims.rowcount)),
+        }
+
+    def list_memory_backlog_groups(self, limit: int = 100) -> list[dict[str, Any]]:
+        """List groups whose history cursor is behind their latest row."""
+
+        with self._lock:
+            rows = self.db.execute(
+                "SELECT h.group_id, MAX(h.id) AS latest_history_id, "
+                "COALESCE(m.last_history_id,0) AS memory_cursor, "
+                "SUM(CASE WHEN h.id>COALESCE(m.last_history_id,0) THEN 1 ELSE 0 END) AS pending_count, "
+                "MIN(CASE WHEN h.id>COALESCE(m.last_history_id,0) THEN h.created_at END) AS oldest_pending_at "
+                "FROM group_history h LEFT JOIN group_memories m ON m.group_id=h.group_id "
+                "GROUP BY h.group_id "
+                "HAVING MAX(h.id)>COALESCE(m.last_history_id,0) "
+                "ORDER BY MAX(h.id) DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def member_digest(group_id: Any, member_id: Any, secret: str | bytes | None = None) -> str:
+        """Return a stable, non-reversible identifier for a group member."""
+
+        key = (
+            str(secret).encode("utf-8")
+            if isinstance(secret, str)
+            else bytes(secret)
+            if secret is not None
+            else _MEMBER_REF_NAMESPACE
+        )
+        payload = (str(group_id) + "\x00" + str(member_id)).encode("utf-8")
+        return hmac.new(key, payload, hashlib.sha256).hexdigest()
+
+    @classmethod
+    def member_ref(
+        cls,
+        group_id: Any,
+        member_id: Any,
+        secret: str | bytes | None = None,
+    ) -> str:
+        return "m-" + cls.member_digest(group_id, member_id, secret)[:20]
+
+    stable_member_ref = member_ref
+
+    def _member_identity(self, group_id: Any, member_id: Any) -> tuple[str, str]:
+        digest = self.member_digest(group_id, member_id, self._member_secret)
+        return "m-" + digest[:20], digest
+
+    def member_ref_for(self, group_id: Any, member_id: Any) -> str:
+        """Derive a prompt-safe member reference with this store's runtime secret."""
+
+        return self._member_identity(group_id, member_id)[0]
+
+    @staticmethod
+    def _bounded_text(value: Any, limit: int = 2000) -> str:
+        text = " ".join(str(value or "").replace("\x00", " ").split())
+        return text[:max(1, int(limit))]
+
+    def upsert_group_member(
+        self,
+        group_id: str,
+        member_id: str,
+        *,
+        display_name: str = "",
+        consent_status: str | None = None,
+        metadata: Any = None,
+        increment_messages: bool = False,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """Create/touch a member without persisting the raw platform ID."""
+
+        group = str(group_id)
+        raw_member = str(member_id or "").strip()
+        if not group or not raw_member:
+            raise ValueError("group_id and member_id are required")
+        ref, digest = self._member_identity(group, raw_member)
+        name = self._bounded_text(display_name, 200)
+        consent = str(consent_status or "unknown").strip().lower() or "unknown"
+        if consent not in {"unknown", "opted_in", "opted_out"}:
+            raise ValueError("invalid consent_status")
+        metadata_value = metadata if isinstance(metadata, dict) else {}
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            db.execute(
+                "INSERT INTO group_members "
+                "(group_id,member_ref,member_digest,display_name,consent_status,first_seen_at,last_seen_at,message_count,metadata_json,profile_version,deleted_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,NULL) "
+                "ON CONFLICT(group_id,member_ref) DO UPDATE SET "
+                "display_name=CASE WHEN excluded.display_name<>'' THEN excluded.display_name ELSE group_members.display_name END, "
+                "consent_status=CASE WHEN excluded.consent_status<>'unknown' THEN excluded.consent_status ELSE group_members.consent_status END, "
+                "last_seen_at=excluded.last_seen_at, "
+                "message_count=group_members.message_count+excluded.message_count, "
+                "metadata_json=CASE WHEN excluded.metadata_json<>'{}' THEN excluded.metadata_json ELSE group_members.metadata_json END, "
+                "deleted_at=NULL",
+                (
+                    group, ref, digest, name, consent, stamp, stamp,
+                    1 if increment_messages else 0,
+                    json.dumps(metadata_value, ensure_ascii=False, separators=(",", ":")), 1,
+                ),
+            )
+            row = db.execute(
+                "SELECT * FROM group_members WHERE group_id=? AND member_ref=?", (group, ref)
+            ).fetchone()
+        return dict(row) if row is not None else {}
+
+    def get_group_member(
+        self,
+        group_id: str,
+        member_id: str | None = None,
+        *,
+        member_ref: str | None = None,
+    ) -> dict[str, Any] | None:
+        ref = str(member_ref or "")
+        if not ref:
+            if not member_id:
+                raise ValueError("member_id or member_ref is required")
+            ref, _ = self._member_identity(group_id, member_id)
+        with self._lock:
+            row = self.db.execute(
+                "SELECT * FROM group_members WHERE group_id=? AND member_ref=? AND deleted_at IS NULL",
+                (str(group_id), ref),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_group_members(self, group_id: str, *, include_deleted: bool = False) -> list[dict[str, Any]]:
+        condition = "" if include_deleted else "AND deleted_at IS NULL"
+        with self._lock:
+            rows = self.db.execute(
+                f"SELECT * FROM group_members WHERE group_id=? {condition} ORDER BY last_seen_at DESC",
+                (str(group_id),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_member_consent(
+        self,
+        group_id: str,
+        member_id: str,
+        consent_status: str,
+        *,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        value = str(consent_status or "").strip().lower()
+        if value not in {"unknown", "opted_in", "opted_out"}:
+            raise ValueError("invalid consent_status")
+        self.upsert_group_member(group_id, member_id, now=now)
+        ref, _ = self._member_identity(group_id, member_id)
+        with self.transaction() as db:
+            db.execute(
+                "UPDATE group_members SET consent_status=?, profile_version=profile_version+1 "
+                "WHERE group_id=? AND member_ref=?",
+                (value, str(group_id), ref),
+            )
+            row = db.execute(
+                "SELECT * FROM group_members WHERE group_id=? AND member_ref=?",
+                (str(group_id), ref),
+            ).fetchone()
+        return dict(row) if row is not None else {}
+
+    def forget_group_member(self, group_id: str, member_id: str, *, hard_delete: bool = True) -> int:
+        ref, _ = self._member_identity(group_id, member_id)
+        with self.transaction() as db:
+            facts = db.execute(
+                "DELETE FROM member_memory_facts WHERE group_id=? AND member_ref=?",
+                (str(group_id), ref),
+            )
+            if hard_delete:
+                member = db.execute(
+                    "DELETE FROM group_members WHERE group_id=? AND member_ref=?",
+                    (str(group_id), ref),
+                )
+            else:
+                member = db.execute(
+                    "UPDATE group_members SET deleted_at=?, consent_status='opted_out', profile_version=profile_version+1 "
+                    "WHERE group_id=? AND member_ref=?",
+                    (time.time(), str(group_id), ref),
+                )
+            history = db.execute(
+                "DELETE FROM group_history WHERE group_id=? AND member_id=?",
+                (str(group_id), ref),
+            )
+            # A summary may contain facts derived from the removed rows. Drop
+            # it and its jobs so the next refresh rebuilds from retained data.
+            memories = db.execute("DELETE FROM group_memories WHERE group_id=?", (str(group_id),))
+            jobs = db.execute("DELETE FROM compaction_jobs WHERE group_id=?", (str(group_id),))
+            return sum(
+                max(0, int(cursor.rowcount))
+                for cursor in (facts, member, history, memories, jobs)
+            )
+
+    forget_member = forget_group_member
+    delete_group_member = forget_group_member
+
+    def add_member_memory_fact(
+        self,
+        group_id: str,
+        member_id: str,
+        category: str,
+        fact_key: str,
+        fact_value: str,
+        *,
+        confidence: float = 0.5,
+        explicitness: str = "inferred",
+        source_history_id: int | None = None,
+        expires_at: float | None = None,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """Insert a member fact, superseding a conflicting active value."""
+
+        category_text = self._bounded_text(category, 80)
+        key_text = self._bounded_text(fact_key, 120)
+        value_text = self._bounded_text(fact_value, 2000)
+        if not category_text or not key_text or not value_text:
+            raise ValueError("category, fact_key and fact_value are required")
+        explicit = str(explicitness or "inferred").strip().lower()
+        if explicit not in {"explicit", "inferred"}:
+            raise ValueError("invalid explicitness")
+        score = min(1.0, max(0.0, float(confidence)))
+        ref, _ = self._member_identity(group_id, member_id)
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            member = db.execute(
+                "SELECT consent_status FROM group_members WHERE group_id=? AND member_ref=? "
+                "AND deleted_at IS NULL",
+                (str(group_id), ref),
+            ).fetchone()
+            if member is None or str(member["consent_status"]) != "opted_in":
+                raise ValueError("member memory requires active opt-in consent")
+            existing = db.execute(
+                "SELECT * FROM member_memory_facts WHERE group_id=? AND member_ref=? "
+                "AND category=? AND fact_key=? AND status='active' "
+                "AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1",
+                (str(group_id), ref, category_text, key_text, stamp),
+            ).fetchone()
+            if existing is not None and str(existing["fact_value"]) == value_text:
+                db.execute(
+                    "UPDATE member_memory_facts SET confidence=MAX(confidence,?), "
+                    "explicitness=CASE WHEN ?='explicit' THEN 'explicit' ELSE explicitness END, "
+                    "source_history_id=COALESCE(?,source_history_id), expires_at=?, updated_at=? WHERE id=?",
+                    (score, explicit, source_history_id, expires_at, stamp, int(existing["id"])),
+                )
+                row = db.execute("SELECT * FROM member_memory_facts WHERE id=?", (int(existing["id"]),)).fetchone()
+                result = dict(row)
+                result["deduplicated"] = True
+                return result
+            supersedes_id = int(existing["id"]) if existing is not None else None
+            if existing is not None:
+                db.execute(
+                    "UPDATE member_memory_facts SET status='superseded', updated_at=? WHERE id=?",
+                    (stamp, supersedes_id),
+                )
+            cur = db.execute(
+                "INSERT INTO member_memory_facts "
+                "(group_id,member_ref,category,fact_key,fact_value,confidence,explicitness,source_history_id,expires_at,status,supersedes_id,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,'active',?,?,?)",
+                (
+                    str(group_id), ref, category_text, key_text, value_text, score, explicit,
+                    None if source_history_id is None else int(source_history_id),
+                    None if expires_at is None else float(expires_at), supersedes_id, stamp, stamp,
+                ),
+            )
+            row = db.execute("SELECT * FROM member_memory_facts WHERE id=?", (int(cur.lastrowid),)).fetchone()
+        result = dict(row) if row is not None else {}
+        result["deduplicated"] = False
+        return result
+
+    def list_member_memory_facts(
+        self,
+        group_id: str,
+        member_id: str | None = None,
+        *,
+        member_ref: str | None = None,
+        include_expired: bool = False,
+        include_inactive: bool = False,
+        now: float | None = None,
+    ) -> list[dict[str, Any]]:
+        ref = str(member_ref or "")
+        if not ref:
+            if not member_id:
+                raise ValueError("member_id or member_ref is required")
+            ref, _ = self._member_identity(group_id, member_id)
+        conditions = ["group_id=?", "member_ref=?"]
+        params: list[Any] = [str(group_id), ref]
+        if not include_inactive:
+            conditions.append("status='active'")
+        if not include_expired:
+            conditions.append("(expires_at IS NULL OR expires_at>?)")
+            params.append(time.time() if now is None else float(now))
+        with self._lock:
+            rows = self.db.execute(
+                "SELECT * FROM member_memory_facts WHERE " + " AND ".join(conditions) + " ORDER BY id ASC",
+                tuple(params),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    get_member_memory_facts = list_member_memory_facts
+
+    def expire_member_memory_facts(
+        self,
+        group_id: str | None = None,
+        *,
+        member_id: str | None = None,
+        now: float | None = None,
+    ) -> int:
+        stamp = time.time() if now is None else float(now)
+        conditions = ["status='active'", "expires_at IS NOT NULL", "expires_at<=?"]
+        params: list[Any] = [stamp]
+        if group_id is not None:
+            conditions.append("group_id=?")
+            params.append(str(group_id))
+        if member_id is not None:
+            if group_id is None:
+                raise ValueError("group_id is required with member_id")
+            ref, _ = self._member_identity(group_id, member_id)
+            conditions.append("member_ref=?")
+            params.append(ref)
+        with self.transaction() as db:
+            cursor = db.execute(
+                "UPDATE member_memory_facts SET status='expired', updated_at=? WHERE "
+                + " AND ".join(conditions),
+                (stamp, *params),
             )
             return max(0, int(cursor.rowcount))
 

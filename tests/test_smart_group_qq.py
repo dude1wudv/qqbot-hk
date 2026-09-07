@@ -62,7 +62,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         result = handler(self.make_event("<@bot> hello"), self.gateway)
         self.assertEqual(result["action"], "rewrite")
         self.assertRegex(result["text"], r"^\[群记忆键:[0-9a-f]{12}\]\n")
-        self.assertTrue(result["text"].endswith("[群成员:member]: hello"))
+        self.assertRegex(result["text"], r"\[群成员:m-[0-9a-f]{20}\]: hello$")
         self.assertNotIn("摘要后新增上下文", result["text"])
 
     async def test_voice_transcript_keeps_group_policy_and_session_isolation(self):
@@ -71,7 +71,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         voice.message_type = "voice"
         result = handler(voice, self.gateway)
         self.assertEqual(result["action"], "rewrite")
-        self.assertIn("[群成员:member]: [Voice] 项目口令是北斗", result["text"])
+        self.assertRegex(result["text"], r"\[群成员:m-[0-9a-f]{20}\]: \[Voice\] 项目口令是北斗")
 
         other = self.make_event("这个群知道什么？", "other-1")
         other.source.chat_id = "group-b"
@@ -170,6 +170,52 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("项目代号是北斗", result["text"])
         row = self.store.get_history("group-a", 2)[0]
         self.assertEqual(row["source_kind"], "ambient")
+
+    async def test_disabled_ambient_rejects_async_and_fast_ingestion(self):
+        handler = build_handler(FakeContext({"ambient": {"enabled": False}}), self.store)
+        await handler.observe_nonmention({
+            "group_id": "group-a", "member_id": "member-b", "message_id": "disabled-async",
+            "text": "不应保存", "timestamp": None, "image_paths": [],
+        })
+        payload = {"d": {
+            "id": "disabled-fast", "group_openid": "group-a", "content": "也不应保存",
+            "author": {"member_openid": "member-b"},
+        }}
+        self.adapter._is_group_allowed = lambda group_id, member_id: True
+        self.assertFalse(handler.observe_nonmention.fast_ingest(self.adapter, payload))
+        self.assertEqual(self.store.get_history("group-a"), [])
+
+    async def test_at_uses_only_recent_ambient_window(self):
+        handler = build_handler(FakeContext({"ambient": {
+            "context_window_messages": 3, "context_window_seconds": 3600,
+        }}), self.store)
+        for index in range(6):
+            await handler.observe_nonmention({
+                "group_id": "group-a", "member_id": "member-b", "message_id": f"ambient-{index}",
+                "text": f"旁听消息{index}", "timestamp": None, "image_paths": [],
+            })
+        result = handler(self.make_event("刚才说了什么？", "ask-recent"), self.gateway)
+        self.assertNotIn("旁听消息2", result["text"])
+        self.assertIn("旁听消息3", result["text"])
+        self.assertIn("旁听消息5", result["text"])
+
+    async def test_member_memory_commands_and_prompt_injection(self):
+        handler = build_handler(FakeContext({"member_memory": {"auto_extract": False}}), self.store)
+        saved = handler(self.make_event("/记住我：职责=后端发布", "profile-save"), self.gateway)
+        self.assertEqual(saved["action"], "skip")
+        await asyncio.sleep(0)
+        query = handler(self.make_event("我负责什么？", "profile-query"), self.gateway)
+        self.assertIn("当前成员的本群专属记忆", query["text"])
+        self.assertIn("后端发布", query["text"])
+        session_store = SimpleNamespace(calls=[], reset_session=lambda *args, **kwargs: session_store.calls.append((args, kwargs)))
+        forgotten = handler(
+            self.make_event("/忘记我", "profile-forget"), self.gateway, session_store=session_store,
+        )
+        self.assertEqual(forgotten["action"], "skip")
+        await asyncio.sleep(0)
+        self.assertEqual(len(session_store.calls), 1)
+        after = handler(self.make_event("还记得吗？", "profile-after"), self.gateway)
+        self.assertNotIn("后端发布", after["text"])
 
     async def test_post_llm_records_assistant_output(self):
         handler = build_handler(FakeContext(), self.store)

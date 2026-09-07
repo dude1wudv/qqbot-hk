@@ -5,7 +5,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 
-from smart_group_qq.commands import clean_text, help_text, parse_command
+from smart_group_qq.commands import clean_text, help_text, parse_command, parse_profile_command
 
 
 class CommandTests(unittest.TestCase):
@@ -18,6 +18,14 @@ class CommandTests(unittest.TestCase):
 
     def test_help_lists_duty_roster(self):
         self.assertIn("/值日表 查看本周轮值安排", help_text())
+        self.assertIn("/我的记忆", help_text())
+
+    def test_profile_commands_keep_arguments(self):
+        command = parse_profile_command("<@bot> /记住我：我负责后端发布")
+        self.assertEqual(command.action, "remember")
+        self.assertEqual(command.argument, "我负责后端发布")
+        self.assertEqual(parse_profile_command("/我的记忆").action, "show")
+        self.assertEqual(parse_profile_command("/忘记我").action, "forget")
 
     def test_unknown_command_passes_through(self):
         self.assertIsNone(parse_command("/unknown"))

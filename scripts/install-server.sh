@@ -26,6 +26,31 @@ done
 install -d -o 10000 -g 10000 -m 0700 "$data_dir"
 install -d -o 10000 -g 10000 -m 0755 "$data_dir/plugins" "$data_dir/scripts" "$data_dir/plugin-data"
 install -d -o 10000 -g 10000 -m 0700 "$data_dir/plugin-data/smart_group_qq"
+database="$data_dir/plugin-data/smart_group_qq/data.db"
+if test -f "$database"; then
+  backup_dir="$deploy_dir/backups/smart_group_qq"
+  install -d -o 10000 -g 10000 -m 0700 "$backup_dir"
+  backup="$backup_dir/data.db.$(date -u +%Y%m%dT%H%M%SZ)"
+  python3 - "$database" "$backup" <<'PY'
+import sqlite3
+import sys
+
+source = sqlite3.connect(sys.argv[1])
+try:
+    result = source.execute("PRAGMA integrity_check").fetchone()
+    if not result or str(result[0]).lower() != "ok":
+        raise SystemExit("smart_group_qq database integrity check failed")
+    target = sqlite3.connect(sys.argv[2])
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+finally:
+    source.close()
+PY
+  chown 10000:10000 "$backup"
+  chmod 0600 "$backup"
+fi
 stage_dir="$(mktemp -d "$data_dir/.smart-group-install.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
 
@@ -110,7 +135,6 @@ if test -d "$data_dir/plugins/smart_group_qq"; then
   mv "$data_dir/plugins/smart_group_qq" "$data_dir/plugins/smart_group_qq.old"
 fi
 mv "$stage_dir/smart_group_qq" "$data_dir/plugins/smart_group_qq"
-rm -rf "$data_dir/plugins/smart_group_qq.old"
 chown -R 10000:10000 "$data_dir/plugins/smart_group_qq" "$data_dir/plugin-data/smart_group_qq" "$data_dir/scripts"
 chmod 0700 "$data_dir"
 chmod 0600 "$data_dir/.env"
@@ -133,3 +157,5 @@ test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}n
 }
 
 docker exec "$service" python /opt/data/scripts/reconcile-smart-group-cron.py
+bash "$project_dir/scripts/verify-server.sh"
+rm -rf "$data_dir/plugins/smart_group_qq.old"
