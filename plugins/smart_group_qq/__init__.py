@@ -280,10 +280,11 @@ def _start_maintenance(
                 logger.warning("smart_group_qq maintenance cycle failed", exc_info=True)
 
     try:
-        task = asyncio.create_task(run())
+        loop = asyncio.get_running_loop()
     except RuntimeError:
         logger.warning("smart_group_qq maintenance loop unavailable")
         return
+    task = loop.create_task(run())
     setattr(ctx, "_smart_group_qq_maintenance_task", task)
 
 

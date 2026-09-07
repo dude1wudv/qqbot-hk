@@ -156,6 +156,23 @@ test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}n
   exit 1
 }
 
+# Apply and validate the plugin's forward-only SQLite migration explicitly.
+# Hermes may defer plugin loading until after its basic health endpoint is up,
+# so deployment success must not depend on the first live QQ event.
+docker exec -i "$service" python - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, "/opt/data/plugins")
+from smart_group_qq.store import Store
+
+store = Store(
+    "/opt/data/plugin-data/smart_group_qq/data.db",
+    member_secret=os.environ.get("QQ_CLIENT_SECRET"),
+)
+store.close()
+PY
+
 docker exec "$service" python /opt/data/scripts/reconcile-smart-group-cron.py
 bash "$project_dir/scripts/verify-server.sh"
 rm -rf "$data_dir/plugins/smart_group_qq.old"

@@ -276,6 +276,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("qqbot-constants.py", compose)
         installer = (ROOT / "scripts" / "install-server.sh").read_text(encoding="utf-8")
         self.assertNotIn("QQ_SANDBOX", installer)
+        self.assertIn("from smart_group_qq.store import Store", installer)
+        self.assertLess(installer.index("from smart_group_qq.store import Store"), installer.index('bash "$project_dir/scripts/verify-server.sh"'))
         verifier = (ROOT / "scripts" / "verify-server.sh").read_text(encoding="utf-8")
         self.assertIn('API_BASE.rstrip("/") != "https://api.sgroup.qq.com"', verifier)
 
