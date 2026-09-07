@@ -12,7 +12,15 @@ import time
 from pathlib import Path
 from typing import Any, Awaitable, Mapping
 
-from .commands import clean_text, help_text, parse_command, parse_profile_command, rules_text, status_text
+from .commands import (
+    clean_text,
+    help_text,
+    model_alias_rewrite,
+    parse_command,
+    parse_profile_command,
+    rules_text,
+    status_text,
+)
 from .duty_roster import duty_roster_text
 from .formatter import format_for_qq, split_message
 from .knowledge import KnowledgeBase, KnowledgeError, kb_help_text, parse_kb_command
@@ -510,10 +518,15 @@ def build_handler(ctx: Any, store: Store):
         attachment_title, attachment_paths = _attachment_add_request(text)
         kb_command = parse_kb_command(text)
         profile_command = parse_profile_command(text)
+        model_rewrite = model_alias_rewrite(text)
         static_decision = policy.static(text)
         if static_decision.blocked:
             claim_action = "moderation:" + str(static_decision.rule_id or "static")
             reply = static_decision.notice or "此消息未能通过群聊安全审核。"
+        elif model_rewrite:
+            # Let Hermes' native /model implementation own provider
+            # resolution, persistence, cached-agent eviction and confirmation.
+            return {"action": "rewrite", "text": model_rewrite}
         elif profile_command:
             claim_action = "profile:" + profile_command.action
             try:

@@ -110,6 +110,21 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         render.assert_called_with()
         self.assertEqual(self.adapter.sent, [("group-a", expected, "roster-1")])
 
+    async def test_model_aliases_delegate_to_native_session_switch(self):
+        handler = build_handler(FakeContext(), self.store)
+        gemini = handler(self.make_event("<@bot> / gemini", "model-gemini"), self.gateway)
+        deepseek = handler(self.make_event("<@bot> /deepseek", "model-deepseek"), self.gateway)
+        self.assertEqual(gemini, {
+            "action": "rewrite",
+            "text": "/model gemini-3.8-flash-high --session",
+        })
+        self.assertEqual(deepseek, {
+            "action": "rewrite",
+            "text": "/model deepseek-v4-flash-0731 --session",
+        })
+        self.assertEqual(self.store.get_history("group-a"), [])
+        self.assertEqual(self.adapter.sent, [])
+
     async def test_keyword_send_failure_fails_open_and_can_retry(self):
         self.adapter.success = False
         settings = {"keyword_replies": [{"id": "hello", "match": "exact", "pattern": "hi", "reply": "hello"}]}

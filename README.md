@@ -55,6 +55,10 @@ QQ 当前“开发体验用户”机制使用生产 API/Gateway，并由开放�
 
 主模型和备用 1 使用 Chat Completions；备用 2 使用 Responses。DeepSeek 只处理文本；所有图片先由专用视觉链 `gemini-3.8-flash-high → gpt-5.6-luna` 转为可信度受限的文字描述，再交给主模型。图片也可作为群知识库资料导入。
 
+群内 @ 机器人发送 /gemini（兼容 / gemini）可将当前群会话切换到 gemini-3.8-flash-high；发送 /deepseek（兼容 / deepseek）可切回 deepseek-v4-flash-0731。两条命令都使用 Hermes 原生的会话级模型覆写，不修改其他群或全局默认模型。
+
+Hermes 的会话上下文自动压缩对上述三个模型统一使用 `200000` token 绝对阈值；压缩摘要固定调用 `deepseek-v4-flash-0731`，推理强度为 `low`。群记忆的 12 条消息摘要阈值与此独立。
+
 ## 部署
 
 生产目录：

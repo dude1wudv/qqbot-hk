@@ -71,6 +71,7 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["decisions"], ["周五发布"])
         self.assertIn("【决定】", self.memory.presentation("group-a"))
         self.assertEqual(self.store.memory_payload("group-a")["model"], "summary-model")
+        self.assertEqual(ctx.llm.kwargs["task"], "compression")
 
     async def test_concurrent_refreshes_are_serialized(self):
         calls = 0

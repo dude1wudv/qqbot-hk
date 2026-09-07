@@ -12,6 +12,10 @@ model:
   context_length: 1000000
   streaming: true
 
+compression:
+  enabled: true
+  threshold_tokens: 200000
+
 providers:
   sub2api:
     base_url: http://sub2api:8080/v1
@@ -49,6 +53,13 @@ agent:
     gpt-5.6-luna: medium
 
 auxiliary:
+  compression:
+    provider: custom
+    model: deepseek-v4-flash-0731
+    base_url: http://sub2api:8080/v1
+    key_env: SUB2API_API_KEY
+    api_mode: chat_completions
+    reasoning_effort: low
   vision:
     provider: custom
     model: gemini-3.8-flash-high

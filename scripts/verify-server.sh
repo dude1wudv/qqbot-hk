@@ -196,6 +196,40 @@ if plugin is None or plugin.get("status") not in {"enabled", "loaded"}:
 
 import yaml
 config = yaml.safe_load(Path("/opt/data/config.yaml").read_text(encoding="utf-8")) or {}
+
+compression_config = config.get("compression")
+if not isinstance(compression_config, Mapping):
+    raise SystemExit("compression config is missing")
+if compression_config.get("enabled") is not True:
+    raise SystemExit("compression.enabled must be true")
+if (
+    type(compression_config.get("threshold_tokens")) is not int
+    or compression_config.get("threshold_tokens") != 200000
+):
+    raise SystemExit("compression.threshold_tokens must be exactly 200000")
+
+auxiliary = config.get("auxiliary")
+if not isinstance(auxiliary, Mapping):
+    raise SystemExit("auxiliary config is missing")
+compression_route = auxiliary.get("compression")
+if not isinstance(compression_route, Mapping):
+    raise SystemExit("auxiliary.compression route is missing")
+if compression_route.get("provider") != "custom":
+    raise SystemExit("auxiliary.compression.provider must be custom")
+if compression_route.get("model") != "deepseek-v4-flash-0731":
+    raise SystemExit("auxiliary.compression.model must be deepseek-v4-flash-0731")
+if compression_route.get("base_url") != "http://sub2api:8080/v1":
+    raise SystemExit("auxiliary.compression.base_url is invalid")
+if compression_route.get("key_env") != "SUB2API_API_KEY":
+    raise SystemExit("auxiliary.compression.key_env must be SUB2API_API_KEY")
+if compression_route.get("api_mode") != "chat_completions":
+    raise SystemExit("auxiliary.compression.api_mode must be chat_completions")
+if compression_route.get("reasoning_effort") != "low":
+    raise SystemExit("auxiliary.compression.reasoning_effort must be low")
+print(
+    "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=200000 "
+    "MODEL=deepseek-v4-flash-0731 API_MODE=chat_completions REASONING_EFFORT=low"
+)
 qq_extra = (((config.get("platforms") or {}).get("qqbot") or {}).get("extra") or {})
 if qq_extra.get("dm_policy") != "pairing":
     raise SystemExit("QQ DM policy is not pairing")

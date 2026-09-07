@@ -11,6 +11,11 @@ _PROFILE_COMMAND = re.compile(
     r"^[／/](我的记忆|记住我|纠正记忆|忘记我|停止记忆)(?:\s*[:：]?\s*(.*))?$",
     re.DOTALL,
 )
+_MODEL_ALIAS_COMMAND = re.compile(r"^[／/]\s*(gemini|deepseek)\s*$", re.IGNORECASE)
+_MODEL_ALIASES = {
+    "gemini": "gemini-3.8-flash-high",
+    "deepseek": "deepseek-v4-flash-0731",
+}
 _ALIASES = {"clear": "reset", "值日表": "duty_roster"}
 _SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules", "duty_roster"})
 
@@ -61,11 +66,21 @@ def parse_profile_command(value: Any) -> ProfileCommand | None:
     return ProfileCommand(actions[match.group(1)], str(match.group(2) or "").strip())
 
 
+def model_alias_rewrite(value: Any) -> str | None:
+    """Translate friendly QQ aliases into Hermes' session model command."""
+
+    match = _MODEL_ALIAS_COMMAND.fullmatch(clean_text(value))
+    if not match:
+        return None
+    return f"/model {_MODEL_ALIASES[match.group(1).lower()]} --session"
+
+
 def help_text() -> str:
     return (
         "【群聊助手】\n"
         "/help 功能说明\n/reset 或 /clear 重置本群上下文\n"
         "/status 运行状态\n/summary 本群近期互动摘要\n/rules 已启用规则\n"
+        "/gemini 切换本群会话到 Gemini\n/deepseek 切换本群会话到 DeepSeek\n"
         "/我的记忆 查看个人记忆\n/记住我：内容 保存或更新个人信息\n"
         "/忘记我 删除个人记忆\n/停止记忆 禁止继续建立个人记忆\n"
         "/值日表 查看本周轮值安排"
@@ -98,5 +113,6 @@ def rules_text(settings: Mapping[str, Any]) -> str:
 
 __all__ = [
     "Command", "ProfileCommand", "clean_text", "parse_command", "parse_profile_command",
+    "model_alias_rewrite",
     "help_text", "status_text", "rules_text",
 ]

@@ -272,6 +272,7 @@ class GroupMemory:
                     timeout=75,
                     temperature=0.1,
                     purpose="qq_group_memory_compaction",
+                    task="compression",
                 )
                 parsed = getattr(result, "parsed", None)
                 if parsed is None and isinstance(result, Mapping):
