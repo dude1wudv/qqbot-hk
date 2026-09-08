@@ -134,6 +134,10 @@ class Store:
             );
             CREATE INDEX IF NOT EXISTS idx_group_history_time
                 ON group_history(group_id, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_group_history_dedupe
+                ON group_history(group_id, role, message_id);
+            CREATE INDEX IF NOT EXISTS idx_group_history_ambient_time
+                ON group_history(group_id, source_kind, created_at DESC, id DESC);
             CREATE TABLE IF NOT EXISTS knowledge_documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id TEXT NOT NULL,
