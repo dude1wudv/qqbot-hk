@@ -59,14 +59,15 @@ python3 - \
   "$secrets_dir/sub2api-api-key" \
   "$project_dir/config/hermes-config.yaml" \
   "$stage_dir/.env" \
-  "$stage_dir/config.yaml" <<'PY'
+  "$stage_dir/config.yaml" \
+  "$data_dir/.env" <<'PY'
 from pathlib import Path
 import json
 import os
 import re
 import sys
 
-qq_source, key_source, config_source, env_target, config_target = map(Path, sys.argv[1:])
+qq_source, key_source, config_source, env_target, config_target, runtime_env_source = map(Path, sys.argv[1:])
 qq_values = {}
 for raw in qq_source.read_text(encoding="utf-8").splitlines():
     line = raw.strip()
@@ -101,7 +102,17 @@ if config.count(sentinel) != 1:
 config = config.replace(sentinel, "      group_allow_from: " + json.dumps(groups), 1)
 config_target.write_text(config, encoding="utf-8")
 
+# Preserve runtime-owned settings and generated authentication keys.
+managed_names = {
+    "QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_GROUP_ALLOWED_USERS", "SUB2API_API_KEY",
+    "QQ_STT_PREFER_BUILTIN", "QQ_STT_API_KEY", "VOICE_TOOLS_OPENAI_KEY",
+}
+existing_lines = runtime_env_source.read_text(encoding="utf-8").splitlines() if runtime_env_source.is_file() else []
+unmanaged_lines = [line for line in existing_lines if line.split("=", 1)[0].strip() not in managed_names]
+unmanaged_env = "\n".join(unmanaged_lines).strip()
+
 env_target.write_text(
+    (unmanaged_env + "\n" if unmanaged_env else "") +
     f"QQ_APP_ID={qq_values['QQ_APP_ID']}\n"
     f"QQ_CLIENT_SECRET={qq_values['QQ_CLIENT_SECRET']}\n"
     f"QQ_GROUP_ALLOWED_USERS={','.join(groups)}\n"
