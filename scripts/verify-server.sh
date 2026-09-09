@@ -332,8 +332,8 @@ with sqlite3.connect(db_path) as connection:
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise SystemExit("plugin database integrity check failed")
     schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-    if schema_version < 2:
-        raise SystemExit("plugin database schema version is too old")
+    if schema_version != 3:
+        raise SystemExit("plugin database schema version does not match this release")
     foreign_key_errors = list(connection.execute("PRAGMA foreign_key_check"))
     if foreign_key_errors:
         raise SystemExit("plugin database foreign-key check failed")
@@ -346,12 +346,16 @@ with sqlite3.connect(db_path) as connection:
     required_tables = {
         "group_memories", "group_history", "knowledge_documents", "knowledge_chunks",
         "compaction_jobs", "group_members", "member_memory_facts",
+        "group_memory_epochs",
     }
     if not required_tables.issubset(tables):
         raise SystemExit("plugin memory/knowledge schema is incomplete")
     memory_columns = {row[1] for row in connection.execute("PRAGMA table_info(group_memories)")}
     if not {"structured_json", "last_history_id", "model", "version"}.issubset(memory_columns):
         raise SystemExit("plugin AI memory migration is incomplete")
+    epoch_columns = {row[1] for row in connection.execute("PRAGMA table_info(group_memory_epochs)")}
+    if not {"group_id", "epoch"}.issubset(epoch_columns):
+        raise SystemExit("group memory invalidation schema is incomplete")
     compaction_columns = {row[1] for row in connection.execute("PRAGMA table_info(compaction_jobs)")}
     if not {"group_id", "from_history_id", "to_history_id", "status", "next_retry_at", "created_at", "updated_at"}.issubset(compaction_columns):
         raise SystemExit("compaction job schema is incomplete")
@@ -359,7 +363,7 @@ with sqlite3.connect(db_path) as connection:
     if not {"group_id", "member_ref", "member_digest", "consent_status", "first_seen_at", "last_seen_at"}.issubset(profile_columns):
         raise SystemExit("group member schema is incomplete")
     fact_columns = {row[1] for row in connection.execute("PRAGMA table_info(member_memory_facts)")}
-    if not {"group_id", "member_ref", "category", "fact_key", "fact_value", "confidence", "explicitness", "expires_at", "status", "created_at", "updated_at"}.issubset(fact_columns):
+    if not {"group_id", "member_ref", "category", "fact_key", "fact_value", "confidence", "explicitness", "source_history_id", "evidence", "expires_at", "status", "created_at", "updated_at"}.issubset(fact_columns):
         raise SystemExit("member memory fact schema is incomplete")
     indexes = {
         row[1]

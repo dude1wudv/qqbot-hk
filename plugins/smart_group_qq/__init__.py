@@ -32,7 +32,7 @@ from .store import Store
 
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "smart_group_qq"
-_GROUP_MARKER = re.compile(r"\[群记忆键:([0-9a-f]{12})\]")
+_RESPONSE_MARKER = re.compile(r"\[群对话标记:([0-9a-f]{32})\]")
 _FILE_MARKER = re.compile(r"^\[file:\s*(.*?)\s+\((/[^\r\n]+)\)\]\s*$", re.MULTILINE)
 
 
@@ -195,10 +195,19 @@ def _schedule_profile_extract(
     text: str,
     message_id: str,
     source_kind: str,
+    *,
+    claim_suffix: str = "",
 ) -> None:
-    if not message_id or not member_id or not profiles.auto_extract:
+    if (
+        not message_id or not member_id or not profiles.enabled or not profiles.auto_extract
+        or profiles.consent(group_id, member_id) != "opted_in"
+    ):
         return
-    claim = ("qq-profile", message_id, "extract:" + _memory_marker(group_id))
+    source = store.get_history_message(group_id, message_id)
+    if source is None:
+        return
+    source_history_id = int(source["id"])
+    claim = ("qq-profile", message_id, "extract:" + _memory_marker(group_id) + claim_suffix)
     if not store.claim_message(*claim):
         return
 
@@ -211,7 +220,7 @@ def _schedule_profile_extract(
                 member_id,
                 text,
                 source_kind=source_kind,
-                source_history_id=store.latest_history_id(group_id),
+                source_history_id=source_history_id,
             )
             success = True
         except Exception:
@@ -451,7 +460,7 @@ def build_handler(ctx: Any, store: Store):
         max_chars=int(knowledge_cfg.get("max_document_chars", 200000)),
         cache_dir=str(knowledge_cfg.get("cache_dir", "/opt/data/cache/documents")),
     )
-    marker_to_group: dict[str, str] = {}
+    response_contexts: dict[str, tuple[str, int]] = {}
 
     async def summary_reply(group_id: str) -> str:
         await memory.refresh_ai(ctx, group_id, force=True)
@@ -537,6 +546,8 @@ def build_handler(ctx: Any, store: Store):
                         reply = "请使用 /记住我：内容，或 /纠正记忆：字段=新内容。"
                     else:
                         profiles.remember(group_id, member_id, profile_command.argument)
+                        if profile_command.action == "correct":
+                            _reset_gateway_session(gateway, session_store, source)
                         reply = "已保存到你的本群专属记忆。"
                 elif profile_command.action == "forget":
                     profiles.forget(group_id, member_id)
@@ -545,6 +556,7 @@ def build_handler(ctx: Any, store: Store):
                     reply = "已删除你在本群的成员档案、个人消息记忆，并重置群会话上下文。"
                 elif profile_command.action == "opt_out":
                     profiles.opt_out(group_id, member_id)
+                    _reset_gateway_session(gateway, session_store, source)
                     reply = "已停止建立和调用你的成员记忆；已有内容可用 /忘记我 删除。"
             except ValueError:
                 reply = "这条内容不能保存，请避免敏感信息并检查格式。"
@@ -631,8 +643,9 @@ def build_handler(ctx: Any, store: Store):
             return {"action": "skip", "reason": "command_or_policy_handled"}
 
         marker = _memory_marker(group_id)
-        marker_to_group[marker] = group_id
-        normalized = f"[群记忆键:{marker}]\n" + normalize_member_message(
+        epoch = store.memory_epoch(group_id)
+        request_ref = os.urandom(16).hex()
+        normalized = f"[群记忆键:{marker}]\n[群对话标记:{request_ref}]\n" + normalize_member_message(
             store.member_ref_for(group_id, member_id), text
         )
         try:
@@ -649,7 +662,7 @@ def build_handler(ctx: Any, store: Store):
         sections = [
             _ambient_context(ambient_rows, char_budget=int(memory_cfg.get("context_char_budget", 6000)) // 2),
         ]
-        profile_context = profiles.presentation(group_id, member_id, for_prompt=True)
+        profile_context = profiles.presentation(group_id, member_id, for_prompt=True, query=text)
         if profile_context and not profile_context.startswith(("尚", "你已")):
             sections.append("[当前成员的本群专属记忆]\n" + profile_context)
         sections.append(group_background)
@@ -669,6 +682,10 @@ def build_handler(ctx: Any, store: Store):
         if due:
             _schedule_memory_refresh(ctx, memory, store, group_id)
         _schedule_profile_extract(ctx, profiles, store, group_id, member_id, text, message_id, "addressed")
+        # Native Hermes may decorate the input with sender, quote or vision context.
+        response_contexts[request_ref] = (group_id, epoch)
+        if len(response_contexts) > 256:
+            response_contexts.pop(next(iter(response_contexts)))
         return {"action": "rewrite", "text": normalized}
 
     async def observe_nonmention(record: Mapping[str, Any]) -> None:
@@ -730,7 +747,7 @@ def build_handler(ctx: Any, store: Store):
         ):
             store.record_audit("ambient_enriched", chat_id=group_id, message_id=message_id, source="media")
             _schedule_profile_extract(
-                ctx, profiles, store, group_id, member_id, text, message_id + ":media", "ambient"
+                ctx, profiles, store, group_id, member_id, text, message_id, "ambient", claim_suffix=":media"
             )
 
     observe_nonmention.on_media_ready = observe_media_ready
@@ -795,17 +812,32 @@ def build_handler(ctx: Any, store: Store):
         **_: Any,
     ) -> None:
         platform_name = str(getattr(platform, "value", platform) or "").lower()
-        if not platform_name.endswith("qqbot") or not assistant_response:
+        if not platform_name.endswith("qqbot"):
             return
-        marker_match = _GROUP_MARKER.search(str(user_message or ""))
-        group_id = marker_to_group.get(marker_match.group(1)) if marker_match else None
-        if not group_id:
-            session_match = re.search(r"(?:^|:)qqbot:group:([^:]+)", str(session_id or ""))
-            group_id = session_match.group(1) if session_match else None
-        if not group_id:
+        if isinstance(user_message, str):
+            parts = (user_message,)
+        elif isinstance(user_message, list):
+            parts = (
+                part["text"] for part in user_message
+                if isinstance(part, Mapping) and isinstance(part.get("text"), str)
+            )
+        else:
             return
-        memory.record_assistant(group_id, str(assistant_response), model=str(model or ""))
-        if memory.needs_refresh(group_id):
+        context = None
+        for part in parts:
+            for match in _RESPONSE_MARKER.finditer(part):
+                context = response_contexts.pop(match.group(1), None)
+                if context is not None:
+                    break
+            if context is not None:
+                break
+        if context is None or not assistant_response:
+            return
+        group_id, epoch = context
+        recorded = memory.record_assistant(
+            group_id, str(assistant_response), model=str(model or ""), expected_epoch=epoch
+        )
+        if recorded and memory.needs_refresh(group_id):
             _schedule_memory_refresh(ctx, memory, store, group_id)
 
     handle.memory = memory

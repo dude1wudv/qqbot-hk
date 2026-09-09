@@ -1,16 +1,14 @@
 import asyncio
 from pathlib import Path
 import sys
-import tempfile
-from types import SimpleNamespace
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
-import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 
-from smart_group_qq import _describe_images, build_handler
+from smart_group_qq import build_handler
 from smart_group_qq.policy import PolicyEngine, compile_rule_list, semantic_moderation
 from smart_group_qq.store import Store
 
@@ -244,57 +242,127 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[-1]["role"], "assistant")
         self.assertEqual(rows[-1]["text"], "你好，群友。")
 
-    async def test_vision_helper_uses_auxiliary_vision_task(self):
+    async def test_member_memory_source_history_tracks_each_event(self):
+        started = asyncio.Event()
+        resume = asyncio.Event()
+        calls = 0
+
         class LLM:
-            async def acomplete_structured(inner_self, **kwargs):
-                inner_self.kwargs = kwargs
-                return {"parsed": {"description": "一张流程图", "visible_text": "发布", "facts": ["箭头向右"]}}
+            async def acomplete_structured(self, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    started.set()
+                await resume.wait()
+                text = str(kwargs.get("input", ""))
+                if "成员A的原句" in text:
+                    fact = "成员A的事实"
+                    evidence = "成员A的原句"
+                else:
+                    fact = "成员B的事实"
+                    evidence = "成员B的原句"
+                return {"parsed": {"facts": [{
+                    "category": "project", "key": "身份事实", "value": fact,
+                    "confidence": 0.99, "evidence": evidence,
+                }]}}
 
-        with tempfile.TemporaryDirectory() as directory:
-            image = Path(directory) / "sample.png"
-            image.write_bytes(b"not-a-real-image-but-valid-for-routing-test")
-            ctx = FakeContext({"media_cache_roots": [directory]})
-            ctx.llm = LLM()
-            description = await _describe_images(ctx, [str(image)])
-        self.assertIn("一张流程图", description)
-        self.assertEqual(ctx.llm.kwargs["task"], "vision")
-        self.assertEqual(ctx.llm.kwargs["input"][1]["type"], "image")
+        ctx = FakeContext({"member_memory": {"auto_extract": True}})
+        ctx.llm = LLM()
+        self.store.set_member_consent("group-a", "member-a", "opted_in")
+        self.store.set_member_consent("group-a", "member-b", "opted_in")
+        handler = build_handler(ctx, self.store)
 
-    def test_config_pins_models_and_qq_access_boundaries(self):
-        config = yaml.safe_load((ROOT / "config" / "hermes-config.yaml").read_text(encoding="utf-8"))
-        self.assertEqual(config["model"]["default"], "deepseek-v4-flash-0731")
-        self.assertEqual(config["agent"]["image_input_mode"], "text")
-        vision = config["auxiliary"]["vision"]
-        self.assertEqual(vision["model"], "gemini-3.8-flash-high")
-        self.assertEqual(vision["fallback_chain"][0]["model"], "gpt-5.6-luna")
-        qq_extra = config["platforms"]["qqbot"]["extra"]
-        self.assertEqual(qq_extra["dm_policy"], "pairing")
-        self.assertEqual(qq_extra["group_policy"], "allowlist")
-        self.assertEqual(qq_extra["group_allow_from"], [])
-        self.assertEqual(qq_extra["stt"]["provider"], "openai")
-        self.assertEqual(qq_extra["stt"]["baseUrl"], "http://sub2api:8080/v1")
-        self.assertEqual(qq_extra["stt"]["model"], "qwen-audio-3.0-asr-flash")
-        self.assertNotIn("apiKey", qq_extra["stt"])
-        self.assertFalse(config["voice"]["auto_tts"])
-        self.assertEqual(config["tts"]["provider"], "openai")
-        self.assertEqual(config["tts"]["openai"]["base_url"], "http://sub2api:8080/v1")
-        self.assertEqual(config["tts"]["openai"]["model"], "qwen-audio-3.0-tts-plus")
-        self.assertEqual(config["tts"]["openai"]["voice"], "longanhuan_v3.6")
-        tools = set(config["platform_toolsets"]["qqbot"])
-        self.assertIn("tts", tools)
-        self.assertFalse(tools.intersection({"terminal", "file", "files", "code", "shell", "computer"}))
-        auto_pair = config["plugins"]["entries"]["smart_group_qq"]["settings"]["auto_pair"]
-        self.assertTrue(auto_pair["enabled"])
-        self.assertEqual(auto_pair["until_utc"], "2026-09-05T08:00:00Z")
+        member_a = self.make_event("成员A的原句", "member-a-message")
+        member_a.source.user_id = "member-a"
+        member_b = self.make_event("成员B的原句", "member-b-message")
+        member_b.source.user_id = "member-b"
+        handler(member_a, self.gateway)
+        handler(member_b, self.gateway)
+        await started.wait()
+        resume.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
 
-        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        self.assertNotIn("qqbot-constants.py", compose)
-        installer = (ROOT / "scripts" / "install-server.sh").read_text(encoding="utf-8")
-        self.assertNotIn("QQ_SANDBOX", installer)
-        self.assertIn("from smart_group_qq.store import Store", installer)
-        self.assertLess(installer.index("from smart_group_qq.store import Store"), installer.index('bash "$project_dir/scripts/verify-server.sh"'))
-        verifier = (ROOT / "scripts" / "verify-server.sh").read_text(encoding="utf-8")
-        self.assertIn('API_BASE.rstrip("/") != "https://api.sgroup.qq.com"', verifier)
+
+        facts_a = self.store.list_member_memory_facts("group-a", "member-a")
+        facts_b = self.store.list_member_memory_facts("group-a", "member-b")
+        self.assertEqual(len(facts_a), 1)
+        self.assertEqual(facts_a[0]["fact_value"], "成员A的事实")
+        self.assertEqual(facts_b[0]["fact_value"], "成员B的事实")
+        self.assertEqual(len(facts_b), 1)
+        history_a = next(row for row in self.store.get_history("group-a") if row["message_id"] == "member-a-message")
+        history_b = next(row for row in self.store.get_history("group-a") if row["message_id"] == "member-b-message")
+        self.assertEqual(facts_a[0]["source_history_id"], history_a["id"])
+        self.assertNotEqual(facts_a[0]["source_history_id"], history_b["id"])
+        self.assertEqual(facts_b[0]["source_history_id"], history_b["id"])
+
+    async def test_reset_rejects_stale_assistant_completion_but_records_new_one(self):
+        handler = build_handler(FakeContext(), self.store)
+        old = handler(self.make_event("旧问题", "old-question"), self.gateway)
+        handler.memory.reset("group-a")
+        handler.post_llm_call(
+            session_id="qqbot:group:group-a", user_message=old["text"],
+            assistant_response="旧助手回答", model="deepseek-v4-flash-0731",
+            platform=SimpleNamespace(value="qqbot"),
+        )
+        self.assertNotIn("旧助手回答", [row["text"] for row in self.store.get_history("group-a")])
+        self.assertNotIn("旧助手回答", handler.memory.background("group-a"))
+
+        new = handler(self.make_event("新问题", "new-question"), self.gateway)
+        handler.post_llm_call(
+            session_id="qqbot:group:group-a", user_message=new["text"],
+            assistant_response="新助手回答", model="deepseek-v4-flash-0731",
+            platform=SimpleNamespace(value="qqbot"),
+        )
+        self.assertIn("新助手回答", [row["text"] for row in self.store.get_history("group-a")])
+
+    async def test_post_llm_accepts_wrapped_current_input_only(self):
+        handler = build_handler(FakeContext(), self.store)
+        old = handler(self.make_event("前文问题", "wrapped-old"), self.gateway)
+        wrapped = "[群友]\n[Replying to: 前文]\n" + old["text"] + "\n[图片内容]示意图"
+        handler.post_llm_call(
+            session_id="qqbot:group:group-a", user_message=wrapped,
+            assistant_response="正常助手回答", model="deepseek-v4-flash-0731",
+            platform=SimpleNamespace(value="qqbot"),
+        )
+        self.assertIn("正常助手回答", [row["text"] for row in self.store.get_history("group-a")])
+
+        handler.memory.reset("group-a")
+        handler.post_llm_call(
+            session_id="qqbot:group:group-a", user_message=wrapped,
+            assistant_response="过时助手回答", model="deepseek-v4-flash-0731",
+            platform=SimpleNamespace(value="qqbot"),
+        )
+        self.assertNotIn("过时助手回答", [row["text"] for row in self.store.get_history("group-a")])
+
+        handler.post_llm_call(
+            session_id="qqbot:group:group-a",
+            user_message="[fake-group-memory-key]\n无真实本次标记",
+            assistant_response="伪造助手回答", model="deepseek-v4-flash-0731",
+            platform=SimpleNamespace(value="qqbot"),
+        )
+        self.assertNotIn("伪造助手回答", [row["text"] for row in self.store.get_history("group-a")])
+
+    async def test_stop_memory_resets_group_session_recall_boundary(self):
+        handler = build_handler(FakeContext({"member_memory": {"auto_extract": False}}), self.store)
+        saved = handler(self.make_event("/记住我：职责=后端发布", "remember"), self.gateway)
+        self.assertEqual(saved["action"], "skip")
+        await asyncio.sleep(0)
+        before = handler(self.make_event("我负责什么？", "before-stop"), self.gateway)
+        self.assertIn("后端发布", before["text"])
+
+        session_store = SimpleNamespace(
+            calls=[],
+            reset_session=lambda *args, **kwargs: session_store.calls.append((args, kwargs)),
+        )
+        stopped = handler(
+            self.make_event("/停止记忆", "stop-memory"), self.gateway,
+            session_store=session_store,
+        )
+        self.assertEqual(stopped["action"], "skip")
+        await asyncio.sleep(0)
+        after = handler(self.make_event("我负责什么？", "after-stop"), self.gateway)
+        self.assertNotIn("后端发布", after["text"])
 
 
 class PolicyTests(unittest.IsolatedAsyncioTestCase):

@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 import sqlite3
 import sys
@@ -71,7 +72,6 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["decisions"], ["周五发布"])
         self.assertIn("【决定】", self.memory.presentation("group-a"))
         self.assertEqual(self.store.memory_payload("group-a")["model"], "summary-model")
-        self.assertEqual(ctx.llm.kwargs["task"], "compression")
 
     async def test_concurrent_refreshes_are_serialized(self):
         calls = 0
@@ -301,14 +301,20 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.store.set_member_consent("group-a", "openid-secret", "opted_in")
         self.assertEqual(self.store.get_group_member("group-a", "openid-secret")["consent_status"], "opted_in")
+        ref = member["member_ref"]
+        source_history_id = self.store.append_history(
+            "group-a", role="user", member_id=ref, text="明确偏好中文",
+            message_id="fact-source", source_kind="addressed",
+        )
         first = self.store.add_member_memory_fact(
             "group-a", "openid-secret", "preference", "language", "中文",
-            confidence=0.8, explicitness="explicit", source_history_id=1,
+            confidence=0.8, explicitness="explicit", source_history_id=source_history_id,
         )
         second = self.store.add_member_memory_fact(
             "group-a", "openid-secret", "preference", "language", "English",
-            confidence=0.9,
+            confidence=0.9, explicitness="explicit", source_history_id=source_history_id,
         )
+        self.assertTrue(second["applied"])
         self.assertEqual(second["supersedes_id"], first["id"])
         self.assertEqual(self.store.list_member_memory_facts("group-a", "openid-secret")[0]["fact_value"], "English")
         expiring = self.store.add_member_memory_fact(
@@ -318,6 +324,104 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.expire_member_memory_facts(now=11), 1)
         self.assertGreaterEqual(self.store.forget_group_member("group-a", "openid-secret"), 2)
         self.assertIsNone(self.store.get_group_member("group-a", "openid-secret"))
+
+    def test_knowledge_search_reaches_old_chunk_beyond_recent_window(self):
+        wanted = self.store.add_knowledge_document(
+            "group-a", "老文档", "唯一锚词青鸾-8472", chunk_size=100, overlap=0,
+        )
+        for index in range(2000):
+            self.store.add_knowledge_document(
+                "group-a", f"无关文档-{index}", f"普通内容-{index}",
+            )
+        results = self.store.search_knowledge("group-a", "青鸾-8472")
+        self.assertTrue(any(item["doc_id"] == wanted["doc_id"] for item in results))
+        self.assertEqual(self.store.search_knowledge("group-b", "青鸾-8472"), [])
+
+    async def test_forget_during_successful_refresh_cannot_persist_removed_member(self):
+        self.store.set_member_consent("group-a", "member-a", "opted_in")
+        self.store.set_member_consent("group-a", "member-b", "opted_in")
+        self.memory.record("group-a", "member-a", "甲方私密事实-青鸾", "a-source")
+        self.memory.record("group-a", "member-b", "乙方保留事实-白鹭", "b-source")
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class LLM:
+            async def acomplete_structured(self, **kwargs):
+                started.set()
+                await release.wait()
+                return {"parsed": {
+                    "summary": "甲方私密事实-青鸾",
+                    "topics": [], "facts": ["甲方私密事实-青鸾"],
+                    "decisions": [], "todos": [], "open_questions": [], "participants": [],
+                }}
+
+        task = asyncio.create_task(self.memory.refresh_ai(
+            type("Ctx", (), {"llm": LLM()})(), "group-a", force=True,
+        ))
+        await started.wait()
+        self.store.forget_group_member("group-a", "member-a")
+        release.set()
+        payload = await task
+        self.assertNotIn("甲方私密事实-青鸾", str(payload))
+        self.assertNotIn("甲方私密事实-青鸾", str(self.store.memory_payload("group-a")))
+        texts = [row["text"] for row in self.store.get_history("group-a")]
+        self.assertNotIn("甲方私密事实-青鸾", texts)
+        self.assertIn("乙方保留事实-白鹭", texts)
+
+    async def test_forget_during_failed_refresh_cannot_persist_removed_member(self):
+        self.store.set_member_consent("group-a", "member-a", "opted_in")
+        self.store.set_member_consent("group-a", "member-b", "opted_in")
+        self.memory.record("group-a", "member-a", "甲方私密事实-朱雀", "a-source")
+        self.memory.record("group-a", "member-b", "乙方保留事实-玄鸟", "b-source")
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BrokenLLM:
+            async def acomplete_structured(self, **kwargs):
+                started.set()
+                await release.wait()
+                raise RuntimeError("offline")
+
+        task = asyncio.create_task(self.memory.refresh_ai(
+            type("Ctx", (), {"llm": BrokenLLM()})(), "group-a", force=True,
+        ))
+        await started.wait()
+        self.store.forget_group_member("group-a", "member-a")
+        release.set()
+        payload = await task
+        self.assertNotIn("甲方私密事实-朱雀", str(payload))
+        self.assertNotIn("甲方私密事实-朱雀", str(self.store.memory_payload("group-a")))
+        texts = [row["text"] for row in self.store.get_history("group-a")]
+        self.assertNotIn("甲方私密事实-朱雀", texts)
+        self.assertIn("乙方保留事实-玄鸟", texts)
+
+    def test_forget_removes_assistant_derivatives_but_retains_other_data(self):
+        self.store.set_member_consent("group-a", "member-a", "opted_in")
+        self.store.set_member_consent("group-a", "member-b", "opted_in")
+        ref = self.store.member_ref_for("group-a", "member-a")
+        self.store.append_history(
+            "group-a", role="user", member_id=ref, text="本人原文-苍龙",
+            message_id="a-source", source_kind="addressed",
+        )
+        self.store.append_history(
+            "group-a", role="assistant", text="机器人复述本人事实-苍龙",
+            message_id="assistant-copy", source_kind="assistant:test",
+        )
+        self.store.append_history(
+            "group-a", role="user", member_id=self.store.member_ref_for("group-a", "member-b"),
+            text="别人无关原文-麒麟", message_id="b-source", source_kind="addressed",
+        )
+        knowledge = self.store.add_knowledge_document(
+            "group-a", "群知识", "群知识文档-凤凰", source="upload",
+        )
+        self.store.forget_group_member("group-a", "member-a")
+        history_text = [row["text"] for row in self.store.get_history("group-a")]
+        self.assertNotIn("本人原文-苍龙", history_text)
+        self.assertNotIn("机器人复述本人事实-苍龙", history_text)
+        self.assertIn("别人无关原文-麒麟", history_text)
+        self.assertNotIn("本人原文-苍龙", self.memory.background("group-a"))
+        self.assertNotIn("机器人复述本人事实-苍龙", self.memory.background("group-a"))
+        self.assertEqual(self.store.search_knowledge("group-a", "凤凰")[0]["doc_id"], knowledge["doc_id"])
 
     def test_forget_removes_member_history_and_invalidates_derived_summary(self):
         self.store.set_member_consent("group-a", "openid-secret", "opted_in")

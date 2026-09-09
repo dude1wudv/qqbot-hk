@@ -7,6 +7,8 @@ content.
 """
 from __future__ import annotations
 
+import heapq
+import math
 import sqlite3
 import time
 import hashlib
@@ -22,7 +24,7 @@ from typing import Any, Iterator
 
 
 PENDING_STALE_SECONDS = 300.0
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _MEMBER_REF_NAMESPACE = b"smart_group_qq/member-ref/v1"
 _SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
@@ -136,8 +138,6 @@ class Store:
                 ON group_history(group_id, id DESC);
             CREATE INDEX IF NOT EXISTS idx_group_history_dedupe
                 ON group_history(group_id, role, message_id);
-            CREATE INDEX IF NOT EXISTS idx_group_history_ambient_time
-                ON group_history(group_id, source_kind, created_at DESC, id DESC);
             CREATE TABLE IF NOT EXISTS knowledge_documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id TEXT NOT NULL,
@@ -184,6 +184,10 @@ class Store:
             self._ensure_column("group_memories", "version", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column("group_history", "source_kind", "TEXT NOT NULL DEFAULT 'addressed'")
             self._ensure_column("group_history", "media_json", "TEXT NOT NULL DEFAULT '[]'")
+        self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_group_history_ambient_time "
+            "ON group_history(group_id, source_kind, created_at DESC, id DESC)"
+        )
         if schema_version < 2:
             self.db.executescript(
                 """
@@ -245,6 +249,11 @@ class Store:
                 """
             )
             schema_version = 2
+        self._ensure_column("member_memory_facts", "evidence", "TEXT NOT NULL DEFAULT ''")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS group_memory_epochs ("
+            "group_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL DEFAULT 0)"
+        )
         if stored_schema_version < SCHEMA_VERSION:
             self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.db.commit()
@@ -263,6 +272,8 @@ class Store:
     def transaction(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
             try:
+                if not self.db.in_transaction:
+                    self.db.execute("BEGIN IMMEDIATE")
                 yield self.db
                 self.db.commit()
             except Exception:
@@ -392,8 +403,11 @@ class Store:
         source_kind: str = "addressed",
         media: Any = None,
         created_at: float | None = None,
+        expected_epoch: int | None = None,
     ) -> int:
         with self.transaction() as db:
+            if expected_epoch is not None and self.memory_epoch(group_id) != expected_epoch:
+                return 0
             if message_id:
                 existing = db.execute(
                     "SELECT id FROM group_history WHERE group_id=? AND role=? AND message_id=? LIMIT 1",
@@ -416,6 +430,13 @@ class Store:
             return int(cur.lastrowid)
 
     add_history = append_history
+
+    def get_history_message(self, group_id: str, message_id: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self.db.execute(
+                "SELECT * FROM group_history WHERE group_id=? AND role='user' AND message_id=? LIMIT 1",
+                (str(group_id), str(message_id)),
+            ).fetchone()
 
     def get_history(self, group_id: str, limit: int | None = None) -> list[sqlite3.Row]:
         with self._lock:
@@ -551,10 +572,27 @@ class Store:
             )
             return True
 
+    def memory_epoch(self, group_id: str) -> int:
+        with self._lock:
+            row = self.db.execute(
+                "SELECT epoch FROM group_memory_epochs WHERE group_id=?", (str(group_id),)
+            ).fetchone()
+        return int(row["epoch"]) if row is not None else 0
+
+    def _advance_memory_epoch(self, group_id: str) -> None:
+        """Invalidate in-flight work inside the caller's write transaction."""
+        self.db.execute(
+            "INSERT INTO group_memory_epochs(group_id,epoch) VALUES(?,1) "
+            "ON CONFLICT(group_id) DO UPDATE SET epoch=epoch+1",
+            (str(group_id),),
+        )
+
     def clear_group(self, group_id: str) -> None:
         with self.transaction() as db:
+            self._advance_memory_epoch(group_id)
             db.execute("DELETE FROM group_history WHERE group_id=?", (str(group_id),))
             db.execute("DELETE FROM group_memories WHERE group_id=?", (str(group_id),))
+            db.execute("DELETE FROM compaction_jobs WHERE group_id=?", (str(group_id),))
 
     reset_group = clear_group
 
@@ -575,9 +613,12 @@ class Store:
         model: str = "",
         version: int = 1,
         updated_at: float | None = None,
-    ) -> None:
+        expected_epoch: int | None = None,
+    ) -> bool:
         payload = structured if isinstance(structured, dict) else {}
         with self.transaction() as db:
+            if expected_epoch is not None and self.memory_epoch(group_id) != expected_epoch:
+                return False
             db.execute(
                 "INSERT INTO group_memories"
                 "(group_id,summary,window_size,structured_json,last_history_id,model,version,updated_at) "
@@ -593,6 +634,7 @@ class Store:
                     time.time() if updated_at is None else float(updated_at),
                 ),
             )
+        return True
 
     def memory_payload(self, group_id: str) -> dict[str, Any]:
         row = self.get_memory(group_id)
@@ -1039,6 +1081,7 @@ class Store:
     def forget_group_member(self, group_id: str, member_id: str, *, hard_delete: bool = True) -> int:
         ref, _ = self._member_identity(group_id, member_id)
         with self.transaction() as db:
+            self._advance_memory_epoch(group_id)
             facts = db.execute(
                 "DELETE FROM member_memory_facts WHERE group_id=? AND member_ref=?",
                 (str(group_id), ref),
@@ -1055,7 +1098,7 @@ class Store:
                     (time.time(), str(group_id), ref),
                 )
             history = db.execute(
-                "DELETE FROM group_history WHERE group_id=? AND member_id=?",
+                "DELETE FROM group_history WHERE group_id=? AND (member_id=? OR role='assistant')",
                 (str(group_id), ref),
             )
             # A summary may contain facts derived from the removed rows. Drop
@@ -1070,6 +1113,10 @@ class Store:
     forget_member = forget_group_member
     delete_group_member = forget_group_member
 
+    @staticmethod
+    def _normalize_fact_key(value: Any) -> str:
+        return " ".join(unicodedata.normalize("NFKC", str(value or "")).casefold().split())
+
     def add_member_memory_fact(
         self,
         group_id: str,
@@ -1083,9 +1130,11 @@ class Store:
         source_history_id: int | None = None,
         expires_at: float | None = None,
         now: float | None = None,
+        evidence: str = "",
+        expected_epoch: int | None = None,
+        expected_profile_version: int | None = None,
     ) -> dict[str, Any]:
-        """Insert a member fact, superseding a conflicting active value."""
-
+        """Apply a sourced fact without undoing explicit corrections or newer evidence."""
         category_text = self._bounded_text(category, 80)
         key_text = self._bounded_text(fact_key, 120)
         value_text = self._bounded_text(fact_value, 2000)
@@ -1094,54 +1143,87 @@ class Store:
         explicit = str(explicitness or "inferred").strip().lower()
         if explicit not in {"explicit", "inferred"}:
             raise ValueError("invalid explicitness")
-        score = min(1.0, max(0.0, float(confidence)))
+        score = float(confidence)
+        if not math.isfinite(score):
+            raise ValueError("confidence must be finite")
+        score = min(1.0, max(0.0, score))
         ref, _ = self._member_identity(group_id, member_id)
         stamp = time.time() if now is None else float(now)
+        normalized_key = self._normalize_fact_key(key_text)
+        evidence_text = self._bounded_text(evidence, 400)
         with self.transaction() as db:
+            if expected_epoch is not None and self.memory_epoch(group_id) != expected_epoch:
+                raise ValueError("member memory source was invalidated")
             member = db.execute(
-                "SELECT consent_status FROM group_members WHERE group_id=? AND member_ref=? "
+                "SELECT consent_status,profile_version FROM group_members WHERE group_id=? AND member_ref=? "
                 "AND deleted_at IS NULL",
                 (str(group_id), ref),
             ).fetchone()
             if member is None or str(member["consent_status"]) != "opted_in":
                 raise ValueError("member memory requires active opt-in consent")
-            existing = db.execute(
-                "SELECT * FROM member_memory_facts WHERE group_id=? AND member_ref=? "
-                "AND category=? AND fact_key=? AND status='active' "
-                "AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1",
-                (str(group_id), ref, category_text, key_text, stamp),
-            ).fetchone()
-            if existing is not None and str(existing["fact_value"]) == value_text:
+            if expected_profile_version is not None and int(member["profile_version"]) != expected_profile_version:
+                raise ValueError("member memory consent changed")
+            source = None
+            if source_history_id is not None:
+                source = db.execute(
+                    "SELECT id,created_at FROM group_history WHERE id=? AND group_id=? AND member_id=? AND role='user'",
+                    (int(source_history_id), str(group_id), ref),
+                ).fetchone()
+                if source is None:
+                    raise ValueError("member fact source does not belong to this member")
+            rows = db.execute(
+                "SELECT * FROM member_memory_facts WHERE group_id=? AND member_ref=? AND status='active' "
+                "AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC",
+                (str(group_id), ref, stamp),
+            ).fetchall()
+            matches = [row for row in rows if self._normalize_fact_key(row["fact_key"]) == normalized_key]
+            existing = max(
+                matches, key=lambda row: (row["explicitness"] == "explicit", int(row["id"])), default=None
+            )
+            if existing is not None and explicit == "inferred":
+                protected = existing["explicitness"] == "explicit"
+                if not protected and existing["source_history_id"] is not None:
+                    previous_source = db.execute(
+                        "SELECT id,created_at FROM group_history WHERE id=?", (existing["source_history_id"],)
+                    ).fetchone()
+                    protected = source is None or (
+                        previous_source is not None
+                        and (float(source["created_at"]), int(source["id"]))
+                        < (float(previous_source["created_at"]), int(previous_source["id"]))
+                    )
+                if protected:
+                    return {**dict(existing), "deduplicated": True, "applied": False}
+            same_value = existing is not None and str(existing["fact_value"]) == value_text
+            for row in matches:
+                if same_value and int(row["id"]) == int(existing["id"]):
+                    continue
+                db.execute(
+                    "UPDATE member_memory_facts SET status='superseded', updated_at=? WHERE id=?",
+                    (stamp, int(row["id"])),
+                )
+            if same_value:
                 db.execute(
                     "UPDATE member_memory_facts SET confidence=MAX(confidence,?), "
                     "explicitness=CASE WHEN ?='explicit' THEN 'explicit' ELSE explicitness END, "
-                    "source_history_id=COALESCE(?,source_history_id), expires_at=?, updated_at=? WHERE id=?",
-                    (score, explicit, source_history_id, expires_at, stamp, int(existing["id"])),
+                    "source_history_id=COALESCE(?,source_history_id), expires_at=?, updated_at=?, "
+                    "evidence=CASE WHEN ?<>'' THEN ? ELSE evidence END WHERE id=?",
+                    (score, explicit, source_history_id, expires_at, stamp, evidence_text, evidence_text, int(existing["id"])),
                 )
                 row = db.execute("SELECT * FROM member_memory_facts WHERE id=?", (int(existing["id"]),)).fetchone()
-                result = dict(row)
-                result["deduplicated"] = True
-                return result
+                return {**dict(row), "deduplicated": True, "applied": True}
             supersedes_id = int(existing["id"]) if existing is not None else None
-            if existing is not None:
-                db.execute(
-                    "UPDATE member_memory_facts SET status='superseded', updated_at=? WHERE id=?",
-                    (stamp, supersedes_id),
-                )
             cur = db.execute(
                 "INSERT INTO member_memory_facts "
-                "(group_id,member_ref,category,fact_key,fact_value,confidence,explicitness,source_history_id,expires_at,status,supersedes_id,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,'active',?,?,?)",
+                "(group_id,member_ref,category,fact_key,fact_value,confidence,explicitness,source_history_id,expires_at,status,supersedes_id,created_at,updated_at,evidence) "
+                "VALUES(?,?,?,?,?,?,?,?,?,'active',?,?,?,?)",
                 (
                     str(group_id), ref, category_text, key_text, value_text, score, explicit,
                     None if source_history_id is None else int(source_history_id),
-                    None if expires_at is None else float(expires_at), supersedes_id, stamp, stamp,
+                    None if expires_at is None else float(expires_at), supersedes_id, stamp, stamp, evidence_text,
                 ),
             )
             row = db.execute("SELECT * FROM member_memory_facts WHERE id=?", (int(cur.lastrowid),)).fetchone()
-        result = dict(row) if row is not None else {}
-        result["deduplicated"] = False
-        return result
+        return {**dict(row), "deduplicated": False, "applied": True}
 
     def list_member_memory_facts(
         self,
@@ -1152,6 +1234,7 @@ class Store:
         include_expired: bool = False,
         include_inactive: bool = False,
         now: float | None = None,
+        query: str = "",
     ) -> list[dict[str, Any]]:
         ref = str(member_ref or "")
         if not ref:
@@ -1170,7 +1253,31 @@ class Store:
                 "SELECT * FROM member_memory_facts WHERE " + " AND ".join(conditions) + " ORDER BY id ASC",
                 tuple(params),
             ).fetchall()
-        return [dict(row) for row in rows]
+        if include_inactive:
+            return [dict(row) for row in rows]
+        # Older databases may contain the same field under multiple categories.
+        selected: dict[str, sqlite3.Row] = {}
+        for row in rows:
+            key = self._normalize_fact_key(row["fact_key"])
+            previous = selected.get(key)
+            rank = (row["explicitness"] == "explicit", int(row["id"]))
+            if previous is None or rank > (previous["explicitness"] == "explicit", int(previous["id"])):
+                selected[key] = row
+        results = [dict(row) for row in selected.values()]
+        if query:
+            terms = self._search_terms(query)
+            results.sort(
+                key=lambda row: (
+                    len(terms & self._search_terms(f"{row['fact_key']} {row['fact_value']}")),
+                    row["explicitness"] == "explicit",
+                    float(row["updated_at"]),
+                    int(row["id"]),
+                ),
+                reverse=True,
+            )
+        else:
+            results.sort(key=lambda row: int(row["id"]))
+        return results
 
     get_member_memory_facts = list_member_memory_facts
 
@@ -1323,23 +1430,30 @@ class Store:
             rows = self.db.execute(
                 "SELECT c.id,c.document_id,c.chunk_index,c.text,d.title,d.source "
                 "FROM knowledge_chunks c JOIN knowledge_documents d ON d.id=c.document_id "
-                "WHERE c.group_id=? ORDER BY c.id DESC LIMIT 2000",
+                "WHERE c.group_id=?",
                 (str(group_id),),
-            ).fetchall()
-        scored: list[dict[str, Any]] = []
-        for row in rows:
-            haystack = unicodedata.normalize("NFKC", f"{row['title']} {row['text']}").casefold()
-            overlap = len(qterms & self._search_terms(haystack))
-            score = overlap + (12 if needle in haystack else 0) + (4 if needle in str(row["title"]).casefold() else 0)
-            if score <= 0:
-                continue
+            )
+
+            def candidates():
+                for row in rows:
+                    haystack = unicodedata.normalize("NFKC", f"{row['title']} {row['text']}").casefold()
+                    overlap = len(qterms & self._search_terms(haystack))
+                    score = overlap + (12 if needle in haystack else 0) + (4 if needle in str(row["title"]).casefold() else 0)
+                    if score > 0:
+                        yield score, int(row["id"]), row
+
+            # Search every document, retaining only top-k rows in memory.
+            matches = heapq.nlargest(
+                max(1, int(limit)), candidates(), key=lambda item: (item[0], item[1])
+            )
+        results = []
+        for score, _, row in matches:
             item = dict(row)
             item["doc_id"] = "doc-" + str(item.pop("document_id"))
             item["chunk_id"] = item["doc_id"] + "-chunk-" + str(int(item.pop("chunk_index")) + 1)
             item["score"] = float(score)
-            scored.append(item)
-        scored.sort(key=lambda item: (-item["score"], -int(item["id"])))
-        return scored[:max(1, int(limit))]
+            results.append(item)
+        return results
 
     def integrity_check(self) -> bool:
         with self._lock:
