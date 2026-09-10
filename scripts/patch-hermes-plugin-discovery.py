@@ -10,7 +10,7 @@ import sys
 
 
 EXPECTED_ORIGINAL_SHA256 = "0e86f4db0a0b3628d09dd6382974115945136bfbedc7cc7078d062e4aabcab19"
-PATCH_MARKER = 'QQBOT_HK_PLUGIN_DISCOVERY_PATCH = "v1"'
+PATCH_MARKER = 'QQBOT_HK_PLUGIN_DISCOVERY_PATCH = "v2"'
 _DISCOVERY_BLOCK = (
     "        try:\n"
     "            from hermes_cli.plugins import discover_plugins\n"
@@ -26,6 +26,22 @@ _PATCHED_DISCOVERY_BLOCK = _DISCOVERY_BLOCK.replace(
     "            # process must rescan after its final HOME/config scope is active.\n"
     "            discover_plugins(force=True)\n",
 )
+_DISPATCH_HOOK_PREFIX = (
+    "        if not is_internal:\n"
+    "            try:\n"
+    "                from hermes_cli.lifecycle import invoke_hook as _invoke_hook\n"
+)
+_PATCHED_DISPATCH_HOOK_PREFIX = (
+    "        if not is_internal:\n"
+    "            try:\n"
+    "                # Adapter tasks may enter a different profile context than startup.\n"
+    "                # Refresh once in the first real message's effective scope.\n"
+    "                if not getattr(self, \"_dispatch_plugins_refreshed\", False):\n"
+    "                    from hermes_cli.plugins import discover_plugins as _discover_plugins\n"
+    "                    _discover_plugins(force=True)\n"
+    "                    self._dispatch_plugins_refreshed = True\n"
+    "                from hermes_cli.lifecycle import invoke_hook as _invoke_hook\n"
+)
 
 
 class PatchError(RuntimeError):
@@ -39,7 +55,9 @@ def sha256_text(source: str) -> str:
 def verify_patched_source(source: str) -> None:
     required = {
         PATCH_MARKER: 1,
-        "discover_plugins(force=True)": 1,
+        "            discover_plugins(force=True)\n": 1,
+        "_discover_plugins(force=True)": 1,
+        "_dispatch_plugins_refreshed": 2,
     }
     for sentinel, expected_count in required.items():
         actual = source.count(sentinel)
@@ -50,6 +68,8 @@ def verify_patched_source(source: str) -> None:
             )
     if _DISCOVERY_BLOCK in source:
         raise PatchError("unpatched gateway discovery block remains")
+    if _DISPATCH_HOOK_PREFIX in source:
+        raise PatchError("unpatched dispatch hook prefix remains")
     try:
         compile(source, "run.py", "exec")
     except SyntaxError as exc:
@@ -71,6 +91,8 @@ def patch_source(source: str, expected_sha256: str) -> str:
         raise PatchError("gateway logger sentinel mismatch")
     if source.count(_DISCOVERY_BLOCK) != 1:
         raise PatchError("gateway discovery block sentinel mismatch")
+    if source.count(_DISPATCH_HOOK_PREFIX) != 1:
+        raise PatchError("gateway dispatch hook sentinel mismatch")
 
     patched = source.replace(
         "logger = logging.getLogger(__name__)\n",
@@ -78,7 +100,11 @@ def patch_source(source: str, expected_sha256: str) -> str:
         "# qqbot-hk: audited against the pinned Hermes image digest.\n"
         f"{PATCH_MARKER}\n",
         1,
-    ).replace(_DISCOVERY_BLOCK, _PATCHED_DISCOVERY_BLOCK, 1)
+    ).replace(
+        _DISCOVERY_BLOCK, _PATCHED_DISCOVERY_BLOCK, 1
+    ).replace(
+        _DISPATCH_HOOK_PREFIX, _PATCHED_DISPATCH_HOOK_PREFIX, 1
+    )
     verify_patched_source(patched)
     return patched
 

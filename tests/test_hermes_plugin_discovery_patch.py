@@ -19,6 +19,11 @@ def fixture_source() -> str:
         "class GatewayRunner:\n"
         "    async def start(self):\n"
         + PATCH._DISCOVERY_BLOCK
+        + "\n    async def handle(self):\n"
+        + PATCH._DISPATCH_HOOK_PREFIX
+        + "                return _invoke_hook('pre_gateway_dispatch')\n"
+        + "            except Exception:\n"
+        + "                return None\n"
     )
 
 
@@ -29,6 +34,8 @@ class HermesPluginDiscoveryPatchTests(unittest.TestCase):
         patched = PATCH.patch_source(source, digest)
         self.assertIn(PATCH.PATCH_MARKER, patched)
         self.assertIn("discover_plugins(force=True)", patched)
+        self.assertIn("_discover_plugins(force=True)", patched)
+        self.assertIn("_dispatch_plugins_refreshed", patched)
         self.assertEqual(patched, PATCH.patch_source(patched, "wrong-on-purpose"))
 
     def test_wrong_sha_fails_closed(self):
@@ -39,6 +46,12 @@ class HermesPluginDiscoveryPatchTests(unittest.TestCase):
         source = fixture_source().replace(PATCH._DISCOVERY_BLOCK, "")
         digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
         with self.assertRaisesRegex(PATCH.PatchError, "discovery block sentinel"):
+            PATCH.patch_source(source, digest)
+
+    def test_missing_dispatch_sentinel_fails_closed(self):
+        source = fixture_source().replace(PATCH._DISPATCH_HOOK_PREFIX, "")
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        with self.assertRaisesRegex(PATCH.PatchError, "dispatch hook sentinel"):
             PATCH.patch_source(source, digest)
 
     def test_patch_file_preserves_an_already_patched_file(self):

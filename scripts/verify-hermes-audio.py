@@ -181,7 +181,7 @@ def main() -> int:
     args = parser.parse_args()
     require(QQBOT_HK_AUDIO_PATCH == "v1", "Hermes QQ audio patch marker mismatch")
     require(
-        QQBOT_HK_PLUGIN_DISCOVERY_PATCH == "v1",
+        QQBOT_HK_PLUGIN_DISCOVERY_PATCH == "v2",
         "Hermes plugin discovery patch marker mismatch",
     )
     config = load_and_verify_config(Path(args.config))
