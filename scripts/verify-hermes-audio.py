@@ -13,6 +13,7 @@ import yaml
 
 from gateway.platforms.base import MessageType, PlatformConfig
 from gateway.platforms.qqbot.adapter import QQAdapter, QQBOT_HK_AUDIO_PATCH
+from gateway.run import QQBOT_HK_PLUGIN_DISCOVERY_PATCH
 from gateway.platforms.qqbot.constants import MEDIA_TYPE_VOICE, MSG_TYPE_MEDIA
 
 
@@ -179,9 +180,14 @@ def main() -> int:
     )
     args = parser.parse_args()
     require(QQBOT_HK_AUDIO_PATCH == "v1", "Hermes QQ audio patch marker mismatch")
+    require(
+        QQBOT_HK_PLUGIN_DISCOVERY_PATCH == "v1",
+        "Hermes plugin discovery patch marker mismatch",
+    )
     config = load_and_verify_config(Path(args.config))
     asyncio.run(verify_adapter_behavior(config))
     print("HERMES_QQ_AUDIO_PATCH=passed")
+    print("HERMES_PLUGIN_DISCOVERY_PATCH=passed")
     print("QQ_STT_CONFIG=passed")
     print("QQ_VOICE_EVENT=passed")
     print("QQ_NATIVE_MP3_REPLY_ANCHOR=passed")

@@ -1,6 +1,6 @@
 services:
   hermes-qqbot:
-    image: qqbot-hk/hermes-agent:v0.21.0-audio-v1
+    image: qqbot-hk/hermes-agent:v0.21.0-audio-v1-plugins-v1
     build:
       context: .
       dockerfile: Dockerfile

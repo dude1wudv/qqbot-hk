@@ -17,6 +17,7 @@ for path in \
   "$project_dir/plugins/smart_group_qq/plugin.yaml" \
   "$project_dir/scripts/reconcile-smart-group-cron.py" \
   "$project_dir/scripts/patch-hermes-audio.py" \
+  "$project_dir/scripts/patch-hermes-plugin-discovery.py" \
   "$project_dir/scripts/verify-hermes-audio.py" \
   "$secrets_dir/qqbot.env" \
   "$secrets_dir/sub2api-api-key"; do
