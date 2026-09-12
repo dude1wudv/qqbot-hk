@@ -24,6 +24,7 @@ KEY_SPECS = (
     (Path("/opt/qqbot-hk-deploy/secrets/sub2api-api-key"), GENERAL_GROUP_ID, "hermes-qqbot-hk"),
     (Path("/opt/qqbot-hk-deploy/secrets/sub2api-deepseek-api-key"), DEEPSEEK_GROUP_ID, "hermes-qqbot-hk-deepseek"),
 )
+GENERAL_GROUP_EXCLUDED_MODELS = frozenset({"deepseek/deepseek-v4.1-flash"})
 
 
 def request(method: str, path: str, *, headers: dict[str, str] | None = None, body=None):
@@ -69,6 +70,23 @@ def random_password(length: int = 36) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+
+
+def reconcile_general_group_models(admin_headers: dict[str, str]) -> None:
+    payload = request("GET", f"/api/v1/admin/groups/{GENERAL_GROUP_ID}", headers=admin_headers)
+    allowlist = (payload.get("data") or {}).get("model_allowlist") or {}
+    models = [str(model).strip() for model in (allowlist.get("models") or []) if str(model).strip()]
+    reconciled = [model for model in models if model not in GENERAL_GROUP_EXCLUDED_MODELS]
+    if reconciled == models:
+        print("SUB2API_GENERAL_GROUP_MODELS=ready")
+        return
+    request(
+        "PUT",
+        f"/api/v1/admin/groups/{GENERAL_GROUP_ID}",
+        headers=admin_headers,
+        body={"model_allowlist": {"enabled": bool(allowlist.get("enabled")), "models": reconciled}},
+    )
+    print(f"SUB2API_GENERAL_GROUP_MODELS=updated COUNT={len(models) - len(reconciled)}")
 
 
 def existing_key_is_valid(path: Path) -> bool:
@@ -138,6 +156,7 @@ def main() -> int:
 
     password = random_password()
     admin_headers = {"x-api-key": admin_key()}
+    reconcile_general_group_models(admin_headers)
     query = urllib.parse.urlencode({"search": EMAIL, "page": 1, "page_size": 20})
     users_payload = request("GET", f"/api/v1/admin/users?{query}", headers=admin_headers)
     users = ((users_payload.get("data") or {}).get("items") or [])
