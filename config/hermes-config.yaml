@@ -6,9 +6,9 @@ gateway:
   group_sessions_per_user: false
 
 model:
-  provider: sub2api
+  provider: sub2api_deepseek
   default: deepseek/deepseek-v4.1-flash
-  api_mode: chat_completions
+  api_mode: anthropic_messages
   context_length: 1000000
   streaming: true
 
@@ -17,14 +17,20 @@ compression:
   threshold_tokens: 200000
 
 providers:
+  sub2api_deepseek:
+    base_url: http://sub2api:8080/v1
+    key_env: SUB2API_DEEPSEEK_API_KEY
+    api_mode: anthropic_messages
+    discover_models: false
+    models:
+      deepseek/deepseek-v4.1-flash:
+        context_length: 1000000
   sub2api:
     base_url: http://sub2api:8080/v1
     key_env: SUB2API_API_KEY
     api_mode: chat_completions
     discover_models: false
     models:
-      deepseek/deepseek-v4.1-flash:
-        context_length: 1000000
       gemini-3.8-flash-high:
         context_length: 1048576
       gpt-5.6-luna:
@@ -33,7 +39,7 @@ providers:
 
 agent:
   reasoning_effort: medium
-  # The primary DeepSeek v4.1 route accepts OpenAI-style image content parts.
+  # Hermes passes attached images natively and translates them for the provider protocol.
   image_input_mode: native
   reasoning_overrides:
     deepseek/deepseek-v4.1-flash: low
@@ -45,8 +51,8 @@ auxiliary:
     provider: custom
     model: deepseek/deepseek-v4.1-flash
     base_url: http://sub2api:8080/v1
-    key_env: SUB2API_API_KEY
-    api_mode: chat_completions
+    key_env: SUB2API_DEEPSEEK_API_KEY
+    api_mode: anthropic_messages
     reasoning_effort: low
 
 voice:

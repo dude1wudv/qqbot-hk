@@ -19,7 +19,8 @@ for path in \
   "$project_dir/scripts/patch-hermes-audio.py" \
   "$project_dir/scripts/verify-hermes-audio.py" \
   "$secrets_dir/qqbot.env" \
-  "$secrets_dir/sub2api-api-key"; do
+  "$secrets_dir/sub2api-api-key" \
+  "$secrets_dir/sub2api-deepseek-api-key"; do
   test -e "$path" || { echo "ERROR: required deployment input missing" >&2; exit 1; }
 done
 
@@ -57,6 +58,7 @@ trap 'rm -rf "$stage_dir"' EXIT
 python3 - \
   "$secrets_dir/qqbot.env" \
   "$secrets_dir/sub2api-api-key" \
+  "$secrets_dir/sub2api-deepseek-api-key" \
   "$project_dir/config/hermes-config.yaml" \
   "$stage_dir/.env" \
   "$stage_dir/config.yaml" \
@@ -67,7 +69,7 @@ import os
 import re
 import sys
 
-qq_source, key_source, config_source, env_target, config_target, runtime_env_source = map(Path, sys.argv[1:])
+qq_source, key_source, deepseek_key_source, config_source, env_target, config_target, runtime_env_source = map(Path, sys.argv[1:])
 qq_values = {}
 for raw in qq_source.read_text(encoding="utf-8").splitlines():
     line = raw.strip()
@@ -92,7 +94,8 @@ if not groups:
     raise SystemExit("QQ_GROUP_ALLOWED_USERS is empty")
 
 sub2api_key = key_source.read_text(encoding="utf-8").strip()
-if not sub2api_key:
+deepseek_key = deepseek_key_source.read_text(encoding="utf-8").strip()
+if not sub2api_key or not deepseek_key:
     raise SystemExit("Sub2API key is empty")
 
 config = config_source.read_text(encoding="utf-8")
@@ -105,7 +108,8 @@ config_target.write_text(config, encoding="utf-8")
 # Preserve runtime-owned settings and generated authentication keys.
 managed_names = {
     "QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_GROUP_ALLOWED_USERS", "SUB2API_API_KEY",
-    "QQ_STT_PREFER_BUILTIN", "QQ_STT_API_KEY", "VOICE_TOOLS_OPENAI_KEY",
+    "SUB2API_DEEPSEEK_API_KEY", "QQ_STT_PREFER_BUILTIN", "QQ_STT_API_KEY",
+    "VOICE_TOOLS_OPENAI_KEY",
 }
 existing_lines = runtime_env_source.read_text(encoding="utf-8").splitlines() if runtime_env_source.is_file() else []
 unmanaged_lines = [line for line in existing_lines if line.split("=", 1)[0].strip() not in managed_names]
@@ -117,6 +121,7 @@ env_target.write_text(
     f"QQ_CLIENT_SECRET={qq_values['QQ_CLIENT_SECRET']}\n"
     f"QQ_GROUP_ALLOWED_USERS={','.join(groups)}\n"
     f"SUB2API_API_KEY={sub2api_key}\n"
+    f"SUB2API_DEEPSEEK_API_KEY={deepseek_key}\n"
     "QQ_STT_PREFER_BUILTIN=false\n"
     f"QQ_STT_API_KEY={sub2api_key}\n"
     f"VOICE_TOOLS_OPENAI_KEY={sub2api_key}\n",

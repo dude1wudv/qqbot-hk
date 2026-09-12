@@ -18,9 +18,12 @@ import urllib.request
 BASE_URL = "http://127.0.0.1:8080"
 EMAIL = "hermes-qqbot@local.invalid"
 USERNAME = "hermes-qqbot"
-GROUP_ID = 81
-KEY_FILE = Path("/opt/qqbot-hk-deploy/secrets/sub2api-api-key")
-REQUIRED_GROUP_MODELS = ("deepseek/deepseek-v4.1-flash",)
+GENERAL_GROUP_ID = 81
+DEEPSEEK_GROUP_ID = 179
+KEY_SPECS = (
+    (Path("/opt/qqbot-hk-deploy/secrets/sub2api-api-key"), GENERAL_GROUP_ID, "hermes-qqbot-hk"),
+    (Path("/opt/qqbot-hk-deploy/secrets/sub2api-deepseek-api-key"), DEEPSEEK_GROUP_ID, "hermes-qqbot-hk-deepseek"),
+)
 
 
 def request(method: str, path: str, *, headers: dict[str, str] | None = None, body=None):
@@ -65,29 +68,13 @@ def random_password(length: int = 36) -> str:
     alphabet = string.ascii_letters + string.digits + "-_"
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
-def ensure_group_models(admin_headers: dict[str, str]) -> None:
-    payload = request("GET", f"/api/v1/admin/groups/{GROUP_ID}", headers=admin_headers)
-    group = payload.get("data") or {}
-    allowlist = group.get("model_allowlist") or {}
-    models = [str(model).strip() for model in (allowlist.get("models") or []) if str(model).strip()]
-    missing = [model for model in REQUIRED_GROUP_MODELS if model not in models]
-    if not missing:
-        print("SUB2API_GROUP_MODELS=ready")
-        return
-    request(
-        "PUT",
-        f"/api/v1/admin/groups/{GROUP_ID}",
-        headers=admin_headers,
-        body={"model_allowlist": {"enabled": bool(allowlist.get("enabled")), "models": models + missing}},
-    )
-    print(f"SUB2API_GROUP_MODELS=updated COUNT={len(missing)}")
 
 
 
-def existing_key_is_valid() -> bool:
-    if not KEY_FILE.is_file():
+def existing_key_is_valid(path: Path) -> bool:
+    if not path.is_file():
         return False
-    key = KEY_FILE.read_text(encoding="utf-8").strip()
+    key = path.read_text(encoding="utf-8").strip()
     if not key:
         return False
     try:
@@ -96,21 +83,67 @@ def existing_key_is_valid() -> bool:
         return False
     return bool(payload.get("data"))
 
+def ensure_api_key(
+    auth_headers: dict[str, str],
+    records: list[dict],
+    path: Path,
+    group_id: int,
+    name: str,
+) -> tuple[list[dict], int]:
+    current_key = path.read_text(encoding="utf-8").strip() if existing_key_is_valid(path) else ""
+    current_record = next((item for item in records if item.get("key") == current_key), None)
+    current_record_ok = bool(
+        current_record
+        and current_record.get("status") == "active"
+        and int(current_record.get("group_id") or 0) == group_id
+        and float(current_record.get("quota") or 0) <= 100.0
+    )
+    if not current_record_ok:
+        created = request(
+            "POST",
+            "/api/v1/keys",
+            headers=auth_headers,
+            body={"name": name, "group_id": group_id, "quota": 100.0},
+        )
+        current_key = str((created.get("data") or {}).get("key") or "").strip()
+        if not current_key:
+            raise RuntimeError("Sub2API API key creation returned no key")
+        path.write_text(current_key + "\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+        if not existing_key_is_valid(path):
+            raise RuntimeError("New Sub2API key failed authentication validation")
+        listed = request("GET", "/api/v1/keys?page=1&page_size=100", headers=auth_headers)
+        records = ((listed.get("data") or {}).get("items") or [])
+        print(f"SUB2API_KEY={name} created-and-validated")
+    else:
+        print(f"SUB2API_KEY={name} existing-valid")
+
+    duplicates_disabled = 0
+    for item in records:
+        if item.get("name") == name and item.get("status") == "active" and item.get("key") != current_key:
+            request(
+                "PUT",
+                f"/api/v1/keys/{int(item['id'])}",
+                headers=auth_headers,
+                body={"status": "inactive"},
+            )
+            duplicates_disabled += 1
+    return records, duplicates_disabled
+
 
 def main() -> int:
-    KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(KEY_FILE.parent, 0o700)
-
-    key_is_valid = existing_key_is_valid()
+    for path, _, _ in KEY_SPECS:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(path.parent, 0o700)
 
     password = random_password()
     admin_headers = {"x-api-key": admin_key()}
-    ensure_group_models(admin_headers)
     query = urllib.parse.urlencode({"search": EMAIL, "page": 1, "page_size": 20})
     users_payload = request("GET", f"/api/v1/admin/users?{query}", headers=admin_headers)
     users = ((users_payload.get("data") or {}).get("items") or [])
     user = next((item for item in users if item.get("email") == EMAIL), None)
 
+    allowed_groups = [GENERAL_GROUP_ID, DEEPSEEK_GROUP_ID]
     user_body = {
         "email": EMAIL,
         "password": password,
@@ -119,7 +152,7 @@ def main() -> int:
         "role": "user",
         "concurrency": 2,
         "rpm_limit": 30,
-        "allowed_groups": [GROUP_ID],
+        "allowed_groups": allowed_groups,
         "restrict_public_groups": True,
     }
     if user is None:
@@ -142,61 +175,22 @@ def main() -> int:
         raise RuntimeError("Sub2API user RPM limit was not applied")
     if not bool(user.get("restrict_public_groups")):
         raise RuntimeError("Sub2API public-group restriction was not applied")
-    if GROUP_ID not in {int(value) for value in (user.get("allowed_groups") or [])}:
+    actual_groups = {int(value) for value in (user.get("allowed_groups") or [])}
+    if not set(allowed_groups).issubset(actual_groups):
         raise RuntimeError("Sub2API allowed-group restriction was not applied")
 
     login = request("POST", "/api/v1/auth/login", body={"email": EMAIL, "password": password})
-    login_data = login.get("data") or {}
-    access_token = login_data.get("access_token")
+    access_token = (login.get("data") or {}).get("access_token")
     if not access_token:
         raise RuntimeError("Sub2API login did not return an access token")
 
     auth_headers = {"Authorization": f"Bearer {access_token}"}
-    current_key = KEY_FILE.read_text(encoding="utf-8").strip() if key_is_valid else ""
     listed = request("GET", "/api/v1/keys?page=1&page_size=100", headers=auth_headers)
     records = ((listed.get("data") or {}).get("items") or [])
-    current_record = next((item for item in records if item.get("key") == current_key), None)
-    current_record_ok = bool(
-        current_record
-        and current_record.get("status") == "active"
-        and int(current_record.get("group_id") or 0) == GROUP_ID
-        and float(current_record.get("quota") or 0) <= 100.0
-    )
-
-    if not current_record_ok:
-        created_key = request(
-            "POST",
-            "/api/v1/keys",
-            headers=auth_headers,
-            body={"name": "hermes-qqbot-hk", "group_id": GROUP_ID, "quota": 100.0},
-        )
-        current_key = str((created_key.get("data") or {}).get("key") or "").strip()
-        if not current_key:
-            raise RuntimeError("Sub2API API key creation returned no key")
-        KEY_FILE.write_text(current_key + "\n", encoding="utf-8")
-        os.chmod(KEY_FILE, 0o600)
-        if not existing_key_is_valid():
-            raise RuntimeError("New Sub2API key failed authentication validation")
-        listed = request("GET", "/api/v1/keys?page=1&page_size=100", headers=auth_headers)
-        records = ((listed.get("data") or {}).get("items") or [])
-        print("SUB2API_KEY=created-and-validated")
-    else:
-        print("SUB2API_KEY=existing-valid")
-
     duplicates_disabled = 0
-    for item in records:
-        if (
-            item.get("name") == "hermes-qqbot-hk"
-            and item.get("status") == "active"
-            and item.get("key") != current_key
-        ):
-            request(
-                "PUT",
-                f"/api/v1/keys/{int(item['id'])}",
-                headers=auth_headers,
-                body={"status": "inactive"},
-            )
-            duplicates_disabled += 1
+    for path, group_id, name in KEY_SPECS:
+        records, disabled = ensure_api_key(auth_headers, records, path, group_id, name)
+        duplicates_disabled += disabled
     print(f"SUB2API_DUPLICATE_KEYS_DISABLED={duplicates_disabled}")
     return 0
 

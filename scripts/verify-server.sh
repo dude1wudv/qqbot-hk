@@ -26,22 +26,25 @@ import urllib.error
 import urllib.request
 from PIL import Image
 
-key = os.environ.get("SUB2API_API_KEY", "")
-if not key:
-    env_path = "/opt/data/.env"
-    with open(env_path, encoding="utf-8") as handle:
-        for raw in handle:
-            if raw.startswith("SUB2API_API_KEY="):
-                key = raw.split("=", 1)[1].strip()
-                break
-if not key:
+env = {}
+with open("/opt/data/.env", encoding="utf-8") as handle:
+    for raw in handle:
+        if "=" in raw and not raw.lstrip().startswith("#"):
+            name, value = raw.split("=", 1)
+            env[name.strip()] = value.strip()
+key = os.environ.get("SUB2API_API_KEY") or env.get("SUB2API_API_KEY", "")
+deepseek_key = os.environ.get("SUB2API_DEEPSEEK_API_KEY") or env.get("SUB2API_DEEPSEEK_API_KEY", "")
+if not key or not deepseek_key:
     raise SystemExit("missing Sub2API key")
 
-def post(path, body):
+def post(path, body, api_key, *, anthropic=False):
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    if anthropic:
+        headers["anthropic-version"] = "2023-06-01"
     request = urllib.request.Request(
         "http://sub2api:8080" + path,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -72,45 +75,58 @@ assert_audio_route("/v1/audio/speech", "application/json")
 assert_audio_route("/v1/audio/transcriptions", "application/json")
 print("AUDIO_ROUTES=reachable")
 
+deepseek = post(
+    "/v1/messages",
+    {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [{"role": "user", "content": "Reply only OK"}],
+        "max_tokens": 256,
+    },
+    deepseek_key,
+    anthropic=True,
+)
+deepseek_text = "".join(
+    str(item.get("text") or "") for item in (deepseek.get("content") or [])
+    if isinstance(item, dict)
+)
+if "OK" not in deepseek_text.upper():
+    raise SystemExit("deepseek/deepseek-v4.1-flash: unexpected response")
+print("MODEL=deepseek/deepseek-v4.1-flash EFFORT=low RESULT=OK")
 
-for model, effort in (
-    ("deepseek/deepseek-v4.1-flash", "low"),
-    ("gemini-3.8-flash-high", "high"),
-):
-    payload = post(
-        "/v1/chat/completions",
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": "Reply only OK"}],
-            "reasoning_effort": effort,
-            "stream": False,
-            "max_tokens": 256,
-        },
-    )
-    choices = payload.get("choices") or []
-    content = (((choices[0] if choices else {}).get("message") or {}).get("content") or "").strip()
-    if "OK" not in content.upper():
-        raise SystemExit(f"{model}: unexpected response")
-    print(f"MODEL={model} EFFORT={effort} RESULT=OK")
+gemini = post(
+    "/v1/chat/completions",
+    {
+        "model": "gemini-3.8-flash-high",
+        "messages": [{"role": "user", "content": "Reply only OK"}],
+        "reasoning_effort": "high",
+        "stream": False,
+        "max_tokens": 256,
+    },
+    key,
+)
+choices = gemini.get("choices") or []
+content = (((choices[0] if choices else {}).get("message") or {}).get("content") or "").strip()
+if "OK" not in content.upper():
+    raise SystemExit("gemini-3.8-flash-high: unexpected response")
+print("MODEL=gemini-3.8-flash-high EFFORT=high RESULT=OK")
 
 image_buffer = io.BytesIO()
 Image.new("RGB", (16, 16), (0, 120, 255)).save(image_buffer, format="PNG")
-image_url = "data:image/png;base64," + base64.b64encode(image_buffer.getvalue()).decode("ascii")
-
+image_base64 = base64.b64encode(image_buffer.getvalue()).decode("ascii")
 deepseek_vision = post(
-    "/v1/chat/completions",
+    "/v1/messages",
     {
         "model": "deepseek/deepseek-v4.1-flash",
         "messages": [{"role": "user", "content": [
             {"type": "text", "text": "Reply only IMAGE_OK if you can inspect this image."},
-            {"type": "image_url", "image_url": {"url": image_url}},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}},
         ]}],
-        "reasoning_effort": "low",
-        "stream": False,
         "max_tokens": 128,
     },
+    deepseek_key,
+    anthropic=True,
 )
-if not (deepseek_vision.get("choices") or []):
+if not (deepseek_vision.get("content") or []):
     raise SystemExit("deepseek/deepseek-v4.1-flash: invalid vision response")
 print("VISION=deepseek/deepseek-v4.1-flash RESULT=OK")
 PY
@@ -151,9 +167,9 @@ if not groups:
     raise SystemExit("QQ group allow-list is empty")
 if env.get("QQ_STT_PREFER_BUILTIN", "").lower() != "false":
     raise SystemExit("QQ built-in STT preference must be disabled")
-for name in ("SUB2API_API_KEY", "QQ_STT_API_KEY", "VOICE_TOOLS_OPENAI_KEY"):
+for name in ("SUB2API_API_KEY", "SUB2API_DEEPSEEK_API_KEY", "QQ_STT_API_KEY", "VOICE_TOOLS_OPENAI_KEY"):
     if not env.get(name):
-        raise SystemExit(f"required audio secret missing: {name}")
+        raise SystemExit(f"required Sub2API secret missing: {name}")
 if env["QQ_STT_API_KEY"] != env["SUB2API_API_KEY"] or env["VOICE_TOOLS_OPENAI_KEY"] != env["SUB2API_API_KEY"]:
     raise SystemExit("audio secret wiring mismatch")
 if env.get("QQ_STT_BASE_URL") or env.get("QQ_STT_MODEL"):
@@ -170,10 +186,16 @@ config = yaml.safe_load(Path("/opt/data/config.yaml").read_text(encoding="utf-8"
 model_config = config.get("model")
 if not isinstance(model_config, Mapping):
     raise SystemExit("model config is missing")
-if model_config.get("provider") != "sub2api":
-    raise SystemExit("primary model provider must be sub2api")
+if model_config.get("provider") != "sub2api_deepseek":
+    raise SystemExit("primary model provider must be sub2api_deepseek")
 if model_config.get("default") != "deepseek/deepseek-v4.1-flash":
     raise SystemExit("primary model must be deepseek/deepseek-v4.1-flash")
+providers = config.get("providers") or {}
+deepseek_provider = providers.get("sub2api_deepseek") or {}
+if deepseek_provider.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
+    raise SystemExit("DeepSeek provider key wiring is invalid")
+if deepseek_provider.get("api_mode") != "anthropic_messages":
+    raise SystemExit("DeepSeek provider must use anthropic_messages")
 agent_config = config.get("agent")
 if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
     raise SystemExit("DeepSeek image input must use native content parts")
@@ -203,17 +225,17 @@ if compression_route.get("model") != "deepseek/deepseek-v4.1-flash":
     raise SystemExit("auxiliary.compression.model must be deepseek/deepseek-v4.1-flash")
 if compression_route.get("base_url") != "http://sub2api:8080/v1":
     raise SystemExit("auxiliary.compression.base_url is invalid")
-if compression_route.get("key_env") != "SUB2API_API_KEY":
-    raise SystemExit("auxiliary.compression.key_env must be SUB2API_API_KEY")
-if compression_route.get("api_mode") != "chat_completions":
-    raise SystemExit("auxiliary.compression.api_mode must be chat_completions")
+if compression_route.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
+    raise SystemExit("auxiliary.compression.key_env must be SUB2API_DEEPSEEK_API_KEY")
+if compression_route.get("api_mode") != "anthropic_messages":
+    raise SystemExit("auxiliary.compression.api_mode must be anthropic_messages")
 if compression_route.get("reasoning_effort") != "low":
     raise SystemExit("auxiliary.compression.reasoning_effort must be low")
 if auxiliary.get("vision"):
     raise SystemExit("auxiliary vision fallback must be disabled")
 print(
     "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=200000 "
-    "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
+    "MODEL=deepseek/deepseek-v4.1-flash API_MODE=anthropic_messages REASONING_EFFORT=low"
 )
 qq_extra = (((config.get("platforms") or {}).get("qqbot") or {}).get("extra") or {})
 if qq_extra.get("dm_policy") != "pairing":

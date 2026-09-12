@@ -7,7 +7,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 生产秘密位于 `/opt/qqbot-hk-deploy/secrets`，不得提交：
 
 - `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_GROUP_ALLOWED_USERS`。
-- `sub2api-api-key`：Hermes 专用 Sub2API key。
+- `sub2api-api-key`：Hermes 通用模型、STT/TTS key；`sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的主模型 key。
 - `QQ_GROUP_ALLOWED_USERS` 是逗号分隔的 QQ 群 OpenID；不能使用数字群号、用户 OpenID、空值或 `*`。
 - 开发体验阶段也使用 QQ 官方生产 API/Gateway；开放平台按“开发体验用户”名单限制可访问账号。
 
@@ -52,7 +52,7 @@ QQ 当前“开发体验用户”机制使用生产 API/Gateway，并由开放�
 
 ## 模型
 
-Hermes 默认通过现有 Sub2API 分组调用 `deepseek/deepseek-v4.1-flash`，推理强度为 `low`。该模型直接接收 OpenAI 风格图片内容块；不再先调用 Gemini/Luna 视觉链，也不配置自动模型回退。`gemini-3.8-flash-high` 仍保留为群会话可手动切换的模型。
+Hermes 默认通过专用 Sub2API DeepSeek 分组，以 Anthropic Messages 协议调用 `deepseek/deepseek-v4.1-flash`，推理强度为 `low`。Hermes 将原生图片内容块翻译为该协议；不再先调用 Gemini/Luna 视觉链，也不配置自动模型回退。`gemini-3.8-flash-high` 仍保留为群会话可手动切换的模型，并使用独立的通用 Sub2API key。
 
 群内 @ 机器人发送 /gemini（兼容 / gemini）可将当前群会话切换到 `gemini-3.8-flash-high`；发送 /deepseek（兼容 / deepseek）可切回 `deepseek/deepseek-v4.1-flash`。两条命令都使用 Hermes 原生的会话级模型覆写，不修改其他群或全局默认模型。
 
@@ -75,7 +75,7 @@ bash /opt/qqbot-hk/scripts/verify-server.sh
 
 `install-server.sh` 会校验群白名单，把群 OpenID 注入部署态配置，明确移除旧沙箱路由和全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像并只重建 `hermes-qqbot`，等待健康、运行 cron 对账并通过完整验收后才清理旧插件副本。源码配置不含真实 OpenID 或 API key。
 
-`verify-server.sh` 验证基础摘要/补丁标签、STT/TTS 实际配置解析、VOICE 类型、原生 MP3 被动回复锚点、Sub2API 音频路由、三个文本模型、Gemini/Luna 识图、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证基础摘要/补丁标签、STT/TTS 实际配置解析、VOICE 类型、原生 MP3 被动回复锚点、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、200k 压缩配置、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
 部署后先由 QQ 开放平台“开发体验号码”名单中的新用户直接私聊：在上述登记窗口内，首条消息应自动完成 pairing 并直接进入问答；窗口结束后，新的未批准用户应收到标准配对码。群聊再用新群会话或 `/reset` 验证：白名单群 @ 可回复、非白名单群无回复、两名群成员共享上下文、关键词和审核各只发送一次。普通群消息能否被旁听取决于 QQ 开放平台对该机器人的消息事件权限/投递配置；代码不会绕过平台边界。平台确实投递时，再验证“非 @ 不回复，但下一次 @ 提问可引用其内容”。
 
