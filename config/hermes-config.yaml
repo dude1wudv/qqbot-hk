@@ -5,6 +5,26 @@ timezone: Asia/Hong_Kong
 gateway:
   group_sessions_per_user: false
 
+quick_commands:
+  low:
+    type: alias
+    target: /reasoning low --session
+  medium:
+    type: alias
+    target: /reasoning medium --session
+  high:
+    type: alias
+    target: /reasoning high --session
+  max:
+    type: alias
+    target: /reasoning max --session
+  deepseek:
+    type: alias
+    target: /model deepseek/deepseek-v4.1-flash --session
+  gemini:
+    type: alias
+    target: /model gemini-3.8-flash-high --session
+
 model:
   provider: sub2api_deepseek
   default: deepseek/deepseek-v4.1-flash

@@ -20,6 +20,8 @@ for path in \
   "$project_dir/scripts/verify-hermes-audio.py" \
   "$project_dir/scripts/patch-hermes-chat-reasoning.py" \
   "$project_dir/scripts/verify-hermes-chat-reasoning.py" \
+  "$project_dir/scripts/patch-hermes-qq-help.py" \
+  "$project_dir/scripts/verify-hermes-qq-commands.py" \
   "$secrets_dir/qqbot.env" \
   "$secrets_dir/sub2api-api-key" \
   "$secrets_dir/sub2api-deepseek-api-key"; do

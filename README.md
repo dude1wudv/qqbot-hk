@@ -15,7 +15,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 ## 运行边界
 
-部署使用以 Hermes Agent v0.21.2（`v2026.9.11`）固定摘要为基础的项目派生镜像。新版已原生在 gateway 启动阶段发现插件，项目只保留经 SHA/哨兵 fail-closed 的 QQ 语音补丁和 Sub2API Chat 推理字段补丁；镜像构建会运行对应行为 smoke，不复制整个 adapter。容器不开放宿主机端口、不挂载 Docker socket，只加入 `sub2api_sub2api-network`。
+部署使用以 Hermes Agent v0.21.2（`v2026.9.11`）固定摘要为基础的项目派生镜像。新版已原生在 gateway 启动阶段发现插件，项目只保留经 SHA/哨兵 fail-closed 的 QQ 语音、Sub2API Chat 推理字段和 QQ 帮助菜单补丁；镜像构建会运行对应行为 smoke，不复制整个 adapter。容器不开放宿主机端口、不挂载 Docker socket，只加入 `sub2api_sub2api-network`。
 
 - 私聊：使用 Hermes `dm_policy: pairing`。截至 `2026-09-05T08:00:00Z` 的临时登记窗口内，QQ 私聊发送者会在中央鉴权前自动写入 pairing 批准名单并继续处理；窗口结束后，新的未批准用户恢复标准配对码流程。QQ 开放平台仍必须先实际投递该用户消息。
 - 群聊回复：只接受 `QQ_GROUP_ALLOWED_USERS` 中群的 `@机器人 + 问题`。若 QQ 开放平台已为机器人投递普通群消息，插件会旁听 `GROUP_MESSAGE_CREATE`，但该事件只进入本群记忆/检索链路，绝不触发回复、命令或普通 Agent 会话。
@@ -25,7 +25,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - QQ 语音只使用 `qwen-audio-3.0-asr-flash` 外部识别，不采用腾讯 `asr_refer_text`。语音输入默认返回一条 QQ 原生 MP3 语音；普通文本默认返回文本，只有明确语音/朗读/朗唱请求才调用 TTS。
 - STT 地址与模型固定在 `platforms.qqbot.extra.stt`，TTS 地址/模型/音色固定在 `tts.openai`；真实 Sub2API key 仅由安装脚本写入权限 `0600` 的部署态 `.env`。
 - `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、AI 结构化长期记忆、非 @ 消息旁听、群知识库/RAG，以及 `/help`、`/reset`、`/clear`、`/status`、`/summary`、`/rules`、`/kb`、`/值日表`、`/gemini`、`/deepseek`、`/low`、`/medium`、`/high`、`/max`、`/我的记忆`、`/记住我`、`/纠正记忆`、`/停止记忆`、`/忘记我`。
-- 私聊用户可直接使用 `/help` 查看中文自定义命令菜单，并使用模型、推理强度、状态、重置、摘要、规则、知识库和个人记忆命令；`/值日表` 仅群聊可用。未由插件定义的斜杠命令继续透传给 Hermes 原生命令路由。
+- `/low`、`/medium`、`/high`、`/max`、`/deepseek`、`/gemini` 注册为 Hermes 原生命令层的 `quick_commands`，群聊和私聊都会在未知命令拦截前展开。私聊 `/help` 优先显示中文自定义命令菜单，Hermes 原生命令折叠为 `/commands` 入口；`/值日表` 仍仅群聊可用。
 - `@机器人 /值日表` 按北京时间即时计算本周日到周六的轮值安排；2026 年 9 月 13 日开始，每周日轮换一次，开始前显示首轮预告。该功能不依赖主动群发或模型调用。
 - `/summary` 使用模型生成本群摘要、话题、决定、待办和未决问题；每群独立持久化，`/reset` 只清理会话与记忆，不删除知识库。
 - `/kb add 标题 | 正文` 添加资料；`/kb list`、`/kb search 关键词`、`/kb remove 文档ID`、`/kb clear confirm` 管理本群知识。支持缓存目录中的 TXT/Markdown/CSV/JSON/YAML/XML/TOML/DOCX，PDF 需镜像提供 `pypdf`。
