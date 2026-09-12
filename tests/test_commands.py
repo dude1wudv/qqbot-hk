@@ -11,6 +11,7 @@ from smart_group_qq.commands import (
     model_alias_rewrite,
     parse_command,
     parse_profile_command,
+    reasoning_alias_rewrite,
 )
 
 
@@ -27,6 +28,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("/我的记忆", help_text())
         self.assertIn("/gemini", help_text())
         self.assertIn("/deepseek", help_text())
+        self.assertIn("/low /medium /high /max", help_text())
 
     def test_model_aliases_rewrite_to_session_scoped_native_commands(self):
         self.assertEqual(
@@ -42,6 +44,19 @@ class CommandTests(unittest.TestCase):
             "/model gemini-3.8-flash-high --session",
         )
         self.assertIsNone(model_alias_rewrite("gemini"))
+
+    def test_reasoning_aliases_rewrite_to_session_scoped_native_commands(self):
+        for effort in ("low", "medium", "high", "max"):
+            with self.subTest(effort=effort):
+                self.assertEqual(
+                    reasoning_alias_rewrite(f"<@bot> /{effort.upper()}"),
+                    f"/reasoning {effort} --session",
+                )
+        self.assertEqual(
+            reasoning_alias_rewrite("@机器人 ／ medium"),
+            "/reasoning medium --session",
+        )
+        self.assertIsNone(reasoning_alias_rewrite("medium"))
 
     def test_profile_commands_keep_arguments(self):
         command = parse_profile_command("<@bot> /记住我：我负责后端发布")

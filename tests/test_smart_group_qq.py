@@ -123,6 +123,21 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get_history("group-a"), [])
         self.assertEqual(self.adapter.sent, [])
 
+    async def test_reasoning_aliases_delegate_to_native_session_switch(self):
+        handler = build_handler(FakeContext(), self.store)
+        for effort in ("low", "medium", "high", "max"):
+            with self.subTest(effort=effort):
+                result = handler(
+                    self.make_event(f"<@bot> /{effort}", f"reasoning-{effort}"),
+                    self.gateway,
+                )
+                self.assertEqual(result, {
+                    "action": "rewrite",
+                    "text": f"/reasoning {effort} --session",
+                })
+        self.assertEqual(self.store.get_history("group-a"), [])
+        self.assertEqual(self.adapter.sent, [])
+
     async def test_keyword_send_failure_fails_open_and_can_retry(self):
         self.adapter.success = False
         settings = {"keyword_replies": [{"id": "hello", "match": "exact", "pattern": "hi", "reply": "hello"}]}

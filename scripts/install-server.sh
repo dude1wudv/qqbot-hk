@@ -18,6 +18,8 @@ for path in \
   "$project_dir/scripts/reconcile-smart-group-cron.py" \
   "$project_dir/scripts/patch-hermes-audio.py" \
   "$project_dir/scripts/verify-hermes-audio.py" \
+  "$project_dir/scripts/patch-hermes-reasoning.py" \
+  "$project_dir/scripts/verify-hermes-reasoning.py" \
   "$secrets_dir/qqbot.env" \
   "$secrets_dir/sub2api-api-key" \
   "$secrets_dir/sub2api-deepseek-api-key"; do

@@ -42,7 +42,7 @@ agent:
   # Hermes passes attached images natively and translates them for the provider protocol.
   image_input_mode: native
   reasoning_overrides:
-    deepseek/deepseek-v4.1-flash: low
+    deepseek/deepseek-v4.1-flash: medium
     gemini-3.8-flash-high: high
     gpt-5.6-luna: medium
 
@@ -99,7 +99,7 @@ plugins:
         allow_task_override: true
       settings:
         status_model: deepseek/deepseek-v4.1-flash
-        status_reasoning: low
+        status_reasoning: medium
         auto_pair:
           enabled: true
           until_utc: "2026-09-05T08:00:00Z"

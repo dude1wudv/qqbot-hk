@@ -14,8 +14,10 @@ test "$health" = "healthy"
 image_id="$(docker inspect -f '{{.Image}}' "$container_id")"
 base_digest_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.hermes-base-digest"}}' "$image_id")"
 audio_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.audio-patch"}}' "$image_id")"
+reasoning_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.reasoning-patch"}}' "$image_id")"
 test "$base_digest_label" = "sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1"
 test "$audio_patch_label" = "v1"
+test "$reasoning_patch_label" = "v1"
 
 docker exec -i hermes-qqbot python - <<'PY'
 import json
@@ -80,6 +82,7 @@ deepseek = post(
     {
         "model": "deepseek/deepseek-v4.1-flash",
         "messages": [{"role": "user", "content": "Reply only OK"}],
+        "reasoning_effort": "medium",
         "max_tokens": 256,
     },
     deepseek_key,
@@ -91,7 +94,7 @@ deepseek_text = "".join(
 )
 if "OK" not in deepseek_text.upper():
     raise SystemExit("deepseek/deepseek-v4.1-flash: unexpected response")
-print("MODEL=deepseek/deepseek-v4.1-flash EFFORT=low RESULT=OK")
+print("MODEL=deepseek/deepseek-v4.1-flash EFFORT=medium RESULT=OK")
 
 gemini = post(
     "/v1/chat/completions",
@@ -134,6 +137,7 @@ PY
 docker exec hermes-qqbot hermes config check >/dev/null
 docker exec hermes-qqbot hermes plugins doctor /opt/data/plugins/smart_group_qq --ci >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-audio.py --config /opt/data/config.yaml >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-reasoning.py >/dev/null
 docker exec -i hermes-qqbot python - <<'PY'
 import json
 import os
@@ -199,6 +203,11 @@ if deepseek_provider.get("api_mode") != "anthropic_messages":
 agent_config = config.get("agent")
 if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
     raise SystemExit("DeepSeek image input must use native content parts")
+if agent_config.get("reasoning_effort") != "medium":
+    raise SystemExit("agent.reasoning_effort must be medium")
+reasoning_overrides = agent_config.get("reasoning_overrides") or {}
+if reasoning_overrides.get("deepseek/deepseek-v4.1-flash") != "medium":
+    raise SystemExit("DeepSeek reasoning override must be medium")
 if config.get("fallback_providers"):
     raise SystemExit("automatic fallback providers must be disabled")
 
@@ -410,6 +419,8 @@ echo "CONTAINER_STATE=$state"
 echo "CONTAINER_HEALTH=$health"
 echo "HERMES_BASE_DIGEST=verified"
 echo "HERMES_AUDIO_PATCH=verified"
+echo "HERMES_REASONING_PATCH=verified"
+echo "REASONING_SMOKE=passed"
 echo "CONFIG_CHECK=passed"
 echo "AUDIO_SMOKE=passed"
 echo "PLUGIN_CHECK=passed"

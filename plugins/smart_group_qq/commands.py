@@ -16,6 +16,7 @@ _MODEL_ALIASES = {
     "gemini": "gemini-3.8-flash-high",
     "deepseek": "deepseek/deepseek-v4.1-flash",
 }
+_REASONING_ALIAS_COMMAND = re.compile(r"^[／/]\s*(low|medium|high|max)\s*$", re.IGNORECASE)
 _ALIASES = {"clear": "reset", "值日表": "duty_roster"}
 _SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules", "duty_roster"})
 
@@ -75,12 +76,22 @@ def model_alias_rewrite(value: Any) -> str | None:
     return f"/model {_MODEL_ALIASES[match.group(1).lower()]} --session"
 
 
+def reasoning_alias_rewrite(value: Any) -> str | None:
+    """Translate friendly QQ aliases into Hermes' session reasoning command."""
+
+    match = _REASONING_ALIAS_COMMAND.fullmatch(clean_text(value))
+    if not match:
+        return None
+    return f"/reasoning {match.group(1).lower()} --session"
+
+
 def help_text() -> str:
     return (
         "【群聊助手】\n"
         "/help 功能说明\n/reset 或 /clear 重置本群上下文\n"
         "/status 运行状态\n/summary 本群近期互动摘要\n/rules 已启用规则\n"
         "/gemini 切换本群会话到 Gemini\n/deepseek 切换本群会话到 DeepSeek\n"
+        "/low /medium /high /max 切换本群会话推理强度\n"
         "/我的记忆 查看个人记忆\n/记住我：内容 保存或更新个人信息\n"
         "/纠正记忆：字段=新内容 以本人确认更正旧记忆\n"
         "/忘记我 删除个人记忆\n/停止记忆 禁止继续建立个人记忆\n"
@@ -114,6 +125,6 @@ def rules_text(settings: Mapping[str, Any]) -> str:
 
 __all__ = [
     "Command", "ProfileCommand", "clean_text", "parse_command", "parse_profile_command",
-    "model_alias_rewrite",
+    "model_alias_rewrite", "reasoning_alias_rewrite",
     "help_text", "status_text", "rules_text",
 ]

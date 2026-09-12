@@ -18,6 +18,7 @@ from .commands import (
     model_alias_rewrite,
     parse_command,
     parse_profile_command,
+    reasoning_alias_rewrite,
     rules_text,
     status_text,
 )
@@ -528,14 +529,15 @@ def build_handler(ctx: Any, store: Store):
         kb_command = parse_kb_command(text)
         profile_command = parse_profile_command(text)
         model_rewrite = model_alias_rewrite(text)
+        reasoning_rewrite = reasoning_alias_rewrite(text)
         static_decision = policy.static(text)
         if static_decision.blocked:
             claim_action = "moderation:" + str(static_decision.rule_id or "static")
             reply = static_decision.notice or "此消息未能通过群聊安全审核。"
-        elif model_rewrite:
-            # Let Hermes' native /model implementation own provider
-            # resolution, persistence, cached-agent eviction and confirmation.
-            return {"action": "rewrite", "text": model_rewrite}
+        elif model_rewrite or reasoning_rewrite:
+            # Let Hermes' native session-scoped implementations own persistence,
+            # cached-agent eviction and confirmation.
+            return {"action": "rewrite", "text": model_rewrite or reasoning_rewrite}
         elif profile_command:
             claim_action = "profile:" + profile_command.action
             try:
@@ -607,7 +609,7 @@ def build_handler(ctx: Any, store: Store):
                 elif command.name == "status":
                     reply = status_text(
                         model=str(ctx.get_config("status_model", "deepseek/deepseek-v4.1-flash")),
-                        reasoning=str(ctx.get_config("status_reasoning", "low")),
+                        reasoning=str(ctx.get_config("status_reasoning", "medium")),
                     )
                 elif command.name == "summary":
                     generated = summary_reply(group_id)
