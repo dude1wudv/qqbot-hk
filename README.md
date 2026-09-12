@@ -15,7 +15,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 ## 运行边界
 
-部署使用以 Hermes Agent v0.21.2（`v2026.9.11`）固定摘要为基础的项目派生镜像。新版已原生在 gateway 启动阶段发现插件，项目只保留经 SHA/哨兵 fail-closed 的 QQ 语音补丁和 Sub2API 推理强度补丁；镜像构建会运行对应行为 smoke，不复制整个 adapter。容器不开放宿主机端口、不挂载 Docker socket，只加入 `sub2api_sub2api-network`。
+部署使用以 Hermes Agent v0.21.2（`v2026.9.11`）固定摘要为基础的项目派生镜像。新版已原生在 gateway 启动阶段发现插件，项目只保留经 SHA/哨兵 fail-closed 的 QQ 语音补丁和 Sub2API Chat 推理字段补丁；镜像构建会运行对应行为 smoke，不复制整个 adapter。容器不开放宿主机端口、不挂载 Docker socket，只加入 `sub2api_sub2api-network`。
 
 - 私聊：使用 Hermes `dm_policy: pairing`。截至 `2026-09-05T08:00:00Z` 的临时登记窗口内，QQ 私聊发送者会在中央鉴权前自动写入 pairing 批准名单并继续处理；窗口结束后，新的未批准用户恢复标准配对码流程。QQ 开放平台仍必须先实际投递该用户消息。
 - 群聊回复：只接受 `QQ_GROUP_ALLOWED_USERS` 中群的 `@机器人 + 问题`。若 QQ 开放平台已为机器人投递普通群消息，插件会旁听 `GROUP_MESSAGE_CREATE`，但该事件只进入本群记忆/检索链路，绝不触发回复、命令或普通 Agent 会话。
@@ -52,7 +52,7 @@ QQ 当前“开发体验用户”机制使用生产 API/Gateway，并由开放�
 
 ## 模型
 
-Hermes 默认通过专用 Sub2API DeepSeek 分组，以 Anthropic Messages 协议调用 `deepseek/deepseek-v4.1-flash`，推理强度为 `medium`。每次请求显式携带 `reasoning_effort`；群内可用 `/low`、`/medium`、`/high`、`/max` 仅切换当前群会话的推理强度。Hermes 将原生图片内容块翻译为该协议；不再先调用 Gemini/Luna 视觉链，也不配置自动模型回退。`gemini-3.8-flash-high` 仍保留为群会话可手动切换的模型，并使用独立的通用 Sub2API key。
+Hermes 默认通过专用 Sub2API DeepSeek 分组，以 OpenAI Chat Completions 协议调用 `deepseek/deepseek-v4.1-flash`，推理强度为 `medium`。每次请求显式携带 `reasoning_effort`；群内可用 `/low`、`/medium`、`/high`、`/max` 仅切换当前群会话的推理强度。Hermes 将原生图片内容块翻译为该协议；不再先调用 Gemini/Luna 视觉链，也不配置自动模型回退。`gemini-3.8-flash-high` 仍保留为群会话可手动切换的模型，并使用独立的通用 Sub2API key。
 
 群内 @ 机器人发送 /gemini（兼容 / gemini）可将当前群会话切换到 `gemini-3.8-flash-high`；发送 /deepseek（兼容 / deepseek）可切回 `deepseek/deepseek-v4.1-flash`。两条命令都使用 Hermes 原生的会话级模型覆写，不修改其他群或全局默认模型。
 
@@ -75,7 +75,7 @@ bash /opt/qqbot-hk/scripts/verify-server.sh
 
 `install-server.sh` 会校验群白名单，把群 OpenID 注入部署态配置，明确移除旧沙箱路由和全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像并只重建 `hermes-qqbot`，等待健康、运行 cron 对账并通过完整验收后才清理旧插件副本。源码配置不含真实 OpenID 或 API key。
 
-`verify-server.sh` 验证基础摘要/补丁标签、Sub2API 请求的显式推理强度、STT/TTS 实际配置解析、VOICE 类型、原生 MP3 被动回复锚点、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、200k 压缩配置、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、STT/TTS 实际配置解析、VOICE 类型、原生 MP3 被动回复锚点、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、200k 压缩配置、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
 部署后先由 QQ 开放平台“开发体验号码”名单中的新用户直接私聊：在上述登记窗口内，首条消息应自动完成 pairing 并直接进入问答；窗口结束后，新的未批准用户应收到标准配对码。群聊再用新群会话或 `/reset` 验证：白名单群 @ 可回复、非白名单群无回复、两名群成员共享上下文、关键词和审核各只发送一次。普通群消息能否被旁听取决于 QQ 开放平台对该机器人的消息事件权限/投递配置；代码不会绕过平台边界。平台确实投递时，再验证“非 @ 不回复，但下一次 @ 提问可引用其内容”。
 

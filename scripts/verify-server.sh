@@ -14,10 +14,10 @@ test "$health" = "healthy"
 image_id="$(docker inspect -f '{{.Image}}' "$container_id")"
 base_digest_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.hermes-base-digest"}}' "$image_id")"
 audio_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.audio-patch"}}' "$image_id")"
-reasoning_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.reasoning-patch"}}' "$image_id")"
+chat_reasoning_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.chat-reasoning-patch"}}' "$image_id")"
 test "$base_digest_label" = "sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1"
 test "$audio_patch_label" = "v1"
-test "$reasoning_patch_label" = "v1"
+test "$chat_reasoning_patch_label" = "v1"
 
 docker exec -i hermes-qqbot python - <<'PY'
 import json
@@ -39,10 +39,8 @@ deepseek_key = os.environ.get("SUB2API_DEEPSEEK_API_KEY") or env.get("SUB2API_DE
 if not key or not deepseek_key:
     raise SystemExit("missing Sub2API key")
 
-def post(path, body, api_key, *, anthropic=False):
+def post(path, body, api_key):
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    if anthropic:
-        headers["anthropic-version"] = "2023-06-01"
     request = urllib.request.Request(
         "http://sub2api:8080" + path,
         data=json.dumps(body).encode("utf-8"),
@@ -78,23 +76,23 @@ assert_audio_route("/v1/audio/transcriptions", "application/json")
 print("AUDIO_ROUTES=reachable")
 
 deepseek = post(
-    "/v1/messages",
+    "/v1/chat/completions",
     {
         "model": "deepseek/deepseek-v4.1-flash",
         "messages": [{"role": "user", "content": "Reply only OK"}],
         "reasoning_effort": "medium",
+        "stream": False,
         "max_tokens": 256,
     },
     deepseek_key,
-    anthropic=True,
 )
-deepseek_text = "".join(
-    str(item.get("text") or "") for item in (deepseek.get("content") or [])
-    if isinstance(item, dict)
-)
+deepseek_choices = deepseek.get("choices") or []
+deepseek_text = (
+    ((deepseek_choices[0] if deepseek_choices else {}).get("message") or {}).get("content") or ""
+).strip()
 if "OK" not in deepseek_text.upper():
     raise SystemExit("deepseek/deepseek-v4.1-flash: unexpected response")
-print("MODEL=deepseek/deepseek-v4.1-flash EFFORT=medium RESULT=OK")
+print("MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions EFFORT=medium RESULT=OK")
 
 gemini = post(
     "/v1/chat/completions",
@@ -117,27 +115,32 @@ image_buffer = io.BytesIO()
 Image.new("RGB", (16, 16), (0, 120, 255)).save(image_buffer, format="PNG")
 image_base64 = base64.b64encode(image_buffer.getvalue()).decode("ascii")
 deepseek_vision = post(
-    "/v1/messages",
+    "/v1/chat/completions",
     {
         "model": "deepseek/deepseek-v4.1-flash",
         "messages": [{"role": "user", "content": [
             {"type": "text", "text": "Reply only IMAGE_OK if you can inspect this image."},
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
         ]}],
+        "reasoning_effort": "medium",
+        "stream": False,
         "max_tokens": 128,
     },
     deepseek_key,
-    anthropic=True,
 )
-if not (deepseek_vision.get("content") or []):
+vision_choices = deepseek_vision.get("choices") or []
+vision_content = (
+    ((vision_choices[0] if vision_choices else {}).get("message") or {}).get("content") or ""
+).strip()
+if not vision_content:
     raise SystemExit("deepseek/deepseek-v4.1-flash: invalid vision response")
-print("VISION=deepseek/deepseek-v4.1-flash RESULT=OK")
+print("VISION=deepseek/deepseek-v4.1-flash API_MODE=chat_completions RESULT=OK")
 PY
 
 docker exec hermes-qqbot hermes config check >/dev/null
 docker exec hermes-qqbot hermes plugins doctor /opt/data/plugins/smart_group_qq --ci >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-audio.py --config /opt/data/config.yaml >/dev/null
-docker exec hermes-qqbot python /opt/hermes/verify-hermes-reasoning.py >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/dev/null
 docker exec -i hermes-qqbot python - <<'PY'
 import json
 import os
@@ -198,8 +201,8 @@ providers = config.get("providers") or {}
 deepseek_provider = providers.get("sub2api_deepseek") or {}
 if deepseek_provider.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
     raise SystemExit("DeepSeek provider key wiring is invalid")
-if deepseek_provider.get("api_mode") != "anthropic_messages":
-    raise SystemExit("DeepSeek provider must use anthropic_messages")
+if deepseek_provider.get("api_mode") != "chat_completions":
+    raise SystemExit("DeepSeek provider must use chat_completions")
 agent_config = config.get("agent")
 if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
     raise SystemExit("DeepSeek image input must use native content parts")
@@ -236,15 +239,15 @@ if compression_route.get("base_url") != "http://sub2api:8080/v1":
     raise SystemExit("auxiliary.compression.base_url is invalid")
 if compression_route.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
     raise SystemExit("auxiliary.compression.key_env must be SUB2API_DEEPSEEK_API_KEY")
-if compression_route.get("api_mode") != "anthropic_messages":
-    raise SystemExit("auxiliary.compression.api_mode must be anthropic_messages")
+if compression_route.get("api_mode") != "chat_completions":
+    raise SystemExit("auxiliary.compression.api_mode must be chat_completions")
 if compression_route.get("reasoning_effort") != "low":
     raise SystemExit("auxiliary.compression.reasoning_effort must be low")
 if auxiliary.get("vision"):
     raise SystemExit("auxiliary vision fallback must be disabled")
 print(
     "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=200000 "
-    "MODEL=deepseek/deepseek-v4.1-flash API_MODE=anthropic_messages REASONING_EFFORT=low"
+    "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
 )
 tools = (((config.get("platform_toolsets") or {}).get("qqbot") or []))
 if "terminal" not in tools or "file" not in tools:
@@ -419,8 +422,8 @@ echo "CONTAINER_STATE=$state"
 echo "CONTAINER_HEALTH=$health"
 echo "HERMES_BASE_DIGEST=verified"
 echo "HERMES_AUDIO_PATCH=verified"
-echo "HERMES_REASONING_PATCH=verified"
-echo "REASONING_SMOKE=passed"
+echo "HERMES_CHAT_REASONING_PATCH=verified"
+echo "CHAT_COMPLETIONS_ROUTE=verified"
 echo "CONFIG_CHECK=passed"
 echo "AUDIO_SMOKE=passed"
 echo "PLUGIN_CHECK=passed"

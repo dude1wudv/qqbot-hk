@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Behavior smoke for Sub2API reasoning fields in the pinned Hermes adapter."""
+"""Behavior smoke for Sub2API Chat Completions reasoning fields."""
 
-from agent.anthropic_adapter import build_anthropic_kwargs
+from agent.transports.chat_completions import ChatCompletionsTransport
 
 
 BASE_URL = "http://sub2api:8080/v1"
@@ -12,13 +12,13 @@ def build(effort: str | None) -> dict:
     reasoning = {"enabled": True}
     if effort is not None:
         reasoning["effort"] = effort
-    return build_anthropic_kwargs(
+    return ChatCompletionsTransport().build_kwargs(
         model=MODEL,
         messages=[{"role": "user", "content": "ping"}],
         tools=None,
-        max_tokens=256,
-        reasoning_config=reasoning,
         base_url=BASE_URL,
+        supports_reasoning=True,
+        reasoning_config=reasoning,
     )
 
 
@@ -29,15 +29,15 @@ def require(condition: bool, message: str) -> None:
 
 def main() -> None:
     default = build(None)
-    require(default.get("extra_body") == {"reasoning_effort": "medium"}, "default effort is not medium")
-    require("thinking" not in default, "Sub2API request retained incompatible Anthropic thinking")
+    require(default.get("reasoning_effort") == "medium", "default effort is not medium")
+    require("reasoning" not in (default.get("extra_body") or {}), "duplicate reasoning body remains")
     for effort in ("low", "medium", "high", "max"):
         request = build(effort)
         require(
-            request.get("extra_body") == {"reasoning_effort": effort},
-            f"Sub2API request did not carry {effort} reasoning effort",
+            request.get("reasoning_effort") == effort,
+            f"Chat request did not carry {effort} reasoning effort",
         )
-    print("HERMES_SUB2API_REASONING=passed DEFAULT=medium LEVELS=low,medium,high,max")
+    print("HERMES_SUB2API_CHAT=passed DEFAULT=medium LEVELS=low,medium,high,max")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ gateway:
 model:
   provider: sub2api_deepseek
   default: deepseek/deepseek-v4.1-flash
-  api_mode: anthropic_messages
+  api_mode: chat_completions
   context_length: 1000000
   streaming: true
 
@@ -20,7 +20,7 @@ providers:
   sub2api_deepseek:
     base_url: http://sub2api:8080/v1
     key_env: SUB2API_DEEPSEEK_API_KEY
-    api_mode: anthropic_messages
+    api_mode: chat_completions
     discover_models: false
     models:
       deepseek/deepseek-v4.1-flash:
@@ -52,7 +52,7 @@ auxiliary:
     model: deepseek/deepseek-v4.1-flash
     base_url: http://sub2api:8080/v1
     key_env: SUB2API_DEEPSEEK_API_KEY
-    api_mode: anthropic_messages
+    api_mode: chat_completions
     reasoning_effort: low
 
 voice:
