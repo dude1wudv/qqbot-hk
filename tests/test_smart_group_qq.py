@@ -138,6 +138,62 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get_history("group-a"), [])
         self.assertEqual(self.adapter.sent, [])
 
+    async def test_private_aliases_delegate_to_native_session_commands(self):
+        handler = build_handler(FakeContext(), self.store)
+        self.gateway.adapters = {self.source_platform: self.adapter}
+        cases = {
+            "/deepseek": "/model deepseek/deepseek-v4.1-flash --session",
+            "/gemini": "/model gemini-3.8-flash-high --session",
+            "/low": "/reasoning low --session",
+            "/medium": "/reasoning medium --session",
+            "/high": "/reasoning high --session",
+            "/max": "/reasoning max --session",
+        }
+        for index, (command, rewritten) in enumerate(cases.items()):
+            with self.subTest(command=command):
+                result = handler(event(
+                    command,
+                    f"dm-alias-{index}",
+                    platform="qqbot",
+                    chat_type="dm",
+                    group="dm-a",
+                ), self.gateway)
+                self.assertEqual(result, {"action": "rewrite", "text": rewritten})
+        self.assertEqual(self.adapter.sent, [])
+
+    async def test_private_plugin_commands_work_except_duty_roster(self):
+        handler = build_handler(FakeContext(), self.store)
+        self.gateway.adapters = {self.source_platform: self.adapter}
+        for index, command in enumerate(("/help", "/status", "/rules", "/kb", "/我的记忆")):
+            with self.subTest(command=command):
+                result = handler(event(
+                    command,
+                    f"dm-command-{index}",
+                    platform="qqbot",
+                    chat_type="dm",
+                    group="dm-a",
+                ), self.gateway)
+                self.assertEqual(result, {"action": "skip", "reason": "command_or_policy_handled"})
+        roster = handler(event(
+            "/值日表",
+            "dm-roster",
+            platform="qqbot",
+            chat_type="dm",
+            group="dm-a",
+        ), self.gateway)
+        self.assertEqual(roster, {"action": "skip", "reason": "command_or_policy_handled"})
+        self.assertEqual(handler(event(
+            "/commands",
+            "dm-native",
+            platform="qqbot",
+            chat_type="dm",
+            group="dm-a",
+        ), self.gateway), {"action": "allow"})
+        await asyncio.sleep(0)
+        replies = [content for _, content, _ in self.adapter.sent]
+        self.assertTrue(any("【QQ 助手】" in content for content in replies))
+        self.assertIn("该功能仅群聊可用。", replies)
+
     async def test_keyword_send_failure_fails_open_and_can_retry(self):
         self.adapter.success = False
         settings = {"keyword_replies": [{"id": "hello", "match": "exact", "pattern": "hi", "reply": "hello"}]}

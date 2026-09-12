@@ -87,15 +87,15 @@ def reasoning_alias_rewrite(value: Any) -> str | None:
 
 def help_text() -> str:
     return (
-        "【群聊助手】\n"
-        "/help 功能说明\n/reset 或 /clear 重置本群上下文\n"
-        "/status 运行状态\n/summary 本群近期互动摘要\n/rules 已启用规则\n"
-        "/gemini 切换本群会话到 Gemini\n/deepseek 切换本群会话到 DeepSeek\n"
-        "/low /medium /high /max 切换本群会话推理强度\n"
-        "/我的记忆 查看个人记忆\n/记住我：内容 保存或更新个人信息\n"
+        "【QQ 助手】\n"
+        "/help 功能说明\n/reset 或 /clear 重置当前会话\n"
+        "/status 运行状态\n/summary 近期互动摘要\n/rules 已启用规则\n"
+        "/gemini 切换当前会话到 Gemini\n/deepseek 切换当前会话到 DeepSeek\n"
+        "/low /medium /high /max 切换当前会话推理强度\n"
+        "/kb 知识库\n/我的记忆 查看个人记忆\n/记住我：内容 保存或更新个人信息\n"
         "/纠正记忆：字段=新内容 以本人确认更正旧记忆\n"
         "/忘记我 删除个人记忆\n/停止记忆 禁止继续建立个人记忆\n"
-        "/值日表 查看本周轮值安排"
+        "/值日表 查看本周轮值安排（仅群聊）"
     )
 
 

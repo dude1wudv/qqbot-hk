@@ -23,12 +23,16 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(parse_command("@机器人 ／值日表").name, "duty_roster")
         self.assertEqual(clean_text("<@bot>  问题"), "问题")
 
-    def test_help_lists_duty_roster(self):
-        self.assertIn("/值日表 查看本周轮值安排", help_text())
-        self.assertIn("/我的记忆", help_text())
-        self.assertIn("/gemini", help_text())
-        self.assertIn("/deepseek", help_text())
-        self.assertIn("/low /medium /high /max", help_text())
+    def test_help_is_chinese_custom_command_menu(self):
+        menu = help_text()
+        self.assertIn("【QQ 助手】", menu)
+        for command in (
+            "/help", "/reset", "/status", "/summary", "/rules", "/gemini", "/deepseek",
+            "/low /medium /high /max", "/kb", "/我的记忆", "/记住我", "/纠正记忆",
+            "/忘记我", "/停止记忆",
+        ):
+            self.assertIn(command, menu)
+        self.assertIn("/值日表 查看本周轮值安排（仅群聊）", menu)
 
     def test_model_aliases_rewrite_to_session_scoped_native_commands(self):
         self.assertEqual(

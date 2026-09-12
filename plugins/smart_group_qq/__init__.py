@@ -511,7 +511,9 @@ def build_handler(ctx: Any, store: Store):
             return {"action": "allow"}
         adapter = _adapter(gateway, source)
         _configure_adapter(adapter)
-        if getattr(source, "chat_type", "") != "group":
+        chat_type = str(getattr(source, "chat_type", "") or "").lower()
+        is_group = chat_type == "group"
+        if not is_group and chat_type not in {"dm", "private"}:
             return {"action": "allow"}
         group_id = str(getattr(source, "chat_id", "") or "")
         member_id = str(getattr(source, "user_id", "") or "")
@@ -519,6 +521,8 @@ def build_handler(ctx: Any, store: Store):
         text = clean_text(getattr(event, "text", ""))
         image_paths = [str(item) for item in (getattr(event, "media_urls", None) or [])]
         if not group_id or (not text and not image_paths):
+            return {"action": "allow"}
+        if not is_group and not text.startswith(("/", "／")):
             return {"action": "allow"}
         profiles.touch(group_id, member_id, display_name=_display_name(source), increment=False)
 
@@ -563,7 +567,7 @@ def build_handler(ctx: Any, store: Store):
             except ValueError:
                 reply = "这条内容不能保存，请避免敏感信息并检查格式。"
         elif attachment_title and (attachment_paths or image_paths):
-            if not _can_manage_knowledge(settings, member_id):
+            if is_group and not _can_manage_knowledge(settings, member_id):
                 reply = "你没有管理本群知识库的权限。"
             else:
                 generated = attachment_reply(group_id, member_id, message_id, attachment_title, attachment_paths, image_paths)
@@ -573,7 +577,7 @@ def build_handler(ctx: Any, store: Store):
             claim_action = "knowledge:help"
         elif kb_command:
             claim_action = "knowledge:" + kb_command.action
-            can_manage = _can_manage_knowledge(settings, member_id)
+            can_manage = not is_group or _can_manage_knowledge(settings, member_id)
             try:
                 if kb_command.action == "help":
                     reply = kb_help_text()
@@ -601,11 +605,14 @@ def build_handler(ctx: Any, store: Store):
             if command:
                 claim_action = "command:" + command.name
                 if command.name == "help":
-                    reply = help_text() + "\n/kb 群知识库"
+                    reply = help_text()
                 elif command.name == "reset":
                     memory.reset(group_id)
                     _reset_gateway_session(gateway, session_store, source)
-                    reply = "本群机器人上下文与长期记忆已重置；知识库保留。"
+                    reply = (
+                        "本群机器人上下文与长期记忆已重置；知识库保留。"
+                        if is_group else "当前私聊上下文与长期记忆已重置；知识库保留。"
+                    )
                 elif command.name == "status":
                     reply = status_text(
                         model=str(ctx.get_config("status_model", "deepseek/deepseek-v4.1-flash")),
@@ -616,7 +623,10 @@ def build_handler(ctx: Any, store: Store):
                 elif command.name == "rules":
                     reply = rules_text(settings)
                 elif command.name == "duty_roster":
-                    reply = duty_roster_text()
+                    reply = duty_roster_text() if is_group else "该功能仅群聊可用。"
+            elif not is_group:
+                # Unknown slash commands belong to Hermes' native command router.
+                return {"action": "allow"}
             else:
                 decision = policy.keyword(text)
                 if decision.replied:

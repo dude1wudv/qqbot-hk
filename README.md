@@ -25,6 +25,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - QQ 语音只使用 `qwen-audio-3.0-asr-flash` 外部识别，不采用腾讯 `asr_refer_text`。语音输入默认返回一条 QQ 原生 MP3 语音；普通文本默认返回文本，只有明确语音/朗读/朗唱请求才调用 TTS。
 - STT 地址与模型固定在 `platforms.qqbot.extra.stt`，TTS 地址/模型/音色固定在 `tts.openai`；真实 Sub2API key 仅由安装脚本写入权限 `0600` 的部署态 `.env`。
 - `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、AI 结构化长期记忆、非 @ 消息旁听、群知识库/RAG，以及 `/help`、`/reset`、`/clear`、`/status`、`/summary`、`/rules`、`/kb`、`/值日表`、`/gemini`、`/deepseek`、`/low`、`/medium`、`/high`、`/max`、`/我的记忆`、`/记住我`、`/纠正记忆`、`/停止记忆`、`/忘记我`。
+- 私聊用户可直接使用 `/help` 查看中文自定义命令菜单，并使用模型、推理强度、状态、重置、摘要、规则、知识库和个人记忆命令；`/值日表` 仅群聊可用。未由插件定义的斜杠命令继续透传给 Hermes 原生命令路由。
 - `@机器人 /值日表` 按北京时间即时计算本周日到周六的轮值安排；2026 年 9 月 13 日开始，每周日轮换一次，开始前显示首轮预告。该功能不依赖主动群发或模型调用。
 - `/summary` 使用模型生成本群摘要、话题、决定、待办和未决问题；每群独立持久化，`/reset` 只清理会话与记忆，不删除知识库。
 - `/kb add 标题 | 正文` 添加资料；`/kb list`、`/kb search 关键词`、`/kb remove 文档ID`、`/kb clear confirm` 管理本群知识。支持缓存目录中的 TXT/Markdown/CSV/JSON/YAML/XML/TOML/DOCX，PDF 需镜像提供 `pypdf`。
