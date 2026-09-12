@@ -606,7 +606,7 @@ def build_handler(ctx: Any, store: Store):
                     reply = "本群机器人上下文与长期记忆已重置；知识库保留。"
                 elif command.name == "status":
                     reply = status_text(
-                        model=str(ctx.get_config("status_model", "deepseek-v4-flash-0731")),
+                        model=str(ctx.get_config("status_model", "deepseek/deepseek-v4.1-flash")),
                         reasoning=str(ctx.get_config("status_reasoning", "low")),
                     )
                 elif command.name == "summary":

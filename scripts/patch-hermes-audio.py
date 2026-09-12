@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 
 
-EXPECTED_ORIGINAL_SHA256 = "a317fba054a6affb6e95b7483a1c38c9e4ddd62ef44191a87f864136322261cf"
+EXPECTED_ORIGINAL_SHA256 = "603a00c3c72f7e8e9101056d698d97e5719db44f6d0ab3fc25d9b26c00f07599"
 PATCH_MARKER = 'QQBOT_HK_AUDIO_PATCH = "v1"'
 
 
@@ -28,16 +28,15 @@ PATCHES = (
         "patch marker",
     ),
     (
-        "            message_type=self._detect_message_type(image_urls, image_media_types),",
+        "            message_type=self._detect_message_type(image_urls, image_media_types), raw_message=d,",
         "            message_type=(\n"
         "                MessageType.VOICE if voice_transcripts\n"
         "                else self._detect_message_type(image_urls, image_media_types)\n"
-        "            ),",
-        4,
+        "            ), raw_message=d,",
+        1,
         "VOICE event preservation",
     ),
     (
-        "        # 1. Use QQ's built-in ASR text if available\n"
         "        if asr_refer_text:\n",
         "        # 1. Use QQ's built-in ASR only when explicitly preferred.\n"
         "        prefer_builtin = _resolve_qq_secret(\n"
@@ -58,17 +57,11 @@ PATCHES = (
         "YAML STT environment-key fallback",
     ),
     (
-        "        \"\"\"Send a voice message natively.\"\"\"\n"
-        "        del kwargs\n"
-        "        return await self._send_media(\n"
-        "            chat_id, audio_path, MEDIA_TYPE_VOICE, \"voice\", caption, reply_to\n"
-        "        )\n",
-        "        \"\"\"Send a voice message natively with a QQ passive-reply anchor.\"\"\"\n"
-        "        del kwargs\n"
+        "    async def send_voice(self, chat_id, audio_path, caption=None, reply_to=None, **kwargs) -> SendResult:\n"
+        "        return await self._send_media(chat_id, audio_path, MEDIA_TYPE_VOICE, \"voice\", caption, reply_to)\n",
+        "    async def send_voice(self, chat_id, audio_path, caption=None, reply_to=None, **kwargs) -> SendResult:\n"
         "        reply_to = reply_to or self._last_msg_id.get(chat_id)\n"
-        "        return await self._send_media(\n"
-        "            chat_id, audio_path, MEDIA_TYPE_VOICE, \"voice\", caption, reply_to\n"
-        "        )\n",
+        "        return await self._send_media(chat_id, audio_path, MEDIA_TYPE_VOICE, \"voice\", caption, reply_to)\n",
         1,
         "QQ media reply anchor",
     ),
@@ -82,7 +75,7 @@ def sha256_text(source: str) -> str:
 def verify_patched_source(source: str) -> None:
     required = {
         PATCH_MARKER: 1,
-        "MessageType.VOICE if voice_transcripts": 4,
+        "MessageType.VOICE if voice_transcripts": 1,
         '"QQ_STT_PREFER_BUILTIN", "true"': 1,
         'or _resolve_qq_secret("QQ_STT_API_KEY", "")': 1,
         "reply_to = reply_to or self._last_msg_id.get(chat_id)": 1,

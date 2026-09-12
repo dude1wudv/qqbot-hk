@@ -14,7 +14,7 @@ _PROFILE_COMMAND = re.compile(
 _MODEL_ALIAS_COMMAND = re.compile(r"^[／/]\s*(gemini|deepseek)\s*$", re.IGNORECASE)
 _MODEL_ALIASES = {
     "gemini": "gemini-3.8-flash-high",
-    "deepseek": "deepseek-v4-flash-0731",
+    "deepseek": "deepseek/deepseek-v4.1-flash",
 }
 _ALIASES = {"clear": "reset", "值日表": "duty_roster"}
 _SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules", "duty_roster"})

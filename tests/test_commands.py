@@ -35,7 +35,7 @@ class CommandTests(unittest.TestCase):
         )
         self.assertEqual(
             model_alias_rewrite("@机器人 / deepseek"),
-            "/model deepseek-v4-flash-0731 --session",
+            "/model deepseek/deepseek-v4.1-flash --session",
         )
         self.assertEqual(
             model_alias_rewrite("／ Gemini"),

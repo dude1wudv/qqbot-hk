@@ -13,23 +13,15 @@ SPEC.loader.exec_module(PATCH)
 
 
 def fixture_source() -> str:
-    voice_assignment = (
-        "            message_type=self._detect_message_type(image_urls, image_media_types),\n"
-    )
-    handlers = "".join(
-        f"    def handler_{index}(self):\n"
-        "        event = dict(\n"
-        f"{voice_assignment}"
-        "        )\n"
-        for index in range(4)
-    )
     return (
         "import logging\n\n"
         "logger = logging.getLogger(__name__)\n\n"
         "class Adapter:\n"
-        + handlers
-        + "    def stt(self, asr_refer_text):\n"
-        "        # 1. Use QQ's built-in ASR text if available\n"
+        "    def ingest(self):\n"
+        "        event = dict(\n"
+        "            message_type=self._detect_message_type(image_urls, image_media_types), raw_message=d,\n"
+        "        )\n\n"
+        "    def stt(self, asr_refer_text):\n"
         "        if asr_refer_text:\n"
         "            return asr_refer_text\n"
         "        return None\n\n"
@@ -37,19 +29,8 @@ def fixture_source() -> str:
         "        if stt_cfg:\n"
         "            api_key = stt_cfg.get(\"apiKey\") or stt_cfg.get(\"api_key\", \"\")\n"
         "            return api_key\n\n"
-        "    async def send_voice(\n"
-        "            self,\n"
-        "            chat_id,\n"
-        "            audio_path,\n"
-        "            caption=None,\n"
-        "            reply_to=None,\n"
-        "            **kwargs,\n"
-        "    ):\n"
-        "        \"\"\"Send a voice message natively.\"\"\"\n"
-        "        del kwargs\n"
-        "        return await self._send_media(\n"
-        "            chat_id, audio_path, MEDIA_TYPE_VOICE, \"voice\", caption, reply_to\n"
-        "        )\n"
+        "    async def send_voice(self, chat_id, audio_path, caption=None, reply_to=None, **kwargs) -> SendResult:\n"
+        "        return await self._send_media(chat_id, audio_path, MEDIA_TYPE_VOICE, \"voice\", caption, reply_to)\n"
     )
 
 
@@ -59,7 +40,7 @@ class HermesAudioPatchTests(unittest.TestCase):
         digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
         patched = PATCH.patch_source(source, digest)
         self.assertIn(PATCH.PATCH_MARKER, patched)
-        self.assertEqual(4, patched.count("MessageType.VOICE if voice_transcripts"))
+        self.assertEqual(1, patched.count("MessageType.VOICE if voice_transcripts"))
         self.assertIn('"QQ_STT_PREFER_BUILTIN", "true"', patched)
         self.assertIn('or _resolve_qq_secret("QQ_STT_API_KEY", "")', patched)
         self.assertIn("reply_to = reply_to or self._last_msg_id.get(chat_id)", patched)
@@ -71,7 +52,7 @@ class HermesAudioPatchTests(unittest.TestCase):
 
     def test_missing_or_duplicate_sentinel_fails_closed(self):
         source = fixture_source().replace(
-            "            message_type=self._detect_message_type(image_urls, image_media_types),\n",
+            "            message_type=self._detect_message_type(image_urls, image_media_types), raw_message=d,\n",
             "",
             1,
         )

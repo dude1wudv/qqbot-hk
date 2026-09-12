@@ -1,6 +1,6 @@
 """Read-only observation of QQ group messages without an @ mention.
 
-Hermes v0.21.0 only routes ``GROUP_AT_MESSAGE_CREATE`` into the normal agent
+Hermes v0.21.2 only routes ``GROUP_AT_MESSAGE_CREATE`` into the normal agent
 pipeline.  This module adds a deliberately narrow compatibility shim for the
 gateway dispatch method so a caller can build a group index from
 ``GROUP_MESSAGE_CREATE`` events without sending them to the agent.
@@ -556,8 +556,8 @@ def install_nonmention_observer(callback: Observer, logger: Optional[logging.Log
             current_callback = getattr(type(self), _CALLBACK_ATTR, None)
             if callable(current_callback):
                 _schedule(self, payload, current_callback)
-            # Do not call the original method for this event.  v0.21.0 treats
-            # it as unknown, but bypassing it keeps this guarantee intact if a
+            # Do not call the original method.  Hermes currently treats this
+            # event as unknown, but bypassing it keeps this guarantee intact if a
             # later adapter version starts routing the event to the agent.
             return None
         return original(self, payload)

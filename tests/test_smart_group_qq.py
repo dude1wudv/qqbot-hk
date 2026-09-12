@@ -118,7 +118,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         })
         self.assertEqual(deepseek, {
             "action": "rewrite",
-            "text": "/model deepseek-v4-flash-0731 --session",
+            "text": "/model deepseek/deepseek-v4.1-flash --session",
         })
         self.assertEqual(self.store.get_history("group-a"), [])
         self.assertEqual(self.adapter.sent, [])
@@ -235,7 +235,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         result = handler(self.make_event("你好", "ask-post"), self.gateway)
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=result["text"],
-            assistant_response="你好，群友。", model="deepseek-v4-flash-0731",
+            assistant_response="你好，群友。", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
         rows = self.store.get_history("group-a")
@@ -302,7 +302,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler.memory.reset("group-a")
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=old["text"],
-            assistant_response="旧助手回答", model="deepseek-v4-flash-0731",
+            assistant_response="旧助手回答", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
         self.assertNotIn("旧助手回答", [row["text"] for row in self.store.get_history("group-a")])
@@ -311,7 +311,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         new = handler(self.make_event("新问题", "new-question"), self.gateway)
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=new["text"],
-            assistant_response="新助手回答", model="deepseek-v4-flash-0731",
+            assistant_response="新助手回答", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
         self.assertIn("新助手回答", [row["text"] for row in self.store.get_history("group-a")])
@@ -322,7 +322,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         wrapped = "[群友]\n[Replying to: 前文]\n" + old["text"] + "\n[图片内容]示意图"
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=wrapped,
-            assistant_response="正常助手回答", model="deepseek-v4-flash-0731",
+            assistant_response="正常助手回答", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
         self.assertIn("正常助手回答", [row["text"] for row in self.store.get_history("group-a")])
@@ -330,7 +330,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler.memory.reset("group-a")
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=wrapped,
-            assistant_response="过时助手回答", model="deepseek-v4-flash-0731",
+            assistant_response="过时助手回答", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
         self.assertNotIn("过时助手回答", [row["text"] for row in self.store.get_history("group-a")])
@@ -338,7 +338,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler.post_llm_call(
             session_id="qqbot:group:group-a",
             user_message="[fake-group-memory-key]\n无真实本次标记",
-            assistant_response="伪造助手回答", model="deepseek-v4-flash-0731",
+            assistant_response="伪造助手回答", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
         self.assertNotIn("伪造助手回答", [row["text"] for row in self.store.get_history("group-a")])

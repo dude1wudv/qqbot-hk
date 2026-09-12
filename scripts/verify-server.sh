@@ -14,7 +14,7 @@ test "$health" = "healthy"
 image_id="$(docker inspect -f '{{.Image}}' "$container_id")"
 base_digest_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.hermes-base-digest"}}' "$image_id")"
 audio_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.audio-patch"}}' "$image_id")"
-test "$base_digest_label" = "sha256:76d5d17a201bb623268c02d43e397925e8f0127eb29b2e00fc48632d74945b05"
+test "$base_digest_label" = "sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1"
 test "$audio_patch_label" = "v1"
 
 docker exec -i hermes-qqbot python - <<'PY'
@@ -74,7 +74,7 @@ print("AUDIO_ROUTES=reachable")
 
 
 for model, effort in (
-    ("deepseek-v4-flash-0731", "low"),
+    ("deepseek/deepseek-v4.1-flash", "low"),
     ("gemini-3.8-flash-high", "high"),
 ):
     payload = post(
@@ -93,55 +93,26 @@ for model, effort in (
         raise SystemExit(f"{model}: unexpected response")
     print(f"MODEL={model} EFFORT={effort} RESULT=OK")
 
-luna = post(
-    "/v1/responses",
-    {
-        "model": "gpt-5.6-luna",
-        "input": "Reply only OK",
-        "reasoning": {"effort": "medium"},
-        "stream": False,
-        "max_output_tokens": 256,
-    },
-)
-if not luna.get("id") or luna.get("error"):
-    raise SystemExit("gpt-5.6-luna: invalid Responses payload")
-print("MODEL=gpt-5.6-luna EFFORT=medium RESULT=OK")
-
 image_buffer = io.BytesIO()
 Image.new("RGB", (16, 16), (0, 120, 255)).save(image_buffer, format="PNG")
 image_url = "data:image/png;base64," + base64.b64encode(image_buffer.getvalue()).decode("ascii")
 
-gemini_vision = post(
+deepseek_vision = post(
     "/v1/chat/completions",
     {
-        "model": "gemini-3.8-flash-high",
+        "model": "deepseek/deepseek-v4.1-flash",
         "messages": [{"role": "user", "content": [
             {"type": "text", "text": "Reply only IMAGE_OK if you can inspect this image."},
             {"type": "image_url", "image_url": {"url": image_url}},
         ]}],
+        "reasoning_effort": "low",
         "stream": False,
         "max_tokens": 128,
     },
 )
-if not (gemini_vision.get("choices") or []):
-    raise SystemExit("gemini-3.8-flash-high: invalid vision response")
-print("VISION=gemini-3.8-flash-high RESULT=OK")
-
-luna_vision = post(
-    "/v1/responses",
-    {
-        "model": "gpt-5.6-luna",
-        "input": [{"role": "user", "content": [
-            {"type": "input_text", "text": "Reply only IMAGE_OK if you can inspect this image."},
-            {"type": "input_image", "image_url": image_url},
-        ]}],
-        "stream": False,
-        "max_output_tokens": 128,
-    },
-)
-if not luna_vision.get("id") or luna_vision.get("error"):
-    raise SystemExit("gpt-5.6-luna: invalid vision response")
-print("VISION=gpt-5.6-luna RESULT=OK")
+if not (deepseek_vision.get("choices") or []):
+    raise SystemExit("deepseek/deepseek-v4.1-flash: invalid vision response")
+print("VISION=deepseek/deepseek-v4.1-flash RESULT=OK")
 PY
 
 docker exec hermes-qqbot hermes config check >/dev/null
@@ -196,6 +167,18 @@ if plugin is None or plugin.get("status") not in {"enabled", "loaded"}:
 
 import yaml
 config = yaml.safe_load(Path("/opt/data/config.yaml").read_text(encoding="utf-8")) or {}
+model_config = config.get("model")
+if not isinstance(model_config, Mapping):
+    raise SystemExit("model config is missing")
+if model_config.get("provider") != "sub2api":
+    raise SystemExit("primary model provider must be sub2api")
+if model_config.get("default") != "deepseek/deepseek-v4.1-flash":
+    raise SystemExit("primary model must be deepseek/deepseek-v4.1-flash")
+agent_config = config.get("agent")
+if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
+    raise SystemExit("DeepSeek image input must use native content parts")
+if config.get("fallback_providers"):
+    raise SystemExit("automatic fallback providers must be disabled")
 
 compression_config = config.get("compression")
 if not isinstance(compression_config, Mapping):
@@ -216,8 +199,8 @@ if not isinstance(compression_route, Mapping):
     raise SystemExit("auxiliary.compression route is missing")
 if compression_route.get("provider") != "custom":
     raise SystemExit("auxiliary.compression.provider must be custom")
-if compression_route.get("model") != "deepseek-v4-flash-0731":
-    raise SystemExit("auxiliary.compression.model must be deepseek-v4-flash-0731")
+if compression_route.get("model") != "deepseek/deepseek-v4.1-flash":
+    raise SystemExit("auxiliary.compression.model must be deepseek/deepseek-v4.1-flash")
 if compression_route.get("base_url") != "http://sub2api:8080/v1":
     raise SystemExit("auxiliary.compression.base_url is invalid")
 if compression_route.get("key_env") != "SUB2API_API_KEY":
@@ -226,9 +209,11 @@ if compression_route.get("api_mode") != "chat_completions":
     raise SystemExit("auxiliary.compression.api_mode must be chat_completions")
 if compression_route.get("reasoning_effort") != "low":
     raise SystemExit("auxiliary.compression.reasoning_effort must be low")
+if auxiliary.get("vision"):
+    raise SystemExit("auxiliary vision fallback must be disabled")
 print(
     "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=200000 "
-    "MODEL=deepseek-v4-flash-0731 API_MODE=chat_completions REASONING_EFFORT=low"
+    "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
 )
 qq_extra = (((config.get("platforms") or {}).get("qqbot") or {}).get("extra") or {})
 if qq_extra.get("dm_policy") != "pairing":

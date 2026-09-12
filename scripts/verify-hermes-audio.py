@@ -13,7 +13,6 @@ import yaml
 
 from gateway.platforms.base import MessageType, PlatformConfig
 from gateway.platforms.qqbot.adapter import QQAdapter, QQBOT_HK_AUDIO_PATCH
-from gateway.run import QQBOT_HK_PLUGIN_DISCOVERY_PATCH
 from gateway.platforms.qqbot.constants import MEDIA_TYPE_VOICE, MSG_TYPE_MEDIA
 
 
@@ -143,27 +142,26 @@ async def verify_adapter_behavior(config: dict[str, Any]) -> None:
 
         async def fake_upload_local_file(*args: Any, **kwargs: Any) -> Any:
             upload_calls.append((args, kwargs))
-            return "voice.mp3", {"file_info": "smoke-file-token"}
+            return {"file_info": "smoke-file-token"}
 
-        async def fake_api_request(method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
-            media_calls.append((method, path, body))
+        async def fake_post_message(path: str, body: dict[str, Any]) -> Any:
+            media_calls.append((path, body))
             return {"id": "outbound-message"}
 
         adapter._running = True
         adapter._ws = FakeWS()
         adapter._chat_type_map["group-1"] = "group"
         adapter._upload_local_file = fake_upload_local_file
-        adapter._api_request = fake_api_request
+        adapter._post_message = fake_post_message
         adapter._last_msg_id["group-1"] = "inbound-anchor"
         await adapter.send_voice("group-1", "/tmp/voice.mp3")
         await adapter.send_voice("group-1", "/tmp/voice.mp3", reply_to="explicit-anchor")
         require(upload_calls[0][0][3] == MEDIA_TYPE_VOICE == 3, "MP3 did not use QQ native voice type")
-        require(media_calls[0][0] == "POST", "QQ media did not use POST")
-        require(media_calls[0][1] == "/v2/groups/group-1/messages", "QQ group media path mismatch")
-        require(media_calls[0][2].get("msg_type") == MSG_TYPE_MEDIA, "MP3 did not use QQ media message type")
-        require(media_calls[0][2].get("media", {}).get("file_info") == "smoke-file-token", "MP3 media token missing")
-        require(media_calls[0][2].get("msg_id") == "inbound-anchor", "QQ passive media anchor missing")
-        require(media_calls[1][2].get("msg_id") == "explicit-anchor", "explicit QQ reply anchor lost")
+        require(media_calls[0][0] == "/v2/groups/group-1/messages", "QQ group media path mismatch")
+        require(media_calls[0][1].get("msg_type") == MSG_TYPE_MEDIA, "MP3 did not use QQ media message type")
+        require(media_calls[0][1].get("media", {}).get("file_info") == "smoke-file-token", "MP3 media token missing")
+        require(media_calls[0][1].get("msg_id") == "inbound-anchor", "QQ passive media anchor missing")
+        require(media_calls[1][1].get("msg_id") == "explicit-anchor", "explicit QQ reply anchor lost")
     finally:
         for name, value in old_env.items():
             if value is None:
@@ -180,14 +178,9 @@ def main() -> int:
     )
     args = parser.parse_args()
     require(QQBOT_HK_AUDIO_PATCH == "v1", "Hermes QQ audio patch marker mismatch")
-    require(
-        QQBOT_HK_PLUGIN_DISCOVERY_PATCH == "v2",
-        "Hermes plugin discovery patch marker mismatch",
-    )
     config = load_and_verify_config(Path(args.config))
     asyncio.run(verify_adapter_behavior(config))
     print("HERMES_QQ_AUDIO_PATCH=passed")
-    print("HERMES_PLUGIN_DISCOVERY_PATCH=passed")
     print("QQ_STT_CONFIG=passed")
     print("QQ_VOICE_EVENT=passed")
     print("QQ_NATIVE_MP3_REPLY_ANCHOR=passed")

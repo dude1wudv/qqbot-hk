@@ -20,6 +20,7 @@ EMAIL = "hermes-qqbot@local.invalid"
 USERNAME = "hermes-qqbot"
 GROUP_ID = 81
 KEY_FILE = Path("/opt/qqbot-hk-deploy/secrets/sub2api-api-key")
+REQUIRED_GROUP_MODELS = ("deepseek/deepseek-v4.1-flash",)
 
 
 def request(method: str, path: str, *, headers: dict[str, str] | None = None, body=None):
@@ -64,6 +65,24 @@ def random_password(length: int = 36) -> str:
     alphabet = string.ascii_letters + string.digits + "-_"
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
+def ensure_group_models(admin_headers: dict[str, str]) -> None:
+    payload = request("GET", f"/api/v1/admin/groups/{GROUP_ID}", headers=admin_headers)
+    group = payload.get("data") or {}
+    allowlist = group.get("model_allowlist") or {}
+    models = [str(model).strip() for model in (allowlist.get("models") or []) if str(model).strip()]
+    missing = [model for model in REQUIRED_GROUP_MODELS if model not in models]
+    if not missing:
+        print("SUB2API_GROUP_MODELS=ready")
+        return
+    request(
+        "PUT",
+        f"/api/v1/admin/groups/{GROUP_ID}",
+        headers=admin_headers,
+        body={"model_allowlist": {"enabled": bool(allowlist.get("enabled")), "models": models + missing}},
+    )
+    print(f"SUB2API_GROUP_MODELS=updated COUNT={len(missing)}")
+
+
 
 def existing_key_is_valid() -> bool:
     if not KEY_FILE.is_file():
@@ -86,6 +105,7 @@ def main() -> int:
 
     password = random_password()
     admin_headers = {"x-api-key": admin_key()}
+    ensure_group_models(admin_headers)
     query = urllib.parse.urlencode({"search": EMAIL, "page": 1, "page_size": 20})
     users_payload = request("GET", f"/api/v1/admin/users?{query}", headers=admin_headers)
     users = ((users_payload.get("data") or {}).get("items") or [])

@@ -7,7 +7,7 @@ gateway:
 
 model:
   provider: sub2api
-  default: deepseek-v4-flash-0731
+  default: deepseek/deepseek-v4.1-flash
   api_mode: chat_completions
   context_length: 1000000
   streaming: true
@@ -23,59 +23,31 @@ providers:
     api_mode: chat_completions
     discover_models: false
     models:
-      deepseek-v4-flash-0731:
+      deepseek/deepseek-v4.1-flash:
         context_length: 1000000
       gemini-3.8-flash-high:
         context_length: 1048576
       gpt-5.6-luna:
         context_length: 330000
 
-fallback_providers:
-  - provider: sub2api
-    model: gemini-3.8-flash-high
-    base_url: http://sub2api:8080/v1
-    key_env: SUB2API_API_KEY
-    api_mode: chat_completions
-  - provider: sub2api
-    model: gpt-5.6-luna
-    base_url: http://sub2api:8080/v1
-    key_env: SUB2API_API_KEY
-    api_mode: codex_responses
 
 agent:
   reasoning_effort: medium
-  # DeepSeek is text-only. User-attached images are always described by the
-  # dedicated auxiliary vision chain before the text reaches the main model.
-  image_input_mode: text
+  # The primary DeepSeek v4.1 route accepts OpenAI-style image content parts.
+  image_input_mode: native
   reasoning_overrides:
-    deepseek-v4-flash-0731: low
+    deepseek/deepseek-v4.1-flash: low
     gemini-3.8-flash-high: high
     gpt-5.6-luna: medium
 
 auxiliary:
   compression:
     provider: custom
-    model: deepseek-v4-flash-0731
+    model: deepseek/deepseek-v4.1-flash
     base_url: http://sub2api:8080/v1
     key_env: SUB2API_API_KEY
     api_mode: chat_completions
     reasoning_effort: low
-  vision:
-    provider: custom
-    model: gemini-3.8-flash-high
-    base_url: http://sub2api:8080/v1
-    key_env: SUB2API_API_KEY
-    api_mode: chat_completions
-    timeout: 90
-    reasoning_effort: high
-    fallback_chain:
-      - provider: custom
-        model: gpt-5.6-luna
-        base_url: http://sub2api:8080/v1
-        key_env: SUB2API_API_KEY
-        api_mode: codex_responses
-        timeout: 90
-        reasoning_effort: medium
 
 voice:
   auto_tts: false
@@ -115,11 +87,10 @@ plugins:
   entries:
     smart_group_qq:
       llm:
-        # The plugin may use Hermes' built-in vision task, whose concrete
-        # Gemini/Luna routes are fixed above. Arbitrary model overrides remain denied.
+        # Structured plugin tasks may use the configured model routes.
         allow_task_override: true
       settings:
-        status_model: deepseek-v4-flash-0731
+        status_model: deepseek/deepseek-v4.1-flash
         status_reasoning: low
         auto_pair:
           enabled: true
