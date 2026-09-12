@@ -237,6 +237,11 @@ print(
     "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=200000 "
     "MODEL=deepseek/deepseek-v4.1-flash API_MODE=anthropic_messages REASONING_EFFORT=low"
 )
+tools = (((config.get("platform_toolsets") or {}).get("qqbot") or []))
+if "terminal" not in tools or "file" not in tools:
+    raise SystemExit("QQ terminal/file toolset is not enabled")
+if {"code", "computer"}.intersection(tools):
+    raise SystemExit("QQ toolset exposes an unintended execution tool")
 qq_extra = (((config.get("platforms") or {}).get("qqbot") or {}).get("extra") or {})
 if qq_extra.get("dm_policy") != "pairing":
     raise SystemExit("QQ DM policy is not pairing")

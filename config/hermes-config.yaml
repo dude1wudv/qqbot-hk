@@ -85,6 +85,8 @@ platform_toolsets:
     - vision
     - skills
     - tts
+    - terminal
+    - file
     - todo
 
 plugins:

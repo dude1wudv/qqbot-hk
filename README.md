@@ -21,7 +21,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - 群聊回复：只接受 `QQ_GROUP_ALLOWED_USERS` 中群的 `@机器人 + 问题`。若 QQ 开放平台已为机器人投递普通群消息，插件会旁听 `GROUP_MESSAGE_CREATE`，但该事件只进入本群记忆/检索链路，绝不触发回复、命令或普通 Agent 会话。
 - 同一群共享 Hermes 会话；私聊、其他群和当前群严格隔离。
 - 回复默认采用 QQ 短聊风格：群聊通常 1～3 句、约 120 个汉字内，私聊通常约 300 个汉字内；用户明确要求或内容确有必要时再展开。发送前统一把常见 Markdown 降级为克制的纯文本，群聊和私聊均生效。
-- QQ 工具集限制为 `web`、`vision`、`skills`、`tts`、`todo`，不暴露 terminal/file/code execution。
+- QQ 工具集启用 `web`、`vision`、`skills`、`tts`、`todo`、`terminal`、`file`；其中 `terminal` 提供 shell 能力，`code`、`computer` 仍不暴露。文件写入受 `HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp` 限制，Hermes credential/project env 路径仍由内置防护拦截。
 - QQ 语音只使用 `qwen-audio-3.0-asr-flash` 外部识别，不采用腾讯 `asr_refer_text`。语音输入默认返回一条 QQ 原生 MP3 语音；普通文本默认返回文本，只有明确语音/朗读/朗唱请求才调用 TTS。
 - STT 地址与模型固定在 `platforms.qqbot.extra.stt`，TTS 地址/模型/音色固定在 `tts.openai`；真实 Sub2API key 仅由安装脚本写入权限 `0600` 的部署态 `.env`。
 - `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、AI 结构化长期记忆、非 @ 消息旁听、群知识库/RAG，以及 `/help`、`/reset`、`/clear`、`/status`、`/summary`、`/rules`、`/kb`、`/值日表`、`/我的记忆`、`/记住我`、`/纠正记忆`、`/停止记忆`、`/忘记我`。
@@ -75,7 +75,7 @@ bash /opt/qqbot-hk/scripts/verify-server.sh
 
 `install-server.sh` 会校验群白名单，把群 OpenID 注入部署态配置，明确移除旧沙箱路由和全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像并只重建 `hermes-qqbot`，等待健康、运行 cron 对账并通过完整验收后才清理旧插件副本。源码配置不含真实 OpenID 或 API key。
 
-`verify-server.sh` 验证基础摘要/补丁标签、STT/TTS 实际配置解析、VOICE 类型、原生 MP3 被动回复锚点、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、200k 压缩配置、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证基础摘要/补丁标签、STT/TTS 实际配置解析、VOICE 类型、原生 MP3 被动回复锚点、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、200k 压缩配置、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
 部署后先由 QQ 开放平台“开发体验号码”名单中的新用户直接私聊：在上述登记窗口内，首条消息应自动完成 pairing 并直接进入问答；窗口结束后，新的未批准用户应收到标准配对码。群聊再用新群会话或 `/reset` 验证：白名单群 @ 可回复、非白名单群无回复、两名群成员共享上下文、关键词和审核各只发送一次。普通群消息能否被旁听取决于 QQ 开放平台对该机器人的消息事件权限/投递配置；代码不会绕过平台边界。平台确实投递时，再验证“非 @ 不回复，但下一次 @ 提问可引用其内容”。
 

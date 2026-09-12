@@ -48,8 +48,10 @@ def load_and_verify_config(path: Path) -> dict[str, Any]:
     require(openai_tts.get("model") == EXPECTED["tts_model"], "TTS model mismatch")
     require(openai_tts.get("voice") == EXPECTED["tts_voice"], "TTS voice mismatch")
     require("tts" in tools, "QQ tts tool is not enabled")
-    forbidden = {"terminal", "file", "files", "code", "shell", "computer"}
-    require(not forbidden.intersection(tools), "QQ toolset exposes an execution tool")
+    require("terminal" in tools, "QQ terminal tool is not enabled")
+    require("file" in tools, "QQ file tool is not enabled")
+    forbidden = {"code", "computer"}
+    require(not forbidden.intersection(tools), "QQ toolset exposes an unintended execution tool")
     return config
 
 
