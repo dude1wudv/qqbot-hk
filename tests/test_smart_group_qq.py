@@ -384,6 +384,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 ctx = FakeContext({
                     "ambient": {"participation": {
                         "enabled": True, "min_confidence": 0.70, "wake_words": [],
+                        "batch_seconds": 0,
                     }},
                 })
                 ctx.llm = ParticipationLLM(parsed, error=error)
@@ -400,7 +401,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_high_confidence_participation_dispatches_native_group_path_once(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
             }},
         })
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
@@ -423,7 +424,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_participation_cooldown_is_independent_per_group(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
             }},
         })
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
@@ -447,10 +448,43 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             ["cooldown-a1", "cooldown-b1"],
         )
 
-    async def test_mention_bypasses_participation_cooldown(self):
+    async def test_participation_batches_messages_then_dispatches_once(self):
         ctx = FakeContext({
             "ambient": {"participation": {
                 "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "batch_seconds": 0.05, "wake_words": [],
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload("batch-1", text="请帮我查一下发布状态"),
+            handler.observe_nonmention,
+        )
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload("batch-2", text="对还有后续环境问题"),
+            handler.observe_nonmention,
+        )
+        self.assertEqual(ctx.llm.calls, [])
+        self.assertEqual(adapter.dispatched, [])
+        flush = handler.batch_tasks.get("group-a")
+        self.assertIsNotNone(flush)
+        await asyncio.wait_for(flush, timeout=1)
+        if flush.cancelled():
+            raise AssertionError("batch flush was cancelled")
+        if flush.exception():
+            raise AssertionError(flush.exception())
+        self.assertEqual(len(ctx.llm.calls), 1)
+        self.assertEqual([item[1]["id"] for item in adapter.dispatched], ["batch-2"])
+
+    async def test_mention_bypasses_participation_cooldown(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -478,7 +512,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_at_other_person_stays_silent(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -498,7 +532,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_structured_other_mention_stays_silent(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -522,7 +556,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_structured_bot_mention_bypasses_participation_cooldown(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -553,7 +587,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_wake_word_respects_participation_cooldown(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -586,7 +620,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_classifier_accepts_configured_min_confidence(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
                 "min_confidence": 0.70, "wake_words": [],
             }},
         })
@@ -601,7 +635,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
         ctx_low = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
                 "min_confidence": 0.70, "wake_words": [],
             }},
         })
@@ -624,7 +658,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"action": "allow"})
 
     async def test_nonmention_slash_command_with_mention_prefix_is_not_executed(self):
-        ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "batch_seconds": 0}}})
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
@@ -642,7 +676,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_non_allowlisted_group_never_classifies_or_dispatches(self):
-        ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "batch_seconds": 0}}})
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter(allowed=False)
@@ -658,7 +692,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get_history("blocked-group"), [])
 
     async def test_stale_and_replayed_nonmention_never_trigger_participation(self):
-        ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "batch_seconds": 0}}})
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter(timestamp=datetime.now(timezone.utc) - timedelta(seconds=300))
@@ -675,7 +709,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def _assert_slow_participation_cancelled_by(self, invalidation_text):
         started = asyncio.Event()
         release = asyncio.Event()
-        ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "batch_seconds": 0}}})
         ctx.llm = ParticipationLLM(
             {"reply": True, "confidence": 1.0}, started=started, release=release,
         )

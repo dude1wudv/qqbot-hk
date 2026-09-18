@@ -321,6 +321,11 @@ try:
 except (TypeError, ValueError):
     raise SystemExit("smart_group_qq ambient.participation.cooldown_seconds must be 5")
 try:
+    if int(participation_config.get("batch_seconds", 0)) != 60:
+        raise ValueError
+except (TypeError, ValueError):
+    raise SystemExit("smart_group_qq ambient.participation.batch_seconds must be 60")
+try:
     for name in ("max_age_seconds", "timeout_seconds"):
         if int(participation_config.get(name, 0)) <= 0:
             raise ValueError

@@ -172,6 +172,9 @@ plugins:
             max_age_seconds: 120
             timeout_seconds: 12
             min_confidence: 0.70
+            # Collect non-@ group messages for 60s, then decide once.
+            # Official bot @ still replies immediately.
+            batch_seconds: 60
             # Proactive @-free calls; share the 5s cooldown. Official bot @
             # bypasses cooldown; @ other members stays silent.
             wake_words:
