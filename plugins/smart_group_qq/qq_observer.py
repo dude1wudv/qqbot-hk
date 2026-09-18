@@ -221,6 +221,28 @@ def _minimal_raw(
     return raw
 
 
+def _mention_flags(data: Mapping[str, Any]) -> tuple[bool | None, bool | None]:
+    """Return (mentions_bot, mentions_others) from QQ mention metadata.
+
+    Missing ``mentions`` is unknown (None, None). Empty list is (False, False).
+    Only the bot/user flags are kept; mention OpenIDs are not copied.
+    """
+
+    mentions = data.get("mentions")
+    if not isinstance(mentions, list):
+        return None, None
+    mentions_bot = False
+    mentions_others = False
+    for item in mentions:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("bot") is True:
+            mentions_bot = True
+        else:
+            mentions_others = True
+    return mentions_bot, mentions_others
+
+
 def _attachment_value(result: Mapping[str, Any], *keys: str) -> Any:
     for key in keys:
         value = result.get(key)
@@ -292,6 +314,7 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
         _log(adapter, "warning", "QQ non-mention timestamp parsing failed", exc_info=True)
         timestamp = datetime.now(tz=timezone.utc)
 
+    mentions_bot, mentions_others = _mention_flags(data)
     # The fast record is intentionally useful without waiting for media.  It
     # gives durable-ingestion consumers a stable event key, sequence, event
     # timestamp and member identity even when QQ attachment processing stalls.
@@ -308,6 +331,8 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
         "event_timestamp_raw": timestamp_raw,
         "received_at": datetime.now(tz=timezone.utc),
         "text": raw_content,
+        "mentions_bot": mentions_bot,
+        "mentions_others": mentions_others,
         "image_paths": [],
         "media_types": [],
         "attachment_info": "",

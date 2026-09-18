@@ -57,6 +57,7 @@ _DEFAULT_WAKE_WORDS = (
 )
 _WAKE_LEAD = " \t\r\n\u3000,，.。!！?？:：;；~～、-—\"'“”‘’()（）[]【】<>《》·"
 _MENTION_TAG = re.compile(r"<@!?\S+>")
+_PLAIN_AT_NAME = re.compile(r"^@([^\s@<>]+)")
 
 
 def _wake_hit(value: str, wake_words: Any) -> bool:
@@ -71,15 +72,23 @@ def _wake_hit(value: str, wake_words: Any) -> bool:
     )
 
 
-def _has_bot_mention(value: str) -> bool:
-    """True when the raw ambient text still carries a QQ @ / mention tag."""
-    raw = str(value or "").strip()
-    if not raw:
-        return False
-    if _MENTION_TAG.search(raw):
+def _addressed_to_others(text: str, record: Mapping[str, Any] | None, wake_words: Any) -> bool:
+    """True when the message is clearly @ someone other than this bot."""
+    if record and record.get("mentions_others") is True and record.get("mentions_bot") is not True:
         return True
-    cleaned = clean_text(raw)
-    return " ".join(cleaned.split()) != " ".join(raw.split())
+    match = _PLAIN_AT_NAME.match(str(text or "").strip())
+    if not match:
+        return False
+    return not _wake_hit(match.group(1), wake_words)
+
+
+def _addressed_to_bot(text: str, record: Mapping[str, Any] | None) -> bool:
+    """True for an official bot mention, not a plain @nickname of another member."""
+    if record and record.get("mentions_bot") is True:
+        return True
+    if record and record.get("mentions_others") is True:
+        return False
+    return bool(_MENTION_TAG.search(str(text or "")))
 
 
 def _platform_name(source: Any) -> str:
@@ -829,9 +838,16 @@ def build_handler(ctx: Any, store: Store):
             return False
         if policy.static(text).blocked:
             return False
-        # Inline @ / mention tags are addressed traffic. They must never be gated
-        # by the proactive participation cooldown (official AT refreshes it).
-        if _has_bot_mention(text):
+        # @ someone else is not a bot call. Stay silent instead of explaining
+        # "I won't interrupt" after the classifier/agent already spoke.
+        if _addressed_to_others(text, record, wake_words):
+            store.record_audit(
+                "participation_skipped", chat_id=group_id, message_id=message_id, source="other_mention"
+            )
+            return False
+        # Official bot mention tags bypass the proactive cooldown. GROUP_AT
+        # already answers; this covers the same @ arriving as GROUP_MESSAGE_CREATE.
+        if _addressed_to_bot(text, record):
             last_participation[group_id] = time.monotonic()
             store.record_audit(
                 "mention_selected", chat_id=group_id, message_id=message_id, source="mention"
@@ -876,8 +892,9 @@ def build_handler(ctx: Any, store: Store):
                     "请求测试消息收发、验证回复、确认收到也是有效的交互需求，"
                     "不要求问题有技术内容、完整句式、问号或再次写出机器人名字。"
                     "区分正在请求执行验证与仅谈论测试结果或转述他人请求；后者不主动插话。"
-                    "成员之间的对话、明确问其他人的问题、纯闲聊、感叹、表情、广告、"
+                    "成员之间的对话、以 @别人 开头或明显在叫其他人的问题、纯闲聊、感叹、表情、广告、"
                     "仅分享资料或已有人解决的问题都保持安静。不确定时 reply=false。"
+                    "不要为了声明不插嘴而回复。"
                     "不要输出原文或回答内容，只输出判断和置信度。"
                 ),
                 input=[

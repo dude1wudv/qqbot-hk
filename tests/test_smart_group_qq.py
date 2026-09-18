@@ -66,8 +66,8 @@ class ObserverAdapter:
         self.dispatched.append((event_type, data))
 
 
-def observer_payload(message_id, *, group="group-a", text="请帮我查一下", member="member-a"):
-    return {
+def observer_payload(message_id, *, group="group-a", text="请帮我查一下", member="member-a", mentions=None):
+    payload = {
         "op": 0,
         "t": "GROUP_MESSAGE_CREATE",
         "d": {
@@ -79,6 +79,9 @@ def observer_payload(message_id, *, group="group-a", text="请帮我查一下", 
             "attachments": [],
         },
     }
+    if mentions is not None:
+        payload["d"]["mentions"] = mentions
+    return payload
 
 
 def event(text, message_id="msg-1", *, platform="qqbot", chat_type="group", group="group-a", member="member-a"):
@@ -471,6 +474,81 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             ["mention-seed", "mention-during-cd"],
         )
         self.assertTrue(adapter.dispatched[1][1]["_smart_group_qq_nonmention"])
+
+    async def test_at_other_person_stays_silent(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "wake_words": ["机器人"],
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload("at-other", text="@佛系章鱼哥 好想来你去吗"),
+            handler.observe_nonmention,
+        )
+
+        self.assertEqual(ctx.llm.calls, [])
+        self.assertEqual(adapter.dispatched, [])
+
+    async def test_structured_other_mention_stays_silent(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "wake_words": ["机器人"],
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload(
+                "structured-other",
+                text="<@!member-b> 好想来你去吗",
+                mentions=[{"bot": False, "username": "佛系章鱼哥"}],
+            ),
+            handler.observe_nonmention,
+        )
+
+        self.assertEqual(ctx.llm.calls, [])
+        self.assertEqual(adapter.dispatched, [])
+
+    async def test_structured_bot_mention_bypasses_participation_cooldown(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
+                "wake_words": ["机器人"],
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+
+        await qq_observer._observe_message(
+            adapter, observer_payload("mention-seed", text="请帮我查一下发布状态"),
+            handler.observe_nonmention,
+        )
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload(
+                "bot-mention-during-cd",
+                text="<@!bot-id> 还在冷却也要回",
+                mentions=[{"bot": True}],
+            ),
+            handler.observe_nonmention,
+        )
+
+        self.assertEqual(len(ctx.llm.calls), 1)
+        self.assertEqual(
+            [item[1]["id"] for item in adapter.dispatched],
+            ["mention-seed", "bot-mention-during-cd"],
+        )
 
     async def test_wake_word_respects_participation_cooldown(self):
         ctx = FakeContext({
