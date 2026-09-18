@@ -310,6 +310,31 @@ for name in (
         raise SystemExit(f"smart_group_qq ambient config is invalid: {name}")
 if int(ambient_config.get("per_group_concurrency", 0)) != 1:
     raise SystemExit("smart_group_qq currently requires per_group_concurrency=1")
+participation_config = ambient_config.get("participation")
+if not isinstance(participation_config, Mapping):
+    raise SystemExit("smart_group_qq ambient.participation config is missing")
+if participation_config.get("enabled") is not True:
+    raise SystemExit("smart_group_qq ambient.participation.enabled must be true")
+try:
+    if int(participation_config.get("cooldown_seconds", 0)) != 30:
+        raise ValueError
+except (TypeError, ValueError):
+    raise SystemExit("smart_group_qq ambient.participation.cooldown_seconds must be 30")
+try:
+    for name in ("max_age_seconds", "timeout_seconds"):
+        if int(participation_config.get(name, 0)) <= 0:
+            raise ValueError
+except (TypeError, ValueError):
+    raise SystemExit("smart_group_qq ambient.participation age/timeout config is invalid")
+try:
+    participation_confidence = float(participation_config.get("min_confidence"))
+    if abs(participation_confidence - 0.70) > 1e-9:
+        raise ValueError
+except (TypeError, ValueError):
+    raise SystemExit("smart_group_qq ambient.participation.min_confidence must be 0.70")
+wake_words = participation_config.get("wake_words")
+if not isinstance(wake_words, list) or not any(str(item).strip() for item in wake_words):
+    raise SystemExit("smart_group_qq ambient.participation.wake_words must be a non-empty list")
 member_memory_config = plugin_settings.get("member_memory")
 if not isinstance(member_memory_config, Mapping):
     raise SystemExit("smart_group_qq member_memory config is missing")

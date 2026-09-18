@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -372,12 +373,16 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_participation_rejection_and_classifier_error_are_silent(self):
         cases = (
             ({"reply": False, "confidence": 1.0}, None),
-            ({"reply": True, "confidence": 0.84}, None),
+            ({"reply": True, "confidence": 0.69}, None),
             (None, RuntimeError("classifier unavailable")),
         )
         for index, (parsed, error) in enumerate(cases):
             with self.subTest(index=index):
-                ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+                ctx = FakeContext({
+                    "ambient": {"participation": {
+                        "enabled": True, "min_confidence": 0.70, "wake_words": [],
+                    }},
+                })
                 ctx.llm = ParticipationLLM(parsed, error=error)
                 handler = build_handler(ctx, self.store)
                 adapter = ObserverAdapter()
@@ -438,6 +443,108 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
             ["cooldown-a1", "cooldown-b1"],
         )
+
+    async def test_mention_bypasses_participation_cooldown(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "wake_words": ["机器人"],
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+
+        await qq_observer._observe_message(
+            adapter, observer_payload("mention-seed", text="请帮我查一下发布状态"),
+            handler.observe_nonmention,
+        )
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload("mention-during-cd", text="<@bot> 还在冷却也要回"),
+            handler.observe_nonmention,
+        )
+
+        self.assertEqual(len(ctx.llm.calls), 1)
+        self.assertEqual(
+            [item[1]["id"] for item in adapter.dispatched],
+            ["mention-seed", "mention-during-cd"],
+        )
+        self.assertTrue(adapter.dispatched[1][1]["_smart_group_qq_nonmention"])
+
+    async def test_wake_word_respects_participation_cooldown(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "wake_words": ["机器人"],
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+
+        await qq_observer._observe_message(
+            adapter, observer_payload("wake-1", text="机器人 帮我看下"),
+            handler.observe_nonmention,
+        )
+        await qq_observer._observe_message(
+            adapter, observer_payload("wake-2", text="机器人 再问一次"),
+            handler.observe_nonmention,
+        )
+
+        self.assertEqual(ctx.llm.calls, [])
+        self.assertEqual([item[1]["id"] for item in adapter.dispatched], ["wake-1"])
+
+        with patch("smart_group_qq.time.monotonic", return_value=time.monotonic() + 31):
+            await qq_observer._observe_message(
+                adapter, observer_payload("wake-3", text="机器人 冷却过后"),
+                handler.observe_nonmention,
+            )
+        self.assertEqual(
+            [item[1]["id"] for item in adapter.dispatched],
+            ["wake-1", "wake-3"],
+        )
+
+    async def test_classifier_accepts_configured_min_confidence(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "min_confidence": 0.70, "wake_words": [],
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.70})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+        await qq_observer._observe_message(
+            adapter, observer_payload("conf-70", text="请帮我查一下发布状态"),
+            handler.observe_nonmention,
+        )
+        self.assertEqual(len(adapter.dispatched), 1)
+
+        ctx_low = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "min_confidence": 0.70, "wake_words": [],
+            }},
+        })
+        ctx_low.llm = ParticipationLLM({"reply": True, "confidence": 0.69})
+        handler_low = build_handler(ctx_low, self.store)
+        adapter_low = ObserverAdapter()
+        await qq_observer._observe_message(
+            adapter_low,
+            observer_payload("conf-69", group="group-b", text="请帮我查一下发布状态"),
+            handler_low.observe_nonmention,
+        )
+        self.assertEqual(adapter_low.dispatched, [])
+
+    async def test_private_nonsplash_message_is_left_to_hermes(self):
+        handler = build_handler(FakeContext(), self.store)
+        result = handler(
+            event("你好", message_id="dm-1", chat_type="dm", group="user-a"),
+            self.gateway,
+        )
+        self.assertEqual(result, {"action": "allow"})
+
     async def test_nonmention_slash_command_with_mention_prefix_is_not_executed(self):
         ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})

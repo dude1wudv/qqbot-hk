@@ -171,6 +171,26 @@ plugins:
             cooldown_seconds: 30
             max_age_seconds: 120
             timeout_seconds: 12
+            min_confidence: 0.70
+            # Proactive @-free calls; share the 30s cooldown. Official @ / <@>
+            # mentions bypass cooldown and are not listed here.
+            wake_words:
+              - 小分队机器人
+              - 群助手
+              - 小助手
+              - 小分队
+              - 机器人
+              - 助手
+              - qqbot
+              - hermes
+              - bot
+              - 帮看下
+              - 帮忙看
+              - 看一下
+              - 在吗
+              - 在嘛
+              - 请问
+              - 帮我
         member_memory:
           enabled: true
           auto_extract: true
