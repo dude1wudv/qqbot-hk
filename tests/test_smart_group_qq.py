@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 import unittest
@@ -8,7 +9,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 
-from smart_group_qq import build_handler
+from smart_group_qq import build_handler, qq_observer
 from smart_group_qq.policy import PolicyEngine, compile_rule_list, semantic_moderation
 from smart_group_qq.store import Store
 
@@ -28,6 +29,55 @@ class FakeAdapter:
     async def send(self, chat_id, content, reply_to=None):
         self.sent.append((chat_id, content, reply_to))
         return SimpleNamespace(success=self.success)
+
+class ParticipationLLM:
+    def __init__(self, parsed=None, error=None, started=None, release=None):
+        self.parsed = parsed
+        self.error = error
+        self.started = started
+        self.release = release
+        self.calls = []
+
+    async def acomplete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.started is not None:
+            self.started.set()
+        if self.release is not None:
+            await self.release.wait()
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(parsed=self.parsed)
+
+
+class ObserverAdapter:
+    def __init__(self, *, allowed=True, timestamp=None):
+        self.allowed = allowed
+        self.timestamp = timestamp or datetime.now(timezone.utc)
+        self.dispatched = []
+
+    def _is_group_allowed(self, group_id, member_id):
+        return self.allowed
+
+    def _parse_qq_timestamp(self, raw):
+        return self.timestamp
+
+    async def _on_message(self, event_type, data):
+        self.dispatched.append((event_type, data))
+
+
+def observer_payload(message_id, *, group="group-a", text="请帮我查一下", member="member-a"):
+    return {
+        "op": 0,
+        "t": "GROUP_MESSAGE_CREATE",
+        "d": {
+            "id": message_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "content": text,
+            "group_openid": group,
+            "author": {"member_openid": member},
+            "attachments": [],
+        },
+    }
 
 
 def event(text, message_id="msg-1", *, platform="qqbot", chat_type="group", group="group-a", member="member-a"):
@@ -300,6 +350,174 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session_store.calls), 1)
         after = handler(self.make_event("还记得吗？", "profile-after"), self.gateway)
         self.assertNotIn("后端发布", after["text"])
+
+    async def test_participation_disabled_keeps_ambient_history_without_reply(self):
+        ctx = FakeContext({"ambient": {"participation": {"enabled": False}}})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload("participation-disabled", text="只是闲聊"),
+            handler.observe_nonmention,
+        )
+
+        self.assertEqual(ctx.llm.calls, [])
+        self.assertEqual(adapter.dispatched, [])
+        rows = self.store.get_history("group-a")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source_kind"], "ambient")
+
+    async def test_participation_rejection_and_classifier_error_are_silent(self):
+        cases = (
+            ({"reply": False, "confidence": 1.0}, None),
+            ({"reply": True, "confidence": 0.84}, None),
+            (None, RuntimeError("classifier unavailable")),
+        )
+        for index, (parsed, error) in enumerate(cases):
+            with self.subTest(index=index):
+                ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+                ctx.llm = ParticipationLLM(parsed, error=error)
+                handler = build_handler(ctx, self.store)
+                adapter = ObserverAdapter()
+                await qq_observer._observe_message(
+                    adapter,
+                    observer_payload(f"participation-silent-{index}", group=f"silent-{index}"),
+                    handler.observe_nonmention,
+                )
+                self.assertEqual(len(ctx.llm.calls), 1)
+                self.assertEqual(adapter.dispatched, [])
+
+    async def test_high_confidence_participation_dispatches_native_group_path_once(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+        item = observer_payload("participation-selected", text="请帮我查一下发布状态")
+
+        await qq_observer._observe_message(adapter, item, handler.observe_nonmention)
+        await qq_observer._observe_message(adapter, item, handler.observe_nonmention)
+
+        self.assertEqual(len(ctx.llm.calls), 1)
+        self.assertEqual(len(adapter.dispatched), 1)
+        self.assertEqual(adapter.dispatched[0][0], "GROUP_AT_MESSAGE_CREATE")
+        self.assertTrue(adapter.dispatched[0][1]["_smart_group_qq_nonmention"])
+        self.assertEqual(
+            self.store.get_history("group-a")[0]["text"],
+            "请帮我查一下发布状态",
+        )
+
+    async def test_participation_cooldown_is_independent_per_group(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+
+        await qq_observer._observe_message(
+            adapter, observer_payload("cooldown-a1", group="group-a"), handler.observe_nonmention,
+        )
+        await qq_observer._observe_message(
+            adapter, observer_payload("cooldown-a2", group="group-a"), handler.observe_nonmention,
+        )
+        await qq_observer._observe_message(
+            adapter, observer_payload("cooldown-b1", group="group-b"), handler.observe_nonmention,
+        )
+
+        self.assertEqual(len(ctx.llm.calls), 2)
+        self.assertEqual(
+            [item[1]["id"] for item in adapter.dispatched],
+
+            ["cooldown-a1", "cooldown-b1"],
+        )
+    async def test_nonmention_slash_command_with_mention_prefix_is_not_executed(self):
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload("nonmention-slash", text="<@bot> /reset"),
+            handler.observe_nonmention,
+        )
+
+        self.assertEqual(ctx.llm.calls, [])
+        self.assertEqual(adapter.dispatched, [])
+        self.assertEqual(self.store.memory_epoch("group-a"), 0)
+        self.assertEqual(self.store.get_history("group-a")[0]["source_kind"], "ambient")
+
+
+    async def test_non_allowlisted_group_never_classifies_or_dispatches(self):
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter(allowed=False)
+
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload("non-allowlisted", group="blocked-group"),
+            handler.observe_nonmention,
+        )
+
+        self.assertEqual(ctx.llm.calls, [])
+        self.assertEqual(adapter.dispatched, [])
+        self.assertEqual(self.store.get_history("blocked-group"), [])
+
+    async def test_stale_and_replayed_nonmention_never_trigger_participation(self):
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter(timestamp=datetime.now(timezone.utc) - timedelta(seconds=300))
+        item = observer_payload("stale-or-replay")
+
+        await qq_observer._observe_message(adapter, item, handler.observe_nonmention)
+        adapter.timestamp = datetime.now(timezone.utc)
+        await qq_observer._observe_message(adapter, item, handler.observe_nonmention)
+
+        self.assertEqual(ctx.llm.calls, [])
+        self.assertEqual(adapter.dispatched, [])
+        self.assertEqual(len(self.store.get_history("group-a")), 1)
+
+    async def _assert_slow_participation_cancelled_by(self, invalidation_text):
+        started = asyncio.Event()
+        release = asyncio.Event()
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True}}})
+        ctx.llm = ParticipationLLM(
+            {"reply": True, "confidence": 1.0}, started=started, release=release,
+        )
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+        task = asyncio.create_task(qq_observer._observe_message(
+            adapter,
+            observer_payload("slow-participation", text="请处理这个问题"),
+            handler.observe_nonmention,
+        ))
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        invalidation = handler(
+            self.make_event(invalidation_text, "invalidate-participation"),
+            self.gateway,
+        )
+        self.assertIn(invalidation["action"], {"rewrite", "skip"})
+        release.set()
+        await asyncio.wait_for(task, timeout=1)
+        await asyncio.sleep(0)
+        self.assertEqual(adapter.dispatched, [])
+
+    async def test_slow_participation_is_cancelled_by_at_message(self):
+        await self._assert_slow_participation_cancelled_by("<@bot> 正在处理")
+
+    async def test_slow_participation_is_cancelled_by_reset(self):
+        await self._assert_slow_participation_cancelled_by("<@bot> /reset")
 
     async def test_post_llm_records_assistant_output(self):
         handler = build_handler(FakeContext(), self.store)

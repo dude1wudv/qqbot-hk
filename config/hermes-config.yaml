@@ -34,7 +34,7 @@ model:
 
 compression:
   enabled: true
-  threshold_tokens: 200000
+  threshold_tokens: 80000
 
 providers:
   sub2api_deepseek:
@@ -163,6 +163,11 @@ plugins:
           flush_interval_seconds: 30
           context_window_messages: 10
           context_window_seconds: 900
+          participation:
+            enabled: true
+            cooldown_seconds: 30
+            max_age_seconds: 120
+            timeout_seconds: 12
         member_memory:
           enabled: true
           auto_extract: true

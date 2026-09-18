@@ -9,7 +9,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 
-from smart_group_qq import qq_observer
+from smart_group_qq import build_handler, qq_observer
+from smart_group_qq.store import Store
 
 
 class FakeQQAdapter:
@@ -80,6 +81,19 @@ def payload(
     return value
 
 
+def discovery_payload(event_type, *, group="unknown-group", member="member-1"):
+    return {
+        "op": 0,
+        "t": event_type,
+        "d": {
+            "id": f"{event_type}-{group}",
+            "content": "不可保存的未知群秘密文本",
+            "group_openid": group,
+            "author": {"member_openid": member},
+        },
+    }
+
+
 class ObserverTests(IsolatedAsyncioTestCase):
     def setUp(self):
         self.resolve = patch.object(qq_observer, "_resolve_adapter_class", return_value=FakeQQAdapter)
@@ -134,6 +148,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
         self.assertEqual(adapter.handled, 0)
 
     async def test_at_message_keeps_original_dispatch_path(self):
+
         records = []
         qq_observer.install_nonmention_observer(records.append)
         adapter = FakeQQAdapter()
@@ -147,6 +162,69 @@ class ObserverTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(adapter.original_calls), 1)
         self.assertEqual(records, [])
         self.assertEqual(adapter.handled, 0)
+    async def test_unknown_group_discovery_is_metadata_only(self):
+        class Context:
+            def get_config(self, key, default=None):
+                return default
+
+        store = Store(":memory:")
+        self.addCleanup(store.close)
+        handler = build_handler(Context(), store)
+        qq_observer.install_nonmention_observer(handler.observe_nonmention)
+        adapter = FakeQQAdapter(allowed=False)
+        event_types = ("GROUP_AT_MESSAGE_CREATE", "GROUP_ADD_ROBOT", "GROUP_MSG_RECEIVE")
+
+        for index, event_type in enumerate(event_types):
+            adapter._dispatch_payload(discovery_payload(event_type, group=f"unknown-{index}"))
+
+        audits = [tuple(row) for row in store.db.execute(
+            "SELECT event_type, chat_id, source FROM audit_events ORDER BY id"
+        )]
+        self.assertEqual(
+            audits,
+            [("group_access_pending", f"unknown-{index}", event_type)
+             for index, event_type in enumerate(event_types)],
+        )
+        self.assertEqual(store.get_history("unknown-0"), [])
+        self.assertEqual(adapter.handled, 0)
+        self.assertNotIn("不可保存的未知群秘密文本", " ".join(map(str, audits)))
+
+    async def test_allowed_group_does_not_record_discovery_pending(self):
+        class Context:
+            def get_config(self, key, default=None):
+                return default
+
+        store = Store(":memory:")
+        self.addCleanup(store.close)
+        handler = build_handler(Context(), store)
+        qq_observer.install_nonmention_observer(handler.observe_nonmention)
+        adapter = FakeQQAdapter(allowed=True)
+
+        for event_type in ("GROUP_AT_MESSAGE_CREATE", "GROUP_ADD_ROBOT", "GROUP_MSG_RECEIVE"):
+            adapter._dispatch_payload(discovery_payload(event_type, group="allowed-group"))
+
+        self.assertEqual(list(store.db.execute("SELECT * FROM audit_events")), [])
+        self.assertEqual(store.get_history("allowed-group"), [])
+
+    async def test_duplicate_group_discovery_is_rate_limited(self):
+        class Context:
+            def get_config(self, key, default=None):
+                return default
+
+        store = Store(":memory:")
+        self.addCleanup(store.close)
+        handler = build_handler(Context(), store)
+        qq_observer.install_nonmention_observer(handler.observe_nonmention)
+        adapter = FakeQQAdapter(allowed=False)
+
+        adapter._dispatch_payload(discovery_payload("GROUP_ADD_ROBOT", group="repeat-group"))
+        adapter._dispatch_payload(discovery_payload("GROUP_MSG_RECEIVE", group="repeat-group"))
+
+        self.assertEqual(
+            [tuple(row) for row in store.db.execute("SELECT event_type, chat_id FROM audit_events")],
+            [("group_access_pending", "repeat-group")],
+        )
+
 
     async def test_duplicate_message_id_is_observed_once_without_normal_cache_pollution(self):
         records = []

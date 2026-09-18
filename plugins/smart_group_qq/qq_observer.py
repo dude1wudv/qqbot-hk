@@ -1,12 +1,10 @@
-"""Read-only observation of QQ group messages without an @ mention.
+"""Observe QQ group messages and selectively admit useful requests to Hermes.
 
 Hermes v0.21.2 only routes ``GROUP_AT_MESSAGE_CREATE`` into the normal agent
-pipeline.  This module adds a deliberately narrow compatibility shim for the
-gateway dispatch method so a caller can build a group index from
-``GROUP_MESSAGE_CREATE`` events without sending them to the agent.
-
-The shim is intentionally self-contained.  It does not alter the adapter's
-normal duplicate cache, message handler, or outbound send path.
+pipeline. This shim ingests ``GROUP_MESSAGE_CREATE`` as ambient context first.
+An optional ``should_reply`` callback can admit a message through the existing
+group handler, preserving its ACL, duplicate cache and outbound send path.
+Without that callback the observer remains read-only.
 """
 
 from __future__ import annotations
@@ -257,6 +255,9 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
         _log(adapter, "warning", "QQ non-mention observer ACL check failed", exc_info=True)
         return
 
+    if author_map.get("bot") is True:
+        return
+
     if not _claim_message_id(adapter, message_id):
         return
 
@@ -402,6 +403,22 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
             attachment_task.cancel()
         return False
 
+    should_reply = getattr(callback, "should_reply", None)
+    dispatch_message = getattr(adapter, "_on_message", None)
+    if callable(should_reply) and callable(dispatch_message):
+        try:
+            if await should_reply(record):
+                # Reuse Hermes' group normalization, deduplication and session
+                # dispatch; the raw marker preserves that this was NOT an @.
+                # Never route the whole ambient stream to the agent.
+                addressed = dict(data)
+                addressed["_smart_group_qq_nonmention"] = True
+                await dispatch_message("GROUP_AT_MESSAGE_CREATE", addressed)
+        except Exception:
+            # Dispatch may already have produced a reply. Do not release the
+            # observer claim or retry a side effect after an uncertain failure.
+            _log(adapter, "warning", "QQ non-mention participation dispatch failed")
+
     if attachment_task is not None and attachment_result is None:
         async def finish_media() -> None:
             try:
@@ -546,6 +563,23 @@ def install_nonmention_observer(callback: Observer, logger: Optional[logging.Log
 
     @functools.wraps(original)
     def wrapped(self: Any, payload: Any) -> Any:
+        if (
+            isinstance(payload, Mapping) and payload.get("op") == 0
+            and payload.get("t") in {"GROUP_AT_MESSAGE_CREATE", "GROUP_ADD_ROBOT", "GROUP_MSG_RECEIVE"}
+        ):
+            data = payload.get("d")
+            if isinstance(data, Mapping):
+                group_id = str(data.get("group_openid") or "").strip()
+                author = data.get("author")
+                member_id = str(author.get("member_openid") or "") if isinstance(author, Mapping) else ""
+                allowed = getattr(self, "_is_group_allowed", None)
+                callback = getattr(type(self), _CALLBACK_ATTR, None)
+                discover = getattr(callback, "discover_group", None)
+                try:
+                    if group_id and callable(allowed) and not allowed(group_id, member_id) and callable(discover):
+                        discover(group_id, str(payload["t"]))
+                except Exception:
+                    _log(self, "warning", "QQ group discovery failed")
         is_nonmention = (
             isinstance(payload, Mapping)
             and payload.get("op") == 0
@@ -556,9 +590,8 @@ def install_nonmention_observer(callback: Observer, logger: Optional[logging.Log
             current_callback = getattr(type(self), _CALLBACK_ATTR, None)
             if callable(current_callback):
                 _schedule(self, payload, current_callback)
-            # Do not call the original method.  Hermes currently treats this
-            # event as unknown, but bypassing it keeps this guarantee intact if a
-            # later adapter version starts routing the event to the agent.
+            # The observer owns selective admission; never let a future native
+            # handler route the entire ambient stream to the agent.
             return None
         return original(self, payload)
 
