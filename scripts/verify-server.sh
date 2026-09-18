@@ -173,9 +173,11 @@ for raw in Path("/opt/data/.env").read_text(encoding="utf-8").splitlines():
     if "=" in raw and not raw.lstrip().startswith("#"):
         name, value = raw.split("=", 1)
         env[name.strip()] = value.strip()
-groups = tuple(dict.fromkeys(item.strip() for item in env.get("QQ_GROUP_ALLOWED_USERS", "").split(",") if item.strip()))
+groups = tuple(dict.fromkeys(item.strip() for item in env.get("QQ_SCHEDULE_GROUPS", "").split(",") if item.strip()))
 if not groups:
-    raise SystemExit("QQ group allow-list is empty")
+    raise SystemExit("QQ schedule target list is empty")
+if "QQ_GROUP_ALLOWED_USERS" in env:
+    raise SystemExit("deprecated QQ_GROUP_ALLOWED_USERS must be absent")
 if env.get("QQ_STT_PREFER_BUILTIN", "").lower() != "false":
     raise SystemExit("QQ built-in STT preference must be disabled")
 for name in ("SUB2API_API_KEY", "SUB2API_DEEPSEEK_API_KEY", "QQ_STT_API_KEY", "VOICE_TOOLS_OPENAI_KEY"):
@@ -437,7 +439,7 @@ dm_source = SessionSource(
     user_id="synthetic-unapproved-dm",
 )
 if unknown_group in groups:
-    raise SystemExit("synthetic group unexpectedly appears in QQ_GROUP_ALLOWED_USERS")
+    raise SystemExit("synthetic group unexpectedly appears in QQ_SCHEDULE_GROUPS")
 if adapter._is_group_allowed(unknown_group, group_source.user_id) is not True:
     raise SystemExit("QQ adapter wildcard did not authorize the synthetic group")
 if runner._is_user_authorized(group_source) is not True:

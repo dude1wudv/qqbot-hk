@@ -160,7 +160,7 @@ def _unquote_env_value(value: str) -> str:
 
 
 def load_allowed_groups(path: PathLike = DEFAULT_ENV_PATH) -> Tuple[str, ...]:
-    """Read QQ_GROUP_ALLOWED_USERS without ever logging its values."""
+    """Read QQ_SCHEDULE_GROUPS without ever logging its values."""
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as exc:
@@ -177,7 +177,7 @@ def load_allowed_groups(path: PathLike = DEFAULT_ENV_PATH) -> Tuple[str, ...]:
         if "=" not in line:
             continue
         key, value = line.split("=", 1)
-        if key.strip() == "QQ_GROUP_ALLOWED_USERS":
+        if key.strip() == "QQ_SCHEDULE_GROUPS":
             if found:
                 raise ScheduleConfigError("QQ group allow-list is duplicated")
             found = True
@@ -189,8 +189,8 @@ def load_allowed_groups(path: PathLike = DEFAULT_ENV_PATH) -> Tuple[str, ...]:
     groups: List[str] = []
     for group in raw_value.split(","):
         group = group.strip()
-        if not group:
-            raise ScheduleConfigError("QQ group allow-list contains an empty entry")
+        if not group or group == "*":
+            raise ScheduleConfigError("QQ schedule target must be an explicit group")
         if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in group):
             raise ScheduleConfigError("QQ group allow-list contains an invalid entry")
         if group not in groups:

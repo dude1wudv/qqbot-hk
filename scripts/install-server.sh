@@ -82,20 +82,20 @@ for raw in qq_source.read_text(encoding="utf-8").splitlines():
     name, value = line.split("=", 1)
     qq_values[name.strip()] = value.strip()
 
-required = ("QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_GROUP_ALLOWED_USERS")
+required = ("QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_SCHEDULE_GROUPS")
 missing = [name for name in required if not qq_values.get(name)]
 if missing:
     raise SystemExit("missing required QQ variables: " + ", ".join(missing))
 
 groups = []
-for item in qq_values["QQ_GROUP_ALLOWED_USERS"].split(","):
+for item in qq_values["QQ_SCHEDULE_GROUPS"].split(","):
     value = item.strip()
     if not value or value == "*" or re.fullmatch(r"[A-Za-z0-9_-]{8,128}", value) is None:
-        raise SystemExit("QQ_GROUP_ALLOWED_USERS contains an invalid group OpenID")
+        raise SystemExit("QQ_SCHEDULE_GROUPS contains an invalid group OpenID")
     if value not in groups:
         groups.append(value)
 if not groups:
-    raise SystemExit("QQ_GROUP_ALLOWED_USERS is empty")
+    raise SystemExit("QQ_SCHEDULE_GROUPS is empty")
 
 sub2api_key = key_source.read_text(encoding="utf-8").strip()
 deepseek_key = deepseek_key_source.read_text(encoding="utf-8").strip()
@@ -114,7 +114,7 @@ config_target.write_text(config, encoding="utf-8")
 managed_names = {
     "QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_GROUP_ALLOWED_USERS", "SUB2API_API_KEY",
     "SUB2API_DEEPSEEK_API_KEY", "QQ_STT_PREFER_BUILTIN", "QQ_STT_API_KEY",
-    "VOICE_TOOLS_OPENAI_KEY",
+    "VOICE_TOOLS_OPENAI_KEY", "QQ_SCHEDULE_GROUPS",
 }
 existing_lines = runtime_env_source.read_text(encoding="utf-8").splitlines() if runtime_env_source.is_file() else []
 unmanaged_lines = [line for line in existing_lines if line.split("=", 1)[0].strip() not in managed_names]
@@ -124,7 +124,7 @@ env_target.write_text(
     (unmanaged_env + "\n" if unmanaged_env else "") +
     f"QQ_APP_ID={qq_values['QQ_APP_ID']}\n"
     f"QQ_CLIENT_SECRET={qq_values['QQ_CLIENT_SECRET']}\n"
-    f"QQ_GROUP_ALLOWED_USERS={','.join(groups)}\n"
+    f"QQ_SCHEDULE_GROUPS={','.join(groups)}\n"
     f"SUB2API_API_KEY={sub2api_key}\n"
     f"SUB2API_DEEPSEEK_API_KEY={deepseek_key}\n"
     "QQ_STT_PREFER_BUILTIN=false\n"

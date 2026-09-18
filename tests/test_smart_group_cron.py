@@ -77,7 +77,7 @@ class SmartGroupCronTests(unittest.TestCase):
             ]
         )
         (self.data / ".env").write_text(
-            "QQ_GROUP_ALLOWED_USERS=" + ",".join(self.groups) + "\n",
+            "QQ_SCHEDULE_GROUPS=" + ",".join(self.groups) + "\n",
             encoding="utf-8",
         )
 
@@ -164,7 +164,7 @@ class SmartGroupCronTests(unittest.TestCase):
             ]
         )
         (self.data / ".env").write_text(
-            "QQ_GROUP_ALLOWED_USERS=group-openid-beta,group-openid-gamma\n",
+            "QQ_SCHEDULE_GROUPS=group-openid-beta,group-openid-gamma\n",
             encoding="utf-8",
         )
 
@@ -210,7 +210,24 @@ class SmartGroupCronTests(unittest.TestCase):
 
     def test_empty_allow_list_is_fail_closed(self):
         api = FakeCronJobs()
-        (self.data / ".env").write_text("QQ_GROUP_ALLOWED_USERS=\n", encoding="utf-8")
+        (self.data / ".env").write_text("QQ_SCHEDULE_GROUPS=\n", encoding="utf-8")
+        with self.assertRaises(cron_reconciler.ScheduleConfigError):
+            self.reconcile(api)
+        self.assertEqual(api.calls, [])
+
+    def test_legacy_allow_list_variable_is_rejected(self):
+        api = FakeCronJobs()
+        (self.data / ".env").write_text(
+            "QQ_GROUP_ALLOWED_USERS=group-openid-alpha,group-openid-beta\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(cron_reconciler.ScheduleConfigError):
+            self.reconcile(api)
+        self.assertEqual(api.calls, [])
+
+    def test_wildcard_schedule_target_is_rejected(self):
+        api = FakeCronJobs()
+        (self.data / ".env").write_text("QQ_SCHEDULE_GROUPS=*\n", encoding="utf-8")
         with self.assertRaises(cron_reconciler.ScheduleConfigError):
             self.reconcile(api)
         self.assertEqual(api.calls, [])

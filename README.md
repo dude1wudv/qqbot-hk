@@ -6,9 +6,9 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 生产秘密位于 `/opt/qqbot-hk-deploy/secrets`，不得提交：
 
-- `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_GROUP_ALLOWED_USERS`。
+- `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_SCHEDULE_GROUPS`。
 - `sub2api-api-key`：Hermes 通用模型、STT/TTS key；`sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的主模型 key。
-- `QQ_GROUP_ALLOWED_USERS` 是固定公告的显式目标列表，使用逗号分隔的 QQ 群 OpenID，不能使用数字群号、用户 OpenID、空值或 `*`。它不再限制聊天接入；固定公告默认禁用。
+- `QQ_SCHEDULE_GROUPS` 是固定公告的显式目标列表，使用逗号分隔的 QQ 群 OpenID，不能使用数字群号、用户 OpenID、空值或 `*`。固定公告默认禁用。部署会移除旧 `QQ_GROUP_ALLOWED_USERS`，防止 Hermes 环境变量覆盖群专属通配配置。
 - 开发体验阶段也使用 QQ 官方生产 API/Gateway；开放平台按“开发体验用户”名单限制可访问账号。
 
 可提交占位模板见 `.env.example`。本机 `.env.local` 被 Git 忽略。
