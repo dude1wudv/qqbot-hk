@@ -34,7 +34,7 @@ model:
 
 compression:
   enabled: true
-  threshold_tokens: 16000
+  threshold_tokens: 50000
 
 providers:
   sub2api_deepseek:

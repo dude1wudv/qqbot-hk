@@ -230,9 +230,9 @@ if compression_config.get("enabled") is not True:
     raise SystemExit("compression.enabled must be true")
 if (
     type(compression_config.get("threshold_tokens")) is not int
-    or compression_config.get("threshold_tokens") != 16000
+    or compression_config.get("threshold_tokens") != 50000
 ):
-    raise SystemExit("compression.threshold_tokens must be exactly 16000")
+    raise SystemExit("compression.threshold_tokens must be exactly 50000")
 
 auxiliary = config.get("auxiliary")
 if not isinstance(auxiliary, Mapping):
@@ -255,7 +255,7 @@ if compression_route.get("reasoning_effort") != "low":
 if auxiliary.get("vision"):
     raise SystemExit("auxiliary vision fallback must be disabled")
 print(
-    "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=16000 "
+    "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=50000 "
     "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
 )
 tools = (((config.get("platform_toolsets") or {}).get("qqbot") or []))

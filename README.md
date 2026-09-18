@@ -58,7 +58,7 @@ Hermes 默认通过专用 Sub2API DeepSeek 分组，以 OpenAI Chat Completions 
 
 群内 @ 机器人发送 /gemini（兼容 / gemini）可将当前群会话切换到 `gemini-3.8-flash-high`；发送 /deepseek（兼容 / deepseek）可切回 `deepseek/deepseek-v4.1-flash`。两条命令都使用 Hermes 原生的会话级模型覆写，不修改其他群或全局默认模型。
 
-Hermes 的会话上下文达到 `16000` token 阈值时自动尝试压缩，受原生冷却和无效压缩保护约束；该值是触发阈值，不是完整请求硬上限。压缩在原会话继续，不调用 `/reset`，并固定使用 `deepseek/deepseek-v4.1-flash`、`low` 推理强度。群记忆独立在 40 条新消息且距上次刷新至少 300 秒时整理；或至少 4 条新消息的最老一条等待 1200 秒后整理，单条闲聊不会因空闲自动摘要。
+Hermes 的会话上下文达到 `50000` token 阈值时自动尝试压缩，受原生冷却和无效压缩保护约束；该值是触发阈值，不是完整请求硬上限。压缩在原会话继续，不调用 `/reset`，并固定使用 `deepseek/deepseek-v4.1-flash`、`low` 推理强度。群记忆独立在 40 条新消息且距上次刷新至少 300 秒时整理；或至少 4 条新消息的最老一条等待 1200 秒后整理，单条闲聊不会因空闲自动摘要。
 
 ## 部署
 
@@ -77,7 +77,7 @@ bash /opt/qqbot-hk/scripts/verify-server.sh
 
 `install-server.sh` 会校验固定公告目标列表，保留配置模板的群专属通配授权，移除旧沙箱路由和包括私聊在内的全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像并只重建 `hermes-qqbot`，等待健康、运行 cron 对账并通过完整验收后才清理旧插件副本。源码配置不含真实 OpenID 或 API key。
 
-`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、STT/TTS 配置、VOICE 类型、原生 MP3 被动回复锚点、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、16k 压缩触发配置、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、STT/TTS 配置、VOICE 类型、原生 MP3 被动回复锚点、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、50k 压缩触发配置、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
 部署后验证任意已加入的新群通过适配器与中央群授权，未批准私聊仍被拒绝或进入 pairing，两名成员共享本群上下文且不串群。群管理员打开“接收所有消息”并确认平台实际投递后，再验证：普通闲聊只旁听、明确求助按需回复、重复事件只处理一次、非 @ 管理命令不执行、近期旁听能作为后续 @ 的上下文。主动推送还要求群内允许主动发送，不能用修改本地配置绕过平台权限。
 
