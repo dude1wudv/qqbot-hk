@@ -86,7 +86,8 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
                     "todos": [], "open_questions": [], "participants": [],
                 }}
 
-        self.memory.record("group-a", "member", "并发消息", "m1")
+        for index in range(3):
+            self.memory.record("group-a", "member", f"并发消息{index}", f"m{index}")
         ctx = type("Ctx", (), {"llm": LLM()})()
         await __import__("asyncio").gather(
             self.memory.refresh_ai(ctx, "group-a"),

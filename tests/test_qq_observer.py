@@ -122,16 +122,16 @@ class ObserverTests(IsolatedAsyncioTestCase):
         self.assertEqual(records[0]["group_id"], "group-1")
         self.assertEqual(records[0]["member_id"], "member-1")
         self.assertEqual(records[0]["message_id"], "message-1")
-        self.assertIn("hello", records[0]["text"])
-        self.assertIn("[Voice] hello", records[0]["text"])
-        self.assertIn("note.txt", records[0]["text"])
-        self.assertEqual(records[0]["image_paths"], ["/opt/data/media/image.jpg"])
+        self.assertEqual(records[0]["text"], "hello")
+        self.assertEqual(records[0]["image_paths"], [])
         self.assertEqual(records[0]["media_types"], ["image/jpeg"])
-        self.assertEqual(records[0]["attachment_info"], "[file: note.txt (/opt/data/media/note.txt)]")
+        self.assertEqual(records[0]["attachment_info"], "")
+        self.assertEqual(records[0]["attachment_status"], "deferred")
+        self.assertFalse(records[0]["attachments_pending"])
+        self.assertEqual(adapter.attachment_calls, [])
         self.assertEqual(records[0]["timestamp"].year, 2026)
         self.assertIsNone(records[0]["sequence"])
         self.assertEqual(adapter.parsed_timestamps, ["2026-09-03T01:02:03+00:00"])
-        self.assertEqual(adapter.attachment_calls, [payload()["d"]["attachments"]])
         self.assertNotIn("message-1", adapter.normal_seen)
         self.assertNotIn("url", records[0]["raw"].get("attachments", [{}])[0])
 
@@ -236,7 +236,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
         await asyncio.sleep(0.01)
 
         self.assertEqual(len(records), 1)
-        self.assertEqual(len(adapter.attachment_calls), 1)
+        self.assertEqual(adapter.attachment_calls, [])
         self.assertEqual(adapter.normal_seen, {})
         self.assertEqual(len(adapter._smart_group_qq_nonmention_seen), 1)
 
@@ -267,15 +267,12 @@ class ObserverTests(IsolatedAsyncioTestCase):
         self.assertEqual(record["raw"]["author"]["display_name"], "小明")
         self.assertEqual(record["raw"]["author"]["username"], "xiaoming")
 
-    async def test_slow_media_does_not_block_fast_text_callback(self):
+    async def test_attachment_processing_is_deferred_out_of_ambient_observer(self):
         class SlowQQAdapter(FakeQQAdapter):
             async def _process_attachments(self, attachments):
                 self.attachment_calls.append(attachments)
                 await asyncio.sleep(0.2)
-                return {
-                    "image_paths": ["/opt/data/media/slow.jpg"],
-                    "image_media_types": ["image/jpeg"],
-                }
+                return {"image_paths": ["/opt/data/media/slow.jpg"]}
 
         records = []
         qq_observer.install_nonmention_observer(records.append)
@@ -286,14 +283,10 @@ class ObserverTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["text"], "hello")
-        self.assertTrue(records[0]["attachments_pending"])
-        self.assertEqual(records[0]["attachment_status"], "pending")
-
-        await asyncio.sleep(0.5)
-        self.assertFalse(records[0]["attachments_pending"])
-        self.assertEqual(records[0]["attachment_status"], "ready")
-        self.assertEqual(records[0]["image_paths"], ["/opt/data/media/slow.jpg"])
-
+        self.assertEqual(records[0]["attachments_pending"], False)
+        self.assertEqual(records[0]["attachment_status"], "deferred")
+        self.assertEqual(records[0]["image_paths"], [])
+        self.assertEqual(adapter.attachment_calls, [])
     def test_seen_cache_periodically_expires_stale_ids_and_remains_bounded(self):
         adapter = FakeQQAdapter()
         adapter._smart_group_qq_nonmention_seen = {"old": 0.0}

@@ -4,9 +4,11 @@ description: Hermes-native QQ group governance, durable AI and member memory, RA
 entrypoint: __init__:register
 hooks:
   - pre_gateway_dispatch
+  - transform_llm_output
   - post_llm_call
 provides_hooks:
   - pre_gateway_dispatch
+  - transform_llm_output
   - post_llm_call
 settings_schema:
   type: object

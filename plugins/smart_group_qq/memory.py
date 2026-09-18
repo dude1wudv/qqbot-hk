@@ -82,14 +82,17 @@ class GroupMemory:
         store: Any,
         *,
         window_size: int = 20,
-        idle_seconds: int = 1800,
+        idle_seconds: int = 1200,
         summary_chars: int = 1200,
-        compact_after_messages: int = 12,
+        compact_after_messages: int = 40,
         max_history_rows: int = 2000,
         recent_context_messages: int = 12,
         history_retention_seconds: float | None = None,
         compaction_batch_messages: int | None = None,
-        max_compaction_batches: int = 32,
+        max_compaction_batches: int = 4,
+        summary_min_interval_seconds: float = 300,
+        idle_min_pending_messages: int = 4,
+        summary_input_char_budget: int = 12000,
     ):
         self.store = store
         self.window_size = max(2, int(window_size))
@@ -105,6 +108,9 @@ class GroupMemory:
             20, int(compaction_batch_messages or max(80, self.compact_after_messages * 4))
         )
         self.max_compaction_batches = max(1, int(max_compaction_batches))
+        self.summary_min_interval_seconds = max(0.0, float(summary_min_interval_seconds))
+        self.idle_min_pending_messages = max(1, int(idle_min_pending_messages))
+        self.summary_input_char_budget = max(1000, int(summary_input_char_budget))
         self._refresh_locks: dict[str, asyncio.Lock] = {}
 
     def record(
@@ -118,9 +124,7 @@ class GroupMemory:
         media: Any = None,
         created_at: float | None = None,
     ) -> bool:
-        history = self.store.get_history(group_id, 1)
         now = time.time() if created_at is None else float(created_at)
-        idle = bool(history and now - float(history[-1]["created_at"]) >= self.idle_seconds)
         member_ref_factory = getattr(self.store, "member_ref_for", None)
         stored_member = (
             member_ref_factory(group_id, member_id)
@@ -151,10 +155,7 @@ class GroupMemory:
             purge = getattr(self.store, "purge_expired_history", None)
             if callable(purge):
                 purge(group_id, max_age_seconds=self.history_retention_seconds, now=now)
-        state = self.store.memory_payload(group_id)
-        last_id = int(state.get("last_history_id", 0))
-        pending = self.store.get_history_since(group_id, last_id, self.compact_after_messages)
-        return idle or len(pending) >= self.compact_after_messages
+        return self.needs_refresh(group_id, now=now)
 
     def record_assistant(self, group_id: str, text: str, *, model: str = "", expected_epoch: int | None = None) -> int:
         history_id = self.store.append_history(
@@ -174,12 +175,22 @@ class GroupMemory:
                 purge(group_id, max_age_seconds=self.history_retention_seconds)
         return history_id
 
-    def needs_refresh(self, group_id: str) -> bool:
+    def needs_refresh(self, group_id: str, *, now: float | None = None) -> bool:
+        stamp = time.time() if now is None else float(now)
         state = self.store.memory_payload(group_id)
-        pending = self.store.get_history_since(
-            group_id, int(state.get("last_history_id", 0)), self.compact_after_messages
+        cursor = int(state.get("last_history_id", 0))
+        pending = self.store.get_history_since(group_id, cursor, self.compact_after_messages)
+        if not pending:
+            return False
+        updated_at = float(state.get("updated_at", 0) or 0)
+        if updated_at and stamp - updated_at < self.summary_min_interval_seconds:
+            return False
+        if len(pending) >= self.compact_after_messages:
+            return True
+        return (
+            len(pending) >= self.idle_min_pending_messages
+            and stamp - float(pending[0]["created_at"]) >= self.idle_seconds
         )
-        return len(pending) >= self.compact_after_messages
 
     def _summary_source(
         self,
@@ -193,11 +204,18 @@ class GroupMemory:
         if not rows and allow_recent_fallback:
             rows = self.store.get_history(group_id, min(30, self.window_size))
         lines: list[str] = []
+        used = 0
+        last_id = after_id
         for row in rows:
             who = "机器人" if row["role"] == "assistant" else f"成员{row['member_id'] or 'unknown'}"
             kind = "旁听" if row["source_kind"] == "ambient" else "对话"
-            lines.append(f"[{kind}/{who}] {_redact(row['text']).strip()[:1200]}")
-        last_id = int(rows[-1]["id"]) if rows else after_id
+            line = f"[{kind}/{who}] {_redact(row['text']).strip()[:1200]}"
+            extra = len(line) + (1 if lines else 0)
+            if used + extra > self.summary_input_char_budget:
+                break
+            lines.append(line)
+            used += extra
+            last_id = int(row["id"])
         return "\n".join(lines), last_id, state
 
     async def refresh_ai(self, ctx: Any, group_id: str, *, force: bool = False) -> dict[str, Any]:
@@ -207,12 +225,16 @@ class GroupMemory:
 
     async def _refresh_ai_locked(self, ctx: Any, group_id: str, *, force: bool = False) -> dict[str, Any]:
         epoch = self.store.memory_epoch(group_id)
-        source, last_id, state = self._summary_source(group_id, allow_recent_fallback=True)
+        state = self.store.memory_payload(group_id)
+        previous = state.get("structured") if isinstance(state.get("structured"), Mapping) else {}
+        if not force and not self.needs_refresh(group_id):
+            return previous
+        source, last_id, state = self._summary_source(group_id, allow_recent_fallback=force)
         if not source:
-            return state.get("structured") or {}
+            return previous
         cursor = int(state.get("last_history_id", 0))
         if not force and last_id <= cursor:
-            return state.get("structured") or {}
+            return previous
         previous = state.get("structured") if isinstance(state.get("structured"), Mapping) else {}
         llm = getattr(ctx, "llm", None)
         complete = getattr(llm, "acomplete_structured", None)

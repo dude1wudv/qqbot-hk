@@ -42,6 +42,17 @@ _SENSITIVE = re.compile(
     re.IGNORECASE,
 )
 
+_SELF_DISCLOSURE = re.compile(
+    r"(?:我(?:平时|一直|通常|主要|正在|目前)?(?:用|使用|负责|喜欢|偏好|擅长)"
+    r"|我的(?:项目|职责|工作|偏好)|我们(?:团队|项目)(?:用|使用|采用))"
+)
+
+
+def should_extract(text: str) -> bool:
+    """Cheaply reject messages without a stable first-person disclosure."""
+    value = str(text or "")
+    return bool(value and not _SENSITIVE.search(value) and _SELF_DISCLOSURE.search(value))
+
 
 def _fact_parts(value: str) -> tuple[str, str, str]:
     text = " ".join(str(value or "").split())[:1000]
@@ -156,6 +167,7 @@ class MemberMemory:
             not self.enabled
             or not self.auto_extract
             or not text
+            or not should_extract(text)
             or not member
             or member["consent_status"] != "opted_in"
             or (source_kind == "ambient" and not self.extract_from_ambient)
@@ -191,6 +203,7 @@ class MemberMemory:
                 timeout=45,
                 temperature=0.0,
                 purpose="qq_member_profile_extraction",
+                task="compression",
             )
             parsed = getattr(result, "parsed", None)
             if parsed is None and isinstance(result, Mapping):
@@ -244,4 +257,4 @@ class MemberMemory:
         return stored
 
 
-__all__ = ["MemberMemory", "PROFILE_SCHEMA"]
+__all__ = ["MemberMemory", "PROFILE_SCHEMA", "should_extract"]

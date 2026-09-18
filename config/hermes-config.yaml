@@ -34,7 +34,7 @@ model:
 
 compression:
   enabled: true
-  threshold_tokens: 80000
+  threshold_tokens: 16000
 
 providers:
   sub2api_deepseek:
@@ -102,6 +102,17 @@ platforms:
         baseUrl: http://sub2api:8080/v1
         model: qwen-audio-3.0-asr-flash
 
+display:
+  platforms:
+    qqbot:
+      streaming: false
+      tool_progress: "off"
+      interim_assistant_messages: false
+      thinking_progress: false
+      show_reasoning: false
+      long_running_notifications: false
+      busy_ack_detail: false
+
 platform_toolsets:
   qqbot:
     - web
@@ -146,25 +157,33 @@ plugins:
             notice: 此消息未能通过群聊安全审核。
         memory:
           window_size: 20
-          idle_seconds: 1800
+          idle_seconds: 1200
           summary_chars: 1200
-          compact_after_messages: 12
+          compact_after_messages: 40
+          summary_min_interval_seconds: 300
+          idle_min_pending_messages: 4
+          summary_input_char_budget: 12000
+          max_compaction_batches: 4
           max_history_rows: 2000
           recent_context_messages: 12
-          recent_context_seconds: 900
-          context_char_budget: 6000
+          context_char_budget: 4000
+          context_section_chars:
+            recent: 1600
+            summary: 800
+            member: 600
+            knowledge: 1000
           ambient_retention_days: 7
           addressed_retention_days: 30
           audit_retention_days: 90
           claim_retention_days: 7
         ambient:
           enabled: true
-          analyze_images: true
+          analyze_images: false
           max_text_chars: 4000
           queue_max_size: 2000
           per_group_concurrency: 1
           flush_interval_seconds: 30
-          context_window_messages: 10
+          context_window_messages: 20
           context_window_seconds: 900
           participation:
             enabled: true
@@ -172,11 +191,10 @@ plugins:
             max_age_seconds: 120
             timeout_seconds: 12
             min_confidence: 0.70
-            # Collect non-@ group messages for 60s, then decide once.
-            # Official bot @ still replies immediately.
-            batch_seconds: 60
-            # Proactive @-free calls; share the 5s cooldown. Official bot @
-            # bypasses cooldown; @ other members stays silent.
+            # Tail debounce for consecutive messages from the same member.
+            debounce_seconds: 2
+            max_wait_seconds: 5
+            # Bot-name calls are direct signals. Generic help phrases are scored separately.
             wake_words:
               - 小分队机器人
               - 群助手
@@ -187,13 +205,6 @@ plugins:
               - qqbot
               - hermes
               - bot
-              - 帮看下
-              - 帮忙看
-              - 看一下
-              - 在吗
-              - 在嘛
-              - 请问
-              - 帮我
         member_memory:
           enabled: true
           auto_extract: true
@@ -210,7 +221,7 @@ plugins:
           max_document_chars: 200000
           chunk_size: 900
           chunk_overlap: 120
-          retrieval_limit: 5
+          retrieval_limit: 3
 
 terminal:
   backend: local

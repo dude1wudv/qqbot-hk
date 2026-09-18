@@ -199,6 +199,9 @@ def _minimal_raw(
         "group_openid": group_id,
         "author": author,
     }
+    for key in ("message_type", "msg_elements", "reply_to_message_id"):
+        if key in data:
+            raw[key] = data[key]
 
     # Attachment URLs are signed credentials and are not needed by consumers:
     # _process_attachments already returns local paths.  Keep only descriptive
@@ -334,10 +337,17 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
         "mentions_bot": mentions_bot,
         "mentions_others": mentions_others,
         "image_paths": [],
-        "media_types": [],
+        "media_types": [
+            str(item.get("content_type") or "attachment")
+            for item in attachments or []
+            if isinstance(item, Mapping)
+        ],
         "attachment_info": "",
-        "attachment_status": "pending" if has_attachments else "none",
-        "attachments_pending": has_attachments,
+        "attachment_status": "deferred" if has_attachments else "none",
+        "attachments_pending": False,
+        "message_type": data.get("message_type"),
+        "msg_elements": data.get("msg_elements"),
+        "reply_to_message_id": data.get("reply_to_message_id"),
         "raw": _minimal_raw(
             data,
             group_id,
@@ -350,64 +360,6 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
         "fast_ingested": bool(payload.get("_smart_group_qq_fast_ingested")),
     }
 
-    async def process_attachments() -> dict[str, Any]:
-        processor = getattr(adapter, "_process_attachments", None)
-        if not callable(processor):
-            return {"status": "unavailable"}
-        try:
-            result = await processor(attachments)
-            if not isinstance(result, Mapping):
-                return {"status": "ready"}
-            image_paths = list(_attachment_value(result, "image_paths", "image_urls") or [])
-            media_types = list(
-                _attachment_value(result, "media_types", "image_media_types") or []
-            )
-            voices = list(result.get("voice_transcripts") or [])
-            attachment_info = str(result.get("attachment_info", "") or "").strip()
-            extra_parts = [str(item).strip() for item in voices if str(item).strip()]
-            if attachment_info:
-                extra_parts.append(attachment_info)
-            return {
-                "status": "ready",
-                "image_paths": image_paths,
-                "media_types": media_types,
-                "attachment_info": attachment_info,
-                "extra_text": "\n\n".join(
-                    part for part in [raw_content, *extra_parts] if part
-                ).strip(),
-            }
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            return {"status": "failed"}
-
-    def apply_attachments(result: Mapping[str, Any]) -> None:
-        record["image_paths"] = list(result.get("image_paths") or [])
-        record["media_types"] = list(result.get("media_types") or [])
-        record["attachment_info"] = str(result.get("attachment_info", "") or "").strip()
-        extra_text = str(result.get("extra_text", "") or "").strip()
-        if extra_text:
-            record["text"] = extra_text
-        record["attachment_status"] = str(result.get("status") or "ready")
-        record["attachments_pending"] = False
-
-    attachment_task: Optional[asyncio.Task[dict[str, Any]]] = None
-    attachment_result: Optional[dict[str, Any]] = None
-    if has_attachments:
-        attachment_task = asyncio.create_task(process_attachments())
-        try:
-            # Give a fast adapter one scheduling turn, but never wait for a
-            # network/model-bound processor.  The task remains alive and its
-            # optional on_media_ready hook is handled below.
-            await asyncio.sleep(0)
-            if attachment_task.done():
-                attachment_result = attachment_task.result()
-        except asyncio.CancelledError:
-            attachment_task.cancel()
-            raise
-
-    if attachment_result is not None:
-        apply_attachments(attachment_result)
 
     try:
         result = callback(record)
@@ -416,16 +368,11 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
         if result is False:
             raise RuntimeError("observer callback rejected record")
     except asyncio.CancelledError:
-        _release_message_id(adapter, message_id)
-        if attachment_task is not None and not attachment_task.done():
-            attachment_task.cancel()
         raise
     except Exception:
         # Observer consumers are intentionally outside Hermes' normal message
         # path.  Their failures must never surface as gateway dispatch errors.
         _release_message_id(adapter, message_id)
-        if attachment_task is not None and not attachment_task.done():
-            attachment_task.cancel()
         return False
 
     should_reply = getattr(callback, "should_reply", None)
@@ -446,26 +393,6 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
             # observer claim or retry a side effect after an uncertain failure.
             _log(adapter, "warning", "QQ non-mention participation dispatch failed")
 
-    if attachment_task is not None and attachment_result is None:
-        async def finish_media() -> None:
-            try:
-                result = await attachment_task
-                apply_attachments(result)
-                # Existing plugin callbacks ingest the fast text record and do
-                # not need a second event.  Future durable consumers can opt in
-                # to the enriched phase without changing __init__.py.
-                media_ready = getattr(callback, "on_media_ready", None)
-                if callable(media_ready):
-                    enriched = media_ready(record)
-                    if inspect.isawaitable(enriched):
-                        await enriched
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                _log(adapter, "warning", "QQ non-mention attachment completion failed", exc_info=True)
-
-        task = asyncio.create_task(finish_media())
-        task.add_done_callback(_consume_task_exception)
     return True
 
 

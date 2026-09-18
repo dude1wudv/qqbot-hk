@@ -114,7 +114,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         result = handler(self.make_event("<@bot> hello"), self.gateway)
         self.assertEqual(result["action"], "rewrite")
         self.assertRegex(result["text"], r"^\[群记忆键:[0-9a-f]{12}\]\n")
-        self.assertRegex(result["text"], r"\[群成员:m-[0-9a-f]{20}\]: hello$")
+        self.assertRegex(result["text"], r"\[群成员:m-[0-9a-f]{20}\]: hello\n\n\[群聊最终输出协议\]")
         self.assertNotIn("摘要后新增上下文", result["text"])
 
     async def test_voice_transcript_keeps_group_policy_and_session_isolation(self):
@@ -384,7 +384,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 ctx = FakeContext({
                     "ambient": {"participation": {
                         "enabled": True, "min_confidence": 0.70, "wake_words": [],
-                        "batch_seconds": 0,
+                        "debounce_seconds": 0, "max_wait_seconds": 0,
                     }},
                 })
                 ctx.llm = ParticipationLLM(parsed, error=error)
@@ -395,13 +395,14 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                     observer_payload(f"participation-silent-{index}", group=f"silent-{index}"),
                     handler.observe_nonmention,
                 )
+                await asyncio.sleep(0)
                 self.assertEqual(len(ctx.llm.calls), 1)
                 self.assertEqual(adapter.dispatched, [])
 
     async def test_high_confidence_participation_dispatches_native_group_path_once(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
+            "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
             }},
         })
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
@@ -410,7 +411,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         item = observer_payload("participation-selected", text="请帮我查一下发布状态")
 
         await qq_observer._observe_message(adapter, item, handler.observe_nonmention)
+        await asyncio.sleep(0)
         await qq_observer._observe_message(adapter, item, handler.observe_nonmention)
+        await asyncio.sleep(0)
 
         self.assertEqual(len(ctx.llm.calls), 1)
         self.assertEqual(len(adapter.dispatched), 1)
@@ -424,7 +427,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_participation_cooldown_is_independent_per_group(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
+            "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
             }},
         })
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
@@ -440,19 +443,20 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await qq_observer._observe_message(
             adapter, observer_payload("cooldown-b1", group="group-b"), handler.observe_nonmention,
         )
+        await asyncio.sleep(0)
 
         self.assertEqual(len(ctx.llm.calls), 2)
         self.assertEqual(
             [item[1]["id"] for item in adapter.dispatched],
 
-            ["cooldown-a1", "cooldown-b1"],
+            ["cooldown-a2", "cooldown-b1"],
         )
 
     async def test_participation_batches_messages_then_dispatches_once(self):
         ctx = FakeContext({
             "ambient": {"participation": {
                 "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
-                "batch_seconds": 0.05, "wake_words": [],
+                "debounce_seconds": 0.05, "max_wait_seconds": 0.05, "wake_words": [],
             }},
         })
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
@@ -471,7 +475,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(ctx.llm.calls, [])
         self.assertEqual(adapter.dispatched, [])
-        flush = handler.batch_tasks.get("group-a")
+        flush = next(iter(handler.batch_tasks.values()), None)
         self.assertIsNotNone(flush)
         await asyncio.wait_for(flush, timeout=1)
         if flush.cancelled():
@@ -480,11 +484,51 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError(flush.exception())
         self.assertEqual(len(ctx.llm.calls), 1)
         self.assertEqual([item[1]["id"] for item in adapter.dispatched], ["batch-2"])
+    async def test_later_member_batch_waits_for_older_same_group_batch(self):
+        ctx = FakeContext({
+            "ambient": {"participation": {
+                "enabled": True, "cooldown_seconds": 0,
+                "debounce_seconds": 0.01, "max_wait_seconds": 0.01,
+                "wake_words": ["机器人"],
+            }},
+        })
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        handler = build_handler(ctx, self.store)
+        adapter = ObserverAdapter()
+        order = []
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def dispatch(_event_type, data):
+            order.append(data["id"])
+            if data["id"] == "fifo-a":
+                entered.set()
+                await release.wait()
+            adapter.dispatched.append((_event_type, data))
+
+        adapter._on_message = dispatch
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload("fifo-a", member="member-a", text="机器人 请处理 A"),
+            handler.observe_nonmention,
+        )
+        await qq_observer._observe_message(
+            adapter,
+            observer_payload("fifo-b", member="member-b", text="机器人 请处理 B"),
+            handler.observe_nonmention,
+        )
+        tasks = list(handler.batch_tasks.values())
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        await asyncio.sleep(0.03)
+        self.assertEqual(order, ["fifo-a"])
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=1)
+        self.assertEqual(order, ["fifo-a", "fifo-b"])
 
     async def test_mention_bypasses_participation_cooldown(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -496,11 +540,16 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             adapter, observer_payload("mention-seed", text="请帮我查一下发布状态"),
             handler.observe_nonmention,
         )
+        await asyncio.sleep(0)
         await qq_observer._observe_message(
             adapter,
-            observer_payload("mention-during-cd", text="<@bot> 还在冷却也要回"),
+            observer_payload(
+                "mention-during-cd", text="<@bot> 还在冷却也要回",
+                mentions=[{"bot": True}],
+            ),
             handler.observe_nonmention,
         )
+        await asyncio.sleep(0)
 
         self.assertEqual(len(ctx.llm.calls), 1)
         self.assertEqual(
@@ -512,7 +561,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_at_other_person_stays_silent(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -532,7 +581,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_structured_other_mention_stays_silent(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -556,7 +605,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_structured_bot_mention_bypasses_participation_cooldown(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -568,6 +617,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             adapter, observer_payload("mention-seed", text="请帮我查一下发布状态"),
             handler.observe_nonmention,
         )
+        await asyncio.sleep(0)
         await qq_observer._observe_message(
             adapter,
             observer_payload(
@@ -577,6 +627,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             ),
             handler.observe_nonmention,
         )
+        await asyncio.sleep(0)
 
         self.assertEqual(len(ctx.llm.calls), 1)
         self.assertEqual(
@@ -584,10 +635,10 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             ["mention-seed", "bot-mention-during-cd"],
         )
 
-    async def test_wake_word_respects_participation_cooldown(self):
+    async def test_wake_word_messages_remain_deliverable_without_success_cooldown(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
                 "wake_words": ["机器人"],
             }},
         })
@@ -599,28 +650,31 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             adapter, observer_payload("wake-1", text="机器人 帮我看下"),
             handler.observe_nonmention,
         )
+        await asyncio.sleep(0)
         await qq_observer._observe_message(
             adapter, observer_payload("wake-2", text="机器人 再问一次"),
             handler.observe_nonmention,
         )
+        await asyncio.sleep(0)
 
         self.assertEqual(ctx.llm.calls, [])
-        self.assertEqual([item[1]["id"] for item in adapter.dispatched], ["wake-1"])
+        self.assertEqual([item[1]["id"] for item in adapter.dispatched], ["wake-1", "wake-2"])
 
         with patch("smart_group_qq.time.monotonic", return_value=time.monotonic() + 6):
             await qq_observer._observe_message(
                 adapter, observer_payload("wake-3", text="机器人 冷却过后"),
                 handler.observe_nonmention,
             )
+            await asyncio.sleep(0)
         self.assertEqual(
             [item[1]["id"] for item in adapter.dispatched],
-            ["wake-1", "wake-3"],
+            ["wake-1", "wake-2", "wake-3"],
         )
 
     async def test_classifier_accepts_configured_min_confidence(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
                 "min_confidence": 0.70, "wake_words": [],
             }},
         })
@@ -631,11 +685,12 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             adapter, observer_payload("conf-70", text="请帮我查一下发布状态"),
             handler.observe_nonmention,
         )
+        await asyncio.sleep(0)
         self.assertEqual(len(adapter.dispatched), 1)
 
         ctx_low = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "batch_seconds": 0,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
                 "min_confidence": 0.70, "wake_words": [],
             }},
         })
@@ -647,6 +702,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             observer_payload("conf-69", group="group-b", text="请帮我查一下发布状态"),
             handler_low.observe_nonmention,
         )
+        await asyncio.sleep(0)
         self.assertEqual(adapter_low.dispatched, [])
 
     async def test_private_nonsplash_message_is_left_to_hermes(self):
@@ -658,7 +714,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"action": "allow"})
 
     async def test_nonmention_slash_command_with_mention_prefix_is_not_executed(self):
-        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "batch_seconds": 0}}})
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0}}})
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
@@ -676,7 +732,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_non_allowlisted_group_never_classifies_or_dispatches(self):
-        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "batch_seconds": 0}}})
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0}}})
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter(allowed=False)
@@ -692,7 +748,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get_history("blocked-group"), [])
 
     async def test_stale_and_replayed_nonmention_never_trigger_participation(self):
-        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "batch_seconds": 0}}})
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0}}})
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter(timestamp=datetime.now(timezone.utc) - timedelta(seconds=300))
@@ -709,7 +765,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def _assert_slow_participation_cancelled_by(self, invalidation_text):
         started = asyncio.Event()
         release = asyncio.Event()
-        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "batch_seconds": 0}}})
+        ctx = FakeContext({"ambient": {"participation": {"enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0}}})
         ctx.llm = ParticipationLLM(
             {"reply": True, "confidence": 1.0}, started=started, release=release,
         )
@@ -717,7 +773,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         adapter = ObserverAdapter()
         task = asyncio.create_task(qq_observer._observe_message(
             adapter,
-            observer_payload("slow-participation", text="请处理这个问题"),
+            observer_payload("slow-participation", text="请帮我处理这个问题"),
             handler.observe_nonmention,
         ))
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -738,7 +794,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_slow_participation_is_cancelled_by_reset(self):
         await self._assert_slow_participation_cancelled_by("<@bot> /reset")
 
-    async def test_post_llm_records_assistant_output(self):
+    async def test_post_llm_does_not_record_before_successful_send(self):
         handler = build_handler(FakeContext(), self.store)
         result = handler(self.make_event("你好", "ask-post"), self.gateway)
         handler.post_llm_call(
@@ -747,8 +803,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             platform=SimpleNamespace(value="qqbot"),
         )
         rows = self.store.get_history("group-a")
-        self.assertEqual(rows[-1]["role"], "assistant")
-        self.assertEqual(rows[-1]["text"], "你好，群友。")
+        self.assertEqual([row["role"] for row in rows], ["user"])
+        self.assertNotIn("你好，群友。", [row["text"] for row in rows])
 
     async def test_member_memory_source_history_tracks_each_event(self):
         started = asyncio.Event()
@@ -780,9 +836,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.store.set_member_consent("group-a", "member-b", "opted_in")
         handler = build_handler(ctx, self.store)
 
-        member_a = self.make_event("成员A的原句", "member-a-message")
+        member_a = self.make_event("我负责成员A的原句", "member-a-message")
         member_a.source.user_id = "member-a"
-        member_b = self.make_event("成员B的原句", "member-b-message")
+        member_b = self.make_event("我负责成员B的原句", "member-b-message")
         member_b.source.user_id = "member-b"
         handler(member_a, self.gateway)
         handler(member_b, self.gateway)
@@ -804,7 +860,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(facts_a[0]["source_history_id"], history_b["id"])
         self.assertEqual(facts_b[0]["source_history_id"], history_b["id"])
 
-    async def test_reset_rejects_stale_assistant_completion_but_records_new_one(self):
+    async def test_reset_does_not_resurrect_stale_or_post_hook_assistant_output(self):
         handler = build_handler(FakeContext(), self.store)
         old = handler(self.make_event("旧问题", "old-question"), self.gateway)
         handler.memory.reset("group-a")
@@ -813,18 +869,18 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             assistant_response="旧助手回答", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
-        self.assertNotIn("旧助手回答", [row["text"] for row in self.store.get_history("group-a")])
-        self.assertNotIn("旧助手回答", handler.memory.background("group-a"))
-
         new = handler(self.make_event("新问题", "new-question"), self.gateway)
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=new["text"],
             assistant_response="新助手回答", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
-        self.assertIn("新助手回答", [row["text"] for row in self.store.get_history("group-a")])
+        rows = self.store.get_history("group-a")
+        self.assertEqual([row["role"] for row in rows], ["user"])
+        self.assertNotIn("旧助手回答", [row["text"] for row in rows])
+        self.assertNotIn("新助手回答", [row["text"] for row in rows])
 
-    async def test_post_llm_accepts_wrapped_current_input_only(self):
+    async def test_post_llm_ignores_wrapped_input_until_delivery_callback(self):
         handler = build_handler(FakeContext(), self.store)
         old = handler(self.make_event("前文问题", "wrapped-old"), self.gateway)
         wrapped = "[群友]\n[Replying to: 前文]\n" + old["text"] + "\n[图片内容]示意图"
@@ -833,7 +889,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             assistant_response="正常助手回答", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
-        self.assertIn("正常助手回答", [row["text"] for row in self.store.get_history("group-a")])
+        self.assertNotIn("正常助手回答", [row["text"] for row in self.store.get_history("group-a")])
 
         handler.memory.reset("group-a")
         handler.post_llm_call(

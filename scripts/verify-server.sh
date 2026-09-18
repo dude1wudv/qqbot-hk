@@ -17,10 +17,12 @@ base_digest_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-h
 audio_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.audio-patch"}}' "$image_id")"
 chat_reasoning_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.chat-reasoning-patch"}}' "$image_id")"
 qq_help_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-help-patch"}}' "$image_id")"
+qq_output_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-output-patch"}}' "$image_id")"
 test "$base_digest_label" = "sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1"
 test "$audio_patch_label" = "v1"
 test "$chat_reasoning_patch_label" = "v1"
 test "$qq_help_patch_label" = "v1"
+test "$qq_output_patch_label" = "v1"
 
 docker exec -i hermes-qqbot python - <<'PY'
 import json
@@ -145,6 +147,7 @@ docker exec hermes-qqbot hermes plugins doctor /opt/data/plugins/smart_group_qq 
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-audio.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-commands.py --config /opt/data/config.yaml >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-output.py >/dev/null
 docker exec -i hermes-qqbot python - <<'PY'
 import json
 import os
@@ -227,9 +230,9 @@ if compression_config.get("enabled") is not True:
     raise SystemExit("compression.enabled must be true")
 if (
     type(compression_config.get("threshold_tokens")) is not int
-    or compression_config.get("threshold_tokens") != 80000
+    or compression_config.get("threshold_tokens") != 16000
 ):
-    raise SystemExit("compression.threshold_tokens must be exactly 80000")
+    raise SystemExit("compression.threshold_tokens must be exactly 16000")
 
 auxiliary = config.get("auxiliary")
 if not isinstance(auxiliary, Mapping):
@@ -252,7 +255,7 @@ if compression_route.get("reasoning_effort") != "low":
 if auxiliary.get("vision"):
     raise SystemExit("auxiliary vision fallback must be disabled")
 print(
-    "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=80000 "
+    "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=16000 "
     "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
 )
 tools = (((config.get("platform_toolsets") or {}).get("qqbot") or []))
@@ -282,9 +285,10 @@ memory_config = plugin_settings.get("memory")
 if not isinstance(memory_config, Mapping):
     raise SystemExit("smart_group_qq memory config is missing")
 for name in (
-    "compact_after_messages", "max_history_rows", "recent_context_messages",
-    "recent_context_seconds", "context_char_budget",
-    "ambient_retention_days", "addressed_retention_days",
+    "compact_after_messages", "summary_min_interval_seconds",
+    "idle_min_pending_messages", "summary_input_char_budget",
+    "max_compaction_batches", "max_history_rows", "recent_context_messages",
+    "context_char_budget", "ambient_retention_days", "addressed_retention_days",
     "audit_retention_days", "claim_retention_days",
 ):
     try:
@@ -292,6 +296,13 @@ for name in (
             raise ValueError
     except (TypeError, ValueError):
         raise SystemExit(f"smart_group_qq memory config is invalid: {name}")
+section_chars = memory_config.get("context_section_chars")
+if not isinstance(section_chars, Mapping) or {
+    "recent": 1600, "summary": 800, "member": 600, "knowledge": 1000
+} != {name: section_chars.get(name) for name in ("recent", "summary", "member", "knowledge")}:
+    raise SystemExit("smart_group_qq memory.context_section_chars is invalid")
+if int(memory_config.get("compact_after_messages", 0)) != 40:
+    raise SystemExit("smart_group_qq memory.compact_after_messages must be 40")
 ambient_config = plugin_settings.get("ambient")
 if not isinstance(ambient_config, Mapping):
     raise SystemExit("smart_group_qq ambient config is missing")
@@ -299,6 +310,8 @@ if not isinstance(ambient_config.get("enabled"), bool):
     raise SystemExit("smart_group_qq ambient enabled flag is invalid")
 if not isinstance(ambient_config.get("analyze_images"), bool):
     raise SystemExit("smart_group_qq ambient analyze_images flag is invalid")
+if ambient_config.get("analyze_images") is not False:
+    raise SystemExit("smart_group_qq ambient.analyze_images must be false")
 for name in (
     "max_text_chars", "queue_max_size", "per_group_concurrency",
     "flush_interval_seconds", "context_window_messages", "context_window_seconds",
@@ -310,6 +323,8 @@ for name in (
         raise SystemExit(f"smart_group_qq ambient config is invalid: {name}")
 if int(ambient_config.get("per_group_concurrency", 0)) != 1:
     raise SystemExit("smart_group_qq currently requires per_group_concurrency=1")
+if int(ambient_config.get("context_window_messages", 0)) != 20:
+    raise SystemExit("smart_group_qq ambient.context_window_messages must be 20")
 participation_config = ambient_config.get("participation")
 if not isinstance(participation_config, Mapping):
     raise SystemExit("smart_group_qq ambient.participation config is missing")
@@ -321,10 +336,14 @@ try:
 except (TypeError, ValueError):
     raise SystemExit("smart_group_qq ambient.participation.cooldown_seconds must be 5")
 try:
-    if int(participation_config.get("batch_seconds", 0)) != 60:
+    if int(participation_config.get("debounce_seconds", 0)) != 2:
+        raise ValueError
+    if int(participation_config.get("max_wait_seconds", 0)) != 5:
+        raise ValueError
+    if "batch_seconds" in participation_config:
         raise ValueError
 except (TypeError, ValueError):
-    raise SystemExit("smart_group_qq ambient.participation.batch_seconds must be 60")
+    raise SystemExit("smart_group_qq participation debounce/max-wait config is invalid")
 try:
     for name in ("max_age_seconds", "timeout_seconds"):
         if int(participation_config.get(name, 0)) <= 0:
@@ -340,6 +359,18 @@ except (TypeError, ValueError):
 wake_words = participation_config.get("wake_words")
 if not isinstance(wake_words, list) or not any(str(item).strip() for item in wake_words):
     raise SystemExit("smart_group_qq ambient.participation.wake_words must be a non-empty list")
+display_qq = (((config.get("display") or {}).get("platforms") or {}).get("qqbot") or {})
+expected_display = {
+    "streaming": False,
+    "tool_progress": "off",
+    "interim_assistant_messages": False,
+    "thinking_progress": False,
+    "show_reasoning": False,
+    "long_running_notifications": False,
+    "busy_ack_detail": False,
+}
+if any(display_qq.get(name) != value for name, value in expected_display.items()):
+    raise SystemExit("QQ unverified intermediate output must be disabled")
 member_memory_config = plugin_settings.get("member_memory")
 if not isinstance(member_memory_config, Mapping):
     raise SystemExit("smart_group_qq member_memory config is missing")
@@ -505,6 +536,7 @@ echo "HERMES_BASE_DIGEST=verified"
 echo "HERMES_AUDIO_PATCH=verified"
 echo "HERMES_CHAT_REASONING_PATCH=verified"
 echo "HERMES_QQ_HELP_PATCH=verified"
+echo "HERMES_QQ_OUTPUT_PATCH=verified"
 echo "QQ_NATIVE_COMMANDS=verified"
 echo "CHAT_COMPLETIONS_ROUTE=verified"
 echo "CONFIG_CHECK=passed"
