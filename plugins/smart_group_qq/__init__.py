@@ -840,7 +840,7 @@ def build_handler(ctx: Any, store: Store):
         timestamp = record.get("timestamp")
         sent_at = getattr(timestamp, "timestamp", lambda: 0)()
         max_age = float(participation_cfg.get("max_age_seconds", 120))
-        cooldown = float(participation_cfg.get("cooldown_seconds", 30))
+        cooldown = float(participation_cfg.get("cooldown_seconds", 5))
         previous = last_participation.get(group_id, float("-inf"))
         if not 0 <= time.time() - sent_at <= max_age or time.monotonic() - previous < cooldown:
             return False

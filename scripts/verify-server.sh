@@ -316,10 +316,10 @@ if not isinstance(participation_config, Mapping):
 if participation_config.get("enabled") is not True:
     raise SystemExit("smart_group_qq ambient.participation.enabled must be true")
 try:
-    if int(participation_config.get("cooldown_seconds", 0)) != 30:
+    if int(participation_config.get("cooldown_seconds", 0)) != 5:
         raise ValueError
 except (TypeError, ValueError):
-    raise SystemExit("smart_group_qq ambient.participation.cooldown_seconds must be 30")
+    raise SystemExit("smart_group_qq ambient.participation.cooldown_seconds must be 5")
 try:
     for name in ("max_age_seconds", "timeout_seconds"):
         if int(participation_config.get(name, 0)) <= 0:

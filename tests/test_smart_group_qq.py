@@ -397,7 +397,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_high_confidence_participation_dispatches_native_group_path_once(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
             }},
         })
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
@@ -420,7 +420,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_participation_cooldown_is_independent_per_group(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
             }},
         })
         ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
@@ -447,7 +447,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_mention_bypasses_participation_cooldown(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
                 "wake_words": ["机器人"],
             }},
         })
@@ -475,7 +475,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_wake_word_respects_participation_cooldown(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
                 "wake_words": ["机器人"],
             }},
         })
@@ -495,7 +495,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.llm.calls, [])
         self.assertEqual([item[1]["id"] for item in adapter.dispatched], ["wake-1"])
 
-        with patch("smart_group_qq.time.monotonic", return_value=time.monotonic() + 31):
+        with patch("smart_group_qq.time.monotonic", return_value=time.monotonic() + 6):
             await qq_observer._observe_message(
                 adapter, observer_payload("wake-3", text="机器人 冷却过后"),
                 handler.observe_nonmention,
@@ -508,7 +508,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_classifier_accepts_configured_min_confidence(self):
         ctx = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
                 "min_confidence": 0.70, "wake_words": [],
             }},
         })
@@ -523,7 +523,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
         ctx_low = FakeContext({
             "ambient": {"participation": {
-                "enabled": True, "cooldown_seconds": 30, "max_age_seconds": 120,
+                "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120,
                 "min_confidence": 0.70, "wake_words": [],
             }},
         })
