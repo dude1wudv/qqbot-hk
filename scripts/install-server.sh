@@ -103,10 +103,11 @@ if not sub2api_key or not deepseek_key:
     raise SystemExit("Sub2API key is empty")
 
 config = config_source.read_text(encoding="utf-8")
-sentinel = "      group_allow_from: []"
-if config.count(sentinel) != 1:
-    raise SystemExit("group allow-list config sentinel is missing or duplicated")
-config = config.replace(sentinel, "      group_allow_from: " + json.dumps(groups), 1)
+# Group conversation access is declared in config, independently of the
+# explicit destination list retained for disabled fixed announcements.
+for sentinel in ('      group_allow_from: ["*"]', '      group_allowed_chats: ["*"]'):
+    if config.count(sentinel) != 1:
+        raise SystemExit("group-only wildcard access configuration is missing or duplicated")
 config_target.write_text(config, encoding="utf-8")
 
 # Preserve runtime-owned settings and generated authentication keys.

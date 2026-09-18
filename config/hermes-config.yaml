@@ -92,7 +92,10 @@ platforms:
       # during the explicit, expiring enrollment window below.
       dm_policy: pairing
       group_policy: allowlist
-      group_allow_from: []
+      # Both the QQ adapter and central gateway grant group-only access.
+      # DM pairing remains independent; do not set QQ_ALLOW_ALL_USERS.
+      group_allow_from: ["*"]
+      group_allowed_chats: ["*"]
       markdown_support: false
       stt:
         provider: openai

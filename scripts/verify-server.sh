@@ -3,6 +3,7 @@ set -euo pipefail
 
 project_dir="${QQBOT_PROJECT_DIR:-/opt/qqbot-hk}"
 
+
 container_id="$(docker compose -f "$project_dir/docker-compose.yml" ps -q hermes-qqbot)"
 test -n "$container_id"
 
@@ -262,6 +263,11 @@ if qq_extra.get("dm_policy") != "pairing":
     raise SystemExit("QQ DM policy is not pairing")
 if qq_extra.get("group_policy") != "allowlist":
     raise SystemExit("QQ group policy is not allowlist")
+if qq_extra.get("group_allow_from") != ["*"]:
+    raise SystemExit("QQ adapter group_allow_from must be exactly ['*']")
+if qq_extra.get("group_allowed_chats") != ["*"]:
+    raise SystemExit("gateway group_allowed_chats must be exactly ['*']")
+
 
 plugin_settings = (
     (((config.get("plugins") or {}).get("entries") or {}).get("smart_group_qq") or {})
@@ -339,6 +345,7 @@ if until.tzinfo is None or not auto_pair.get("enabled"):
     raise SystemExit("QQ auto-pair window is not configured")
 auto_pair_state = "active" if datetime.now(timezone.utc) < until.astimezone(timezone.utc) else "expired"
 
+
 declaration = yaml.safe_load(Path("/opt/data/smart-group-schedules.yaml").read_text(encoding="utf-8")) or {}
 enabled_ids = {
     item.get("id") for item in declaration.get("schedules", [])
@@ -403,13 +410,52 @@ with sqlite3.connect(db_path) as connection:
     }
     if not required_indexes.issubset(indexes):
         raise SystemExit("member memory indexes are incomplete")
+from gateway.config import Platform
+from gateway.platforms.qqbot.adapter import QQAdapter
+from gateway.run import GatewayRunner, load_gateway_config_for_runner
+from gateway.session import SessionSource
+
+
+# Exercise the real adapter and central GatewayRunner gates with a synthetic source.
+# The profile loader resolves secrets in the normal scope, but no secret is printed.
+loaded_config = load_gateway_config_for_runner()
+qq_config = loaded_config.platforms[Platform.QQBOT]
+runner = GatewayRunner(loaded_config)
+adapter = QQAdapter(qq_config)
+runner.adapters[Platform.QQBOT] = adapter
+unknown_group = "synthetic-group-not-in-env"
+group_source = SessionSource(
+    Platform.QQBOT,
+    unknown_group,
+    chat_type="group",
+    user_id="synthetic-member",
+)
+dm_source = SessionSource(
+    Platform.QQBOT,
+    "synthetic-unapproved-dm",
+    chat_type="dm",
+    user_id="synthetic-unapproved-dm",
+)
+if unknown_group in groups:
+    raise SystemExit("synthetic group unexpectedly appears in QQ_GROUP_ALLOWED_USERS")
+if adapter._is_group_allowed(unknown_group, group_source.user_id) is not True:
+    raise SystemExit("QQ adapter wildcard did not authorize the synthetic group")
+if runner._is_user_authorized(group_source) is not True:
+    raise SystemExit("GatewayRunner did not authorize the synthetic group")
+if adapter._is_dm_allowed(dm_source.user_id) is not False:
+    raise SystemExit("QQ adapter admitted an unapproved DM")
+if runner._is_user_authorized(dm_source) is not False:
+    raise SystemExit("GatewayRunner admitted an unapproved DM")
+print("QQ_AUTH_SMOKE=passed GROUP=adapter_acl+central_authorized DM=unapproved_refused")
+
 
 gateway = json.loads(Path("/opt/data/gateway_state.json").read_text(encoding="utf-8"))
 qq = gateway.get("platforms", {}).get("qqbot", {})
 if gateway.get("gateway_state") != "running" or qq.get("state") != "connected":
     raise SystemExit("QQ gateway is not connected")
 print(f"DM_POLICY=pairing API_BASE=production AUTO_PAIR={auto_pair_state} UNTIL_UTC={until_raw}")
-print(f"GROUP_ALLOWLIST_COUNT={len(groups)}")
+print("GROUP_ACCESS=all_groups")
+print(f"SCHEDULE_TARGET_COUNT={len(groups)}")
 print(f"PLUGIN_STATUS={plugin.get('status')}")
 print(f"OWNED_CRON_COUNT={len(owned)}")
 print(f"PLUGIN_DB_INTEGRITY=ok AUDIT_COUNT={audit_count} SCHEMA_VERSION={schema_version}")

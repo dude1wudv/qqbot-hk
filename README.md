@@ -8,7 +8,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 - `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_GROUP_ALLOWED_USERS`。
 - `sub2api-api-key`：Hermes 通用模型、STT/TTS key；`sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的主模型 key。
-- `QQ_GROUP_ALLOWED_USERS` 是逗号分隔的 QQ 群 OpenID；不能使用数字群号、用户 OpenID、空值或 `*`。
+- `QQ_GROUP_ALLOWED_USERS` 是固定公告的显式目标列表，使用逗号分隔的 QQ 群 OpenID，不能使用数字群号、用户 OpenID、空值或 `*`。它不再限制聊天接入；固定公告默认禁用。
 - 开发体验阶段也使用 QQ 官方生产 API/Gateway；开放平台按“开发体验用户”名单限制可访问账号。
 
 可提交占位模板见 `.env.example`。本机 `.env.local` 被 Git 忽略。
@@ -30,7 +30,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - `/summary` 使用模型生成本群摘要、话题、决定、待办和未决问题；每群独立持久化，`/reset` 只清理会话与记忆，不删除知识库。
 - `/kb add 标题 | 正文` 添加资料；`/kb list`、`/kb search 关键词`、`/kb remove 文档ID`、`/kb clear confirm` 管理本群知识。支持缓存目录中的 TXT/Markdown/CSV/JSON/YAML/XML/TOML/DOCX，PDF 需镜像提供 `pypdf`。
 - 审计表只保存动作元数据，不保存原消息或回复正文。
-- 部署配置启用白名单群的非 @ 按需参与；固定定时群发仍禁用。[QQ 官方现行文档](https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/overview.html)已列出全量群消息与主动发送能力；应用权限、群开关和实际事件投递仍须单独核验。
+- 所有机器人已加入、且 QQ 平台允许投递的群均开放非 @ 按需参与。配置通过原生 `group_allow_from: ["*"]` 与 `group_allowed_chats: ["*"]` 分别授权适配器和中央网关；私聊仍要求 pairing，不启用 `QQ_ALLOW_ALL_USERS`。固定定时群发仍禁用。[QQ 官方现行文档](https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/overview.html)列出全量群消息与主动发送能力；群管理员仍需分别开启接收全部消息与允许主动发送。
 
 ### 成员专属记忆与非 @ 消息
 
@@ -43,7 +43,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - `/忘记我` 会清理本人原文、成员档案/事实、本群机器人回复缓存以及衍生摘要/压缩任务；他人成员原文和知识库保留。清理范围是机器人内部缓存，不是撤回 QQ 客户端消息。持久化失效版本防止清理前尚在运行的摘要、提取或回答再次写回旧内容，即使之后重新同意记忆也不恢复旧任务。
 - 非 `@` 消息只在 QQ 开放平台实际投递 `GROUP_MESSAGE_CREATE` 时进入本群 ambient 历史和摘要链路。`ambient.participation` 启用后，仅高置信度的明确求助或有帮助价值的问题进入原生群会话；闲聊、斜杠管理命令、超过 120 秒的排队消息、分类失败均保持安静。每群默认 30 秒参与冷却；`@` 不受该冷却限制，并取消尚未完成的旧参与判断。定时任务不能补拉平台没有投递的历史消息。
 - 收到 `@` 后，插件只召回当前群、当前消息之前最近的有限条非 `@` 消息，并按字符预算截断；不得把其他群、私聊或成员私有记忆带入公开群聊。
-- 未入白名单群的 @、加群和允许通知事件仅记录 `group_access_pending` 接入元数据到服务器审计数据库，每群每小时最多一条；不保存其消息正文、不回复、不自动授权。数字群号不能替代 OpenID；运维人员须核对用户操作与候选后再加入白名单。
+- 全群开放时新群不需要手工登记 OpenID。若运维主动恢复限制策略，未授权群的 @、加群和允许通知事件仅记录 `group_access_pending` 接入元数据到服务器审计数据库，每群每小时最多一条；不保存正文、不自动授权。
 - 群知识检索覆盖本群所有已存片段，采用流式 top-k 保持候选内存有界，不再只检查最新 2000 个片段。当前仍是词面检索，不能等同于 embedding 语义召回。
 
 ### 数据保留与删除
@@ -75,11 +75,11 @@ bash /opt/qqbot-hk/scripts/install-server.sh
 bash /opt/qqbot-hk/scripts/verify-server.sh
 ```
 
-`install-server.sh` 会校验群白名单，把群 OpenID 注入部署态配置，明确移除旧沙箱路由和全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像并只重建 `hermes-qqbot`，等待健康、运行 cron 对账并通过完整验收后才清理旧插件副本。源码配置不含真实 OpenID 或 API key。
+`install-server.sh` 会校验固定公告目标列表，保留配置模板的群专属通配授权，移除旧沙箱路由和包括私聊在内的全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像并只重建 `hermes-qqbot`，等待健康、运行 cron 对账并通过完整验收后才清理旧插件副本。源码配置不含真实 OpenID 或 API key。
 
 `verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、STT/TTS 实际配置解析、VOICE 类型、原生 MP3 被动回复锚点、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、80k 压缩配置、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
-部署后验证白名单群 @ 可回复、非白名单群不回复、两名成员共享本群上下文且不串群。群管理员打开“接收所有消息”并确认平台实际投递后，再验证：普通闲聊只旁听、明确求助按需回复、重复事件只处理一次、非 @ 管理命令不执行、近期旁听能作为后续 @ 的上下文。主动推送还要求群内允许主动发送，不能用修改本地配置绕过平台权限。
+部署后验证任意已加入的新群通过适配器与中央群授权，未批准私聊仍被拒绝或进入 pairing，两名成员共享本群上下文且不串群。群管理员打开“接收所有消息”并确认平台实际投递后，再验证：普通闲聊只旁听、明确求助按需回复、重复事件只处理一次、非 @ 管理命令不执行、近期旁听能作为后续 @ 的上下文。主动推送还要求群内允许主动发送，不能用修改本地配置绕过平台权限。
 
 ## 回滚
 
