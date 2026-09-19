@@ -18,6 +18,7 @@ from .commands import (
     clean_text,
     help_text,
     model_alias_rewrite,
+    native_group_command_rewrite,
     parse_command,
     parse_profile_command,
     reasoning_alias_rewrite,
@@ -818,13 +819,17 @@ def build_handler(ctx: Any, store: Store):
                     reply = rules_text(settings)
                 elif command.name == "duty_roster":
                     reply = duty_roster_text() if is_group else "该功能仅群聊可用。"
-            elif text.startswith(("/", "／")):
-                # Unknown slash commands belong to Hermes' native command router.
-                # In QQ groups the user typically writes "@bot /compress"; without a
-                # rewrite those recovery commands are stuffed into durable group
-                # context and never execute, so an ineffective-compression latch
-                # cannot be cleared by /compress or /new.
-                return {"action": "rewrite", "text": text.replace("／", "/", 1)}
+            elif text.startswith(("/", "／")) and (
+                not is_group or (native_rewrite := native_group_command_rewrite(text))
+            ):
+                # DMs retain Hermes' native command surface. Groups expose only the
+                # explicitly reviewed recovery/help commands: the production QQ
+                # scope has no per-member native-command admin gate, so forwarding
+                # every unknown slash command would also expose management actions.
+                return {
+                    "action": "rewrite",
+                    "text": native_rewrite if is_group else text.replace("／", "/", 1),
+                }
             elif not is_group:
                 # Non-slash DM traffic is already filtered above; keep allow for
                 # any remaining private-chat edge cases.
@@ -1488,4 +1493,3 @@ def register(ctx: Any) -> None:
 
 
 __all__ = ["PLUGIN_ID", "build_handler", "register"]
-

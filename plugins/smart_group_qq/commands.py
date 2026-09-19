@@ -19,6 +19,7 @@ _MODEL_ALIASES = {
 _REASONING_ALIAS_COMMAND = re.compile(r"^[／/]\s*(low|medium|high|max)\s*$", re.IGNORECASE)
 _ALIASES = {"clear": "reset", "值日表": "duty_roster"}
 _SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules", "duty_roster"})
+_NATIVE_GROUP_PASSTHROUGH = frozenset({"commands", "compress", "new"})
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,16 @@ def reasoning_alias_rewrite(value: Any) -> str | None:
     return f"/reasoning {match.group(1).lower()} --session"
 
 
+def native_group_command_rewrite(value: Any) -> str | None:
+    """Return the small, explicitly safe set of native commands exposed in QQ groups."""
+
+    text = clean_text(value).replace("／", "/", 1)
+    if not text.startswith("/"):
+        return None
+    command = text[1:].split(maxsplit=1)[0].lower()
+    return text if command in _NATIVE_GROUP_PASSTHROUGH else None
+
+
 def help_text() -> str:
     return (
         "【QQ 助手】\n"
@@ -126,6 +137,6 @@ def rules_text(settings: Mapping[str, Any]) -> str:
 
 __all__ = [
     "Command", "ProfileCommand", "clean_text", "parse_command", "parse_profile_command",
-    "model_alias_rewrite", "reasoning_alias_rewrite",
+    "model_alias_rewrite", "reasoning_alias_rewrite", "native_group_command_rewrite",
     "help_text", "status_text", "rules_text",
 ]

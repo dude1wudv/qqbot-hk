@@ -216,6 +216,16 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get_history("group-a"), [])
         self.assertEqual(self.adapter.sent, [])
 
+    async def test_group_unknown_native_commands_are_not_forwarded(self):
+        handler = build_handler(FakeContext(), self.store)
+        for index, raw in enumerate(("<@bot> /update", "<@bot> /platform pause", "<@bot> /reload-mcp")):
+            with self.subTest(raw=raw):
+                result = handler(self.make_event(raw, f"unknown-native-{index}"), self.gateway)
+                self.assertEqual(result["action"], "rewrite")
+                self.assertNotEqual(result["text"], raw.removeprefix("<@bot> "))
+                self.assertIn("群记忆键", result["text"])
+        self.assertEqual(self.adapter.sent, [])
+
     async def test_private_aliases_delegate_to_native_session_commands(self):
 
         handler = build_handler(FakeContext(), self.store)
@@ -268,6 +278,13 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             chat_type="dm",
             group="dm-a",
         ), self.gateway), {"action": "rewrite", "text": "/commands"})
+        self.assertEqual(handler(event(
+            "/update",
+            "dm-unknown-native",
+            platform="qqbot",
+            chat_type="dm",
+            group="dm-a",
+        ), self.gateway), {"action": "rewrite", "text": "/update"})
         await asyncio.sleep(0)
         replies = [content for _, content, _ in self.adapter.sent]
         self.assertTrue(any("【QQ 助手】" in content for content in replies))
