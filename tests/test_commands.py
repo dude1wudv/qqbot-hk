@@ -27,7 +27,8 @@ class CommandTests(unittest.TestCase):
         menu = help_text()
         self.assertIn("【QQ 助手】", menu)
         for command in (
-            "/help", "/reset", "/status", "/summary", "/rules", "/gemini", "/deepseek",
+            "/help", "/reset", "/new", "/compress", "/status", "/summary", "/rules",
+            "/gemini", "/deepseek",
             "/low /medium /high /max", "/kb", "/我的记忆", "/记住我", "/纠正记忆",
             "/忘记我", "/停止记忆",
         ):
