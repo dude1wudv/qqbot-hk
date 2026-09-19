@@ -77,12 +77,6 @@ auxiliary:
 
 voice:
   auto_tts: false
-tts:
-  provider: openai
-  openai:
-    base_url: http://sub2api:8080/v1
-    model: qwen-audio-3.0-tts-plus
-    voice: longanhuan_v3.6
 
 platforms:
   qqbot:
@@ -96,11 +90,14 @@ platforms:
       # DM pairing remains independent; do not set QQ_ALLOW_ALL_USERS.
       group_allow_from: ["*"]
       group_allowed_chats: ["*"]
+      # Keep native auto-compression; if its durable anti-thrash breaker trips,
+      # rotate the affected QQ session before processing the next ordinary message.
+      auto_new_on_compression_ineffective: true
+      voice_input_enabled: false
+      voice_output_enabled: false
       markdown_support: false
       stt:
-        provider: openai
-        baseUrl: http://sub2api:8080/v1
-        model: qwen-audio-3.0-asr-flash
+        enabled: false
 
 display:
   platforms:
@@ -118,7 +115,6 @@ platform_toolsets:
     - web
     - vision
     - skills
-    - tts
     - terminal
     - file
     - todo

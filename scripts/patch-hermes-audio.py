@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed, minimal audio patch for the pinned Hermes QQ adapter."""
+"""Fail-closed QQ audio policy patch for the pinned Hermes adapter."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import sys
 
 
 EXPECTED_ORIGINAL_SHA256 = "603a00c3c72f7e8e9101056d698d97e5719db44f6d0ab3fc25d9b26c00f07599"
-PATCH_MARKER = 'QQBOT_HK_AUDIO_PATCH = "v1"'
+PATCH_MARKER = 'QQBOT_HK_AUDIO_PATCH = "v2"'
 
 
 class PatchError(RuntimeError):
@@ -57,9 +57,22 @@ PATCHES = (
         "YAML STT environment-key fallback",
     ),
     (
+        "            if self._is_voice_content_type(ct, filename):\n"
+        "                asr_refer, wav_url = (self._opt_str(att.get(k)) for k in (\"asr_refer_text\", \"voice_wav_url\"))\n",
+        "            if self._is_voice_content_type(ct, filename):\n"
+        "                if (self.config.extra or {}).get(\"voice_input_enabled\") is False:\n"
+        "                    logger.info(\"[%s] QQ voice input disabled; attachment ignored\", self._log_tag)\n"
+        "                    continue\n"
+        "                asr_refer, wav_url = (self._opt_str(att.get(k)) for k in (\"asr_refer_text\", \"voice_wav_url\"))\n",
+        1,
+        "QQ voice input policy",
+    ),
+    (
         "    async def send_voice(self, chat_id, audio_path, caption=None, reply_to=None, **kwargs) -> SendResult:\n"
         "        return await self._send_media(chat_id, audio_path, MEDIA_TYPE_VOICE, \"voice\", caption, reply_to)\n",
         "    async def send_voice(self, chat_id, audio_path, caption=None, reply_to=None, **kwargs) -> SendResult:\n"
+        "        if (self.config.extra or {}).get(\"voice_output_enabled\") is False:\n"
+        "            return SendResult(success=False, error=\"QQ voice output disabled\")\n"
         "        reply_to = reply_to or self._last_msg_id.get(chat_id)\n"
         "        return await self._send_media(chat_id, audio_path, MEDIA_TYPE_VOICE, \"voice\", caption, reply_to)\n",
         1,
@@ -78,6 +91,9 @@ def verify_patched_source(source: str) -> None:
         "MessageType.VOICE if voice_transcripts": 1,
         '"QQ_STT_PREFER_BUILTIN", "true"': 1,
         'or _resolve_qq_secret("QQ_STT_API_KEY", "")': 1,
+        'get("voice_input_enabled") is False': 1,
+        'get("voice_output_enabled") is False': 1,
+        'error="QQ voice output disabled"': 1,
         "reply_to = reply_to or self._last_msg_id.get(chat_id)": 1,
     }
     for sentinel, expected_count in required.items():

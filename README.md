@@ -7,7 +7,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 生产秘密位于 `/opt/qqbot-hk-deploy/secrets`，不得提交：
 
 - `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_SCHEDULE_GROUPS`。
-- `sub2api-api-key`：Hermes 通用模型、STT/TTS key；`sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的主模型 key。
+- `sub2api-api-key`：Hermes 通用模型 key；`sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的主模型 key。
 - `QQ_SCHEDULE_GROUPS` 是固定公告的显式目标列表，使用逗号分隔的 QQ 群 OpenID，不能使用数字群号、用户 OpenID、空值或 `*`。固定公告默认禁用。部署会移除旧 `QQ_GROUP_ALLOWED_USERS`，防止 Hermes 环境变量覆盖群专属通配配置。
 - 开发体验阶段也使用 QQ 官方生产 API/Gateway；开放平台按“开发体验用户”名单限制可访问账号。
 
@@ -21,9 +21,8 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - 群聊回复：允许已由 QQ 适配器和中央网关授权群的官方 `@机器人 + 问题`，也会在平台投递普通群消息时按规则积极参与开放问题。普通消息先免费过滤，再按同成员聚合；明确 @ 他人、管理命令和低价值闲聊不进入主 Agent。
 - 同一群共享 Hermes 会话；私聊、其他群和当前群严格隔离。
 - 回复默认采用 QQ 短聊风格：群聊通常 1～3 句、约 120 个汉字内，私聊通常约 300 个汉字内；用户明确要求或内容确有必要时再展开。发送前统一把常见 Markdown 降级为克制的纯文本，群聊和私聊均生效。
-- QQ 工具集启用 `web`、`vision`、`skills`、`tts`、`todo`、`terminal`、`file`；其中 `terminal` 提供 shell 能力，`code`、`computer` 仍不暴露。文件写入受 `HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp` 限制，Hermes credential/project env 路径仍由内置防护拦截。
-- QQ 语音只使用 `qwen-audio-3.0-asr-flash` 外部识别，不采用腾讯 `asr_refer_text`。语音输入默认返回一条 QQ 原生 MP3 语音；普通文本默认返回文本，只有明确语音/朗读/朗唱请求才调用 TTS。
-- STT 地址与模型固定在 `platforms.qqbot.extra.stt`，TTS 地址/模型/音色固定在 `tts.openai`；真实 Sub2API key 仅由安装脚本写入权限 `0600` 的部署态 `.env`。
+- QQ 工具集启用 `web`、`vision`、`skills`、`todo`、`terminal`、`file`；其中 `terminal` 提供 shell 能力，`tts`、`code`、`computer` 不暴露。文件写入受 `HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp` 限制，Hermes credential/project env 路径仍由内置防护拦截。
+- QQ 语音输入与输出均关闭：语音附件不进入 STT/模型，`send_voice` 在媒体上传前失败关闭，配置不包含 TTS provider 或音频密钥。普通文本与图片功能不受影响。
 - `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、AI 结构化长期记忆、非 @ 消息旁听、群知识库/RAG，以及 `/help`、`/reset`、`/clear`、`/new`、`/compress`、`/status`、`/summary`、`/rules`、`/kb`、`/值日表`、`/gemini`、`/deepseek`、`/low`、`/medium`、`/high`、`/max`、`/我的记忆`、`/记住我`、`/纠正记忆`、`/停止记忆`、`/忘记我`。
 - `/low`、`/medium`、`/high`、`/max`、`/deepseek`、`/gemini` 注册为 Hermes 原生命令层的 `quick_commands`，群聊和私聊都会在未知命令拦截前展开。群聊仅将 `/compress`、`/new`、`/commands` 在剥离 QQ @ 后透传给 Hermes，避免恢复命令被包装进群上下文，同时不暴露其他原生管理命令。私聊 `/help` 优先显示中文自定义命令菜单，Hermes 原生命令折叠为 `/commands` 入口；`/值日表` 仍仅群聊可用。
 - `@机器人 /值日表` 按北京时间即时计算本周日到周六的轮值安排；2026 年 9 月 13 日开始，每周日轮换一次，开始前显示首轮预告。该功能不依赖主动群发或模型调用。
@@ -42,7 +41,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - 空白或敏感内容的记忆命令不会重新开启已停止的成员记忆。`/停止记忆` 和 `/纠正记忆` 会重置本群当前会话上下文，避免继续沿用旧画像。
 - `/忘记我` 会清理本人原文、成员档案/事实、本群机器人回复缓存以及衍生摘要/压缩任务；他人成员原文和知识库保留。清理范围是机器人内部缓存，不是撤回 QQ 客户端消息。持久化失效版本防止清理前尚在运行的摘要、提取或回答再次写回旧内容，即使之后重新同意记忆也不恢复旧任务。
 - 非 `@` 消息只在 QQ 开放平台实际投递 `GROUP_MESSAGE_CREATE` 时进入本群 ambient 历史和摘要链路。普通消息按同群同成员进行 2 秒尾沿防抖、第一条起最多等待 5 秒，最多 20 条/6000 字；规则高分直接参与，模糊候选才调用一次低推理分类。5 秒回复冷却从实际发送成功开始，冷却内追问继续聚合；官方 `@机器人` 不等待且会使旧参与判断失效。`@` 其他成员、非 @ 管理命令、纯表情/收尾闲聊保持静默。
-- 近期原文、滚动摘要、当前成员事实和知识检索分别受 1600/800/600/1000 字预算约束，总插件背景不超过 4000 字；当前合并问题另有 6000 字上限。旁听附件不主动触发 STT/图片模型，只有通过门控后才交给原生 QQ 入站链处理。
+- 近期原文、滚动摘要、当前成员事实和知识检索分别受 1600/800/600/1000 字预算约束，总插件背景不超过 4000 字；当前合并问题另有 6000 字上限。语音附件始终忽略；其他旁听附件只有通过门控后才交给原生 QQ 入站链处理。
 - 全群开放时新群不需要手工登记 OpenID。若运维主动恢复限制策略，未授权群的 @、加群和允许通知事件仅记录 `group_access_pending` 接入元数据到服务器审计数据库，每群每小时最多一条；不保存正文、不自动授权。
 - 群知识检索覆盖本群所有已存片段，采用流式 top-k 保持候选内存有界，不再只检查最新 2000 个片段。当前仍是词面检索，不能等同于 embedding 语义召回。
 
@@ -58,7 +57,7 @@ Hermes 默认通过专用 Sub2API DeepSeek 分组，以 OpenAI Chat Completions 
 
 群内 @ 机器人发送 /gemini（兼容 / gemini）可将当前群会话切换到 `gemini-3.8-flash-high`；发送 /deepseek（兼容 / deepseek）可切回 `deepseek/deepseek-v4.1-flash`。两条命令都使用 Hermes 原生的会话级模型覆写，不修改其他群或全局默认模型。
 
-Hermes 的会话上下文达到 `50000` token 阈值时自动尝试压缩，受原生冷却和无效压缩保护约束；该值是触发阈值，不是完整请求硬上限。压缩在原会话继续，不调用 `/reset`，并固定使用 `deepseek/deepseek-v4.1-flash`、`low` 推理强度。若出现 “compression blocked (ineffective)”，群内应直接发送 `/compress` 强制重试，或 `/new`/`/reset`/`/clear` 开启新会话；这些原生命令会透传给 Hermes，不会再被包装进群上下文。群记忆独立在 40 条新消息且距上次刷新至少 300 秒时整理；或至少 4 条新消息的最老一条等待 1200 秒后整理，单条闲聊不会因空闲自动摘要。
+Hermes 的会话上下文达到 `50000` token 阈值时自动尝试压缩，受原生冷却和无效压缩保护约束；该值是触发阈值，不是完整请求硬上限。压缩在原会话继续，不调用 `/reset`，并固定使用 `deepseek/deepseek-v4.1-flash`、`low` 推理强度。若连续无效压缩触发持久化 anti-thrash breaker，QQ 网关会在下一条普通消息进入模型前自动执行完整 `/new` 等价轮换，并继续处理当前消息；手动 `/compress`、`/new` 不被抢占。群记忆与知识库不随该 Hermes 会话轮换清空。群记忆独立在 40 条新消息且距上次刷新至少 300 秒时整理；或至少 4 条新消息的最老一条等待 1200 秒后整理，单条闲聊不会因空闲自动摘要。
 
 ## 部署
 
@@ -77,7 +76,7 @@ bash /opt/qqbot-hk/scripts/verify-server.sh
 
 `install-server.sh` 会校验固定公告目标列表，保留配置模板的群专属通配授权，移除旧沙箱路由和包括私聊在内的全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像并只重建 `hermes-qqbot`，等待健康、运行 cron 对账并通过完整验收后才清理旧插件副本。源码配置不含真实 OpenID 或 API key。
 
-`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、STT/TTS 配置、VOICE 类型、原生 MP3 被动回复锚点、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、50k 压缩触发配置、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、语音输入/输出双重禁用与音频环境变量清理、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、50k 压缩触发与无效压缩自动换新、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
 部署后验证任意已加入的新群通过适配器与中央群授权，未批准私聊仍被拒绝或进入 pairing，两名成员共享本群上下文且不串群。群管理员打开“接收所有消息”并确认平台实际投递后，再验证：普通闲聊只旁听、明确求助按需回复、重复事件只处理一次、非 @ 管理命令不执行、近期旁听能作为后续 @ 的上下文。主动推送还要求群内允许主动发送，不能用修改本地配置绕过平台权限。
 
