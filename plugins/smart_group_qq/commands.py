@@ -88,7 +88,8 @@ def reasoning_alias_rewrite(value: Any) -> str | None:
 def help_text() -> str:
     return (
         "【QQ 助手】\n"
-        "/help 功能说明\n/reset 或 /clear 重置当前会话\n"
+        "/help 功能说明\n/reset、/clear 或 /new 重置当前会话\n"
+        "/compress 立即重试上下文压缩（上下文过大时）\n"
         "/status 运行状态\n/summary 近期互动摘要\n/rules 已启用规则\n"
         "/gemini 切换当前会话到 Gemini\n/deepseek 切换当前会话到 DeepSeek\n"
         "/low /medium /high /max 切换当前会话推理强度\n"

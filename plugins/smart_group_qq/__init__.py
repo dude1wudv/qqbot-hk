@@ -818,8 +818,16 @@ def build_handler(ctx: Any, store: Store):
                     reply = rules_text(settings)
                 elif command.name == "duty_roster":
                     reply = duty_roster_text() if is_group else "该功能仅群聊可用。"
-            elif not is_group:
+            elif text.startswith(("/", "／")):
                 # Unknown slash commands belong to Hermes' native command router.
+                # In QQ groups the user typically writes "@bot /compress"; without a
+                # rewrite those recovery commands are stuffed into durable group
+                # context and never execute, so an ineffective-compression latch
+                # cannot be cleared by /compress or /new.
+                return {"action": "rewrite", "text": text.replace("／", "/", 1)}
+            elif not is_group:
+                # Non-slash DM traffic is already filtered above; keep allow for
+                # any remaining private-chat edge cases.
                 return {"action": "allow"}
             else:
                 decision = policy.keyword(text)
