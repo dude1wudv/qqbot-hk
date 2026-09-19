@@ -20,6 +20,8 @@ for path in \
   "$project_dir/scripts/verify-hermes-audio.py" \
   "$project_dir/scripts/patch-hermes-chat-reasoning.py" \
   "$project_dir/scripts/verify-hermes-chat-reasoning.py" \
+  "$project_dir/scripts/patch-hermes-compression-recovery.py" \
+  "$project_dir/scripts/verify-hermes-compression-recovery.py" \
   "$project_dir/scripts/patch-hermes-qq-help.py" \
   "$project_dir/scripts/verify-hermes-qq-commands.py" \
   "$secrets_dir/qqbot.env" \
@@ -126,10 +128,7 @@ env_target.write_text(
     f"QQ_CLIENT_SECRET={qq_values['QQ_CLIENT_SECRET']}\n"
     f"QQ_SCHEDULE_GROUPS={','.join(groups)}\n"
     f"SUB2API_API_KEY={sub2api_key}\n"
-    f"SUB2API_DEEPSEEK_API_KEY={deepseek_key}\n"
-    "QQ_STT_PREFER_BUILTIN=false\n"
-    f"QQ_STT_API_KEY={sub2api_key}\n"
-    f"VOICE_TOOLS_OPENAI_KEY={sub2api_key}\n",
+    f"SUB2API_DEEPSEEK_API_KEY={deepseek_key}\n",
     encoding="utf-8",
 )
 os.chmod(env_target, 0o600)

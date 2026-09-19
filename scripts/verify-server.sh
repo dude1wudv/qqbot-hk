@@ -16,11 +16,13 @@ image_id="$(docker inspect -f '{{.Image}}' "$container_id")"
 base_digest_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.hermes-base-digest"}}' "$image_id")"
 audio_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.audio-patch"}}' "$image_id")"
 chat_reasoning_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.chat-reasoning-patch"}}' "$image_id")"
+compression_recovery_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.compression-recovery-patch"}}' "$image_id")"
 qq_help_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-help-patch"}}' "$image_id")"
 qq_output_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-output-patch"}}' "$image_id")"
 test "$base_digest_label" = "sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1"
-test "$audio_patch_label" = "v1"
+test "$audio_patch_label" = "v2"
 test "$chat_reasoning_patch_label" = "v1"
+test "$compression_recovery_patch_label" = "v1"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
 
@@ -58,27 +60,6 @@ def post(path, body, api_key):
     except urllib.error.HTTPError as exc:
         raise SystemExit(f"{body.get('model')}: HTTP {exc.code}") from exc
 
-
-def assert_audio_route(path, content_type):
-    request = urllib.request.Request(
-        "http://sub2api:8080" + path,
-        data=b"{}",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": content_type},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=15):
-            pass
-    except urllib.error.HTTPError as exc:
-        if exc.code in {404, 405}:
-            raise SystemExit(f"audio route missing: {path}") from exc
-        if exc.code >= 500:
-            raise SystemExit(f"audio route unhealthy: {path} HTTP {exc.code}") from exc
-
-
-assert_audio_route("/v1/audio/speech", "application/json")
-assert_audio_route("/v1/audio/transcriptions", "application/json")
-print("AUDIO_ROUTES=reachable")
 
 deepseek = post(
     "/v1/chat/completions",
@@ -146,6 +127,7 @@ docker exec hermes-qqbot hermes config check >/dev/null
 docker exec hermes-qqbot hermes plugins doctor /opt/data/plugins/smart_group_qq --ci >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-audio.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-compression-recovery.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-commands.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-output.py >/dev/null
 docker exec -i hermes-qqbot python - <<'PY'
@@ -181,15 +163,15 @@ if not groups:
     raise SystemExit("QQ schedule target list is empty")
 if "QQ_GROUP_ALLOWED_USERS" in env:
     raise SystemExit("deprecated QQ_GROUP_ALLOWED_USERS must be absent")
-if env.get("QQ_STT_PREFER_BUILTIN", "").lower() != "false":
-    raise SystemExit("QQ built-in STT preference must be disabled")
-for name in ("SUB2API_API_KEY", "SUB2API_DEEPSEEK_API_KEY", "QQ_STT_API_KEY", "VOICE_TOOLS_OPENAI_KEY"):
+for name in ("SUB2API_API_KEY", "SUB2API_DEEPSEEK_API_KEY"):
     if not env.get(name):
         raise SystemExit(f"required Sub2API secret missing: {name}")
-if env["QQ_STT_API_KEY"] != env["SUB2API_API_KEY"] or env["VOICE_TOOLS_OPENAI_KEY"] != env["SUB2API_API_KEY"]:
-    raise SystemExit("audio secret wiring mismatch")
-if env.get("QQ_STT_BASE_URL") or env.get("QQ_STT_MODEL"):
-    raise SystemExit("QQ STT base URL/model must come from config.yaml, not environment")
+for name in (
+    "QQ_STT_PREFER_BUILTIN", "QQ_STT_API_KEY", "QQ_STT_BASE_URL", "QQ_STT_MODEL",
+    "VOICE_TOOLS_OPENAI_KEY",
+):
+    if env.get(name):
+        raise SystemExit(f"disabled voice environment variable must be absent: {name}")
 
 plugins = json.loads(subprocess.check_output(["hermes", "plugins", "list", "--json", "--no-bundled"], text=True))
 items = plugins if isinstance(plugins, list) else plugins.get("plugins", [])
@@ -261,7 +243,7 @@ print(
 tools = (((config.get("platform_toolsets") or {}).get("qqbot") or []))
 if "terminal" not in tools or "file" not in tools:
     raise SystemExit("QQ terminal/file toolset is not enabled")
-if {"code", "computer"}.intersection(tools):
+if {"code", "computer", "tts"}.intersection(tools):
     raise SystemExit("QQ toolset exposes an unintended execution tool")
 qq_extra = (((config.get("platforms") or {}).get("qqbot") or {}).get("extra") or {})
 if qq_extra.get("dm_policy") != "pairing":
@@ -272,6 +254,16 @@ if qq_extra.get("group_allow_from") != ["*"]:
     raise SystemExit("QQ adapter group_allow_from must be exactly ['*']")
 if qq_extra.get("group_allowed_chats") != ["*"]:
     raise SystemExit("gateway group_allowed_chats must be exactly ['*']")
+if qq_extra.get("auto_new_on_compression_ineffective") is not True:
+    raise SystemExit("QQ compression breaker auto-new recovery must be enabled")
+if qq_extra.get("voice_input_enabled") is not False:
+    raise SystemExit("QQ voice input must be disabled")
+if qq_extra.get("voice_output_enabled") is not False:
+    raise SystemExit("QQ voice output must be disabled")
+if not isinstance(qq_extra.get("stt"), Mapping) or qq_extra["stt"].get("enabled") is not False:
+    raise SystemExit("QQ STT must be explicitly disabled")
+if config.get("tts"):
+    raise SystemExit("TTS provider config must be absent")
 
 
 plugin_settings = (
@@ -527,7 +519,7 @@ print("MEMBER_MEMORY_SCHEMA=ok")
 print("MEMBER_MEMORY_CONFIG=ok")
 print("COMPACTION_SCHEMA=ok")
 print("QQ_GATEWAY=connected")
-print("AUDIO_ENV_WIRING=ok")
+print("VOICE_INPUT=disabled VOICE_OUTPUT=disabled AUDIO_ENV=absent")
 PY
 docker exec hermes-qqbot hermes doctor >/tmp/hermes-qqbot-doctor.txt
 echo "CONTAINER_STATE=$state"
@@ -535,11 +527,12 @@ echo "CONTAINER_HEALTH=$health"
 echo "HERMES_BASE_DIGEST=verified"
 echo "HERMES_AUDIO_PATCH=verified"
 echo "HERMES_CHAT_REASONING_PATCH=verified"
+echo "HERMES_COMPRESSION_RECOVERY_PATCH=verified"
 echo "HERMES_QQ_HELP_PATCH=verified"
 echo "HERMES_QQ_OUTPUT_PATCH=verified"
 echo "QQ_NATIVE_COMMANDS=verified"
 echo "CHAT_COMPLETIONS_ROUTE=verified"
 echo "CONFIG_CHECK=passed"
-echo "AUDIO_SMOKE=passed"
+echo "VOICE_POLICY=disabled"
 echo "PLUGIN_CHECK=passed"
 echo "DOCTOR=completed"
