@@ -89,6 +89,35 @@ def format_for_qq(text: Any, *, markdown_support: bool = False) -> str:
 format_text = format_for_qq
 
 
+def trim_chat_followup(text: str) -> str:
+    """Drop a standalone canned closing invitation, keeping real questions."""
+    return re.sub(
+        r"(?:^|(?<=[。！？!?\n]))[ \t]*(?:还需要我|要不要我|需要我再|你呢[？?]|你怎么看[？?])"
+        r"[^\n。！？!?]*[？?]?[ \t]*$", "", text,
+    ).rstrip()
+
+
+def split_group_reply(text: Any, *, direct: bool = False) -> list[str]:
+    """Use natural chat bubbles; unsolicited turns have a hard size budget."""
+    value = format_for_qq(text)
+    if not direct and len(value) > 180:
+        value = value[:179].rstrip() + "…"
+    limit = 120
+    # Preserve explicitly requested long answers, while avoiding a flood of
+    # tiny bubbles. Normal conversation stays within three short messages.
+    if direct and (len(value) > 600 or "```" in str(text)):
+        return split_message(value, max_chars=1500)
+    pieces = [part.strip() for part in re.split(r"(?<=[。！？])|(?<=[!?])(?=\s|$)|\n+", value) if part.strip()]
+    chunks: list[str] = []
+    for piece in pieces:
+        chunks.extend(split_message(piece, max_chars=limit))
+    max_bubbles = 5 if direct else 3
+    if len(chunks) > max_bubbles:
+        # Coalesce short fragments without dropping any text.
+        return [value[index:index + limit].strip() for index in range(0, len(value), limit)]
+    return chunks or [value]
+
+
 def split_message(text: Any, *, max_chars: int = DEFAULT_MAX_CHARS) -> list[str]:
     """Split by paragraphs/lines before using a hard character boundary."""
     value = "" if text is None else str(text)

@@ -24,6 +24,9 @@ class AttentionState:
     expires_at: float = 0.0
     last_touched: float = field(default_factory=time.monotonic)
     reply_ids: deque[tuple[str, float]] = field(default_factory=deque)
+    participation_attempts: deque[float] = field(default_factory=deque)
+    unanswered: int = 0
+    quiet_until: float = 0.0
 
 
 class AttentionManager:
@@ -35,12 +38,16 @@ class AttentionManager:
         max_groups: int = 256,
         reply_ttl_seconds: float = 600.0,
         max_reply_ids: int = 100,
+        max_interjections_per_minute: int = 2,
+        unanswered_pause_seconds: float = 300,
     ) -> None:
         self.ttl_seconds = max(1.0, float(ttl_seconds))
         self.relevance_threshold = max(0.0, min(1.0, float(relevance_threshold)))
         self.max_groups = max(1, int(max_groups))
         self.reply_ttl_seconds = max(1.0, float(reply_ttl_seconds))
         self.max_reply_ids = max(1, int(max_reply_ids))
+        self.max_interjections_per_minute = max(1, int(max_interjections_per_minute))
+        self.unanswered_pause_seconds = max(0, float(unanswered_pause_seconds))
         self._groups: OrderedDict[str, AttentionState] = OrderedDict()
 
     def _state(self, group_id: Any, *, create: bool = False) -> AttentionState | None:
@@ -98,15 +105,57 @@ class AttentionManager:
         state.last_answered_question = str(question or "").strip()[:1000]
         state.expires_at = stamp + self.ttl_seconds
         state.last_touched = stamp
+        if direct:
+            self.note_engagement(group_id)
+        else:
+            state.unanswered += 1
+            if state.unanswered >= 2:
+                state.quiet_until = stamp + self.unanswered_pause_seconds
         if message_id:
+            self.remember_reply(group_id, message_id, now=stamp)
+
+    def remember_reply(self, group_id: Any, message_id: Any, *, now: float | None = None) -> None:
+        stamp = time.monotonic() if now is None else now
+        state = self._state(group_id)
+        if state is not None and message_id:
             state.reply_ids.append((str(message_id), stamp))
             self._prune_reply_ids(state, stamp)
 
     def continuation_score(self, group_id: Any, member_ref: str, text: str, *, now: float | None = None) -> int:
         state = self.get(group_id, now=now)
-        if state.mode == AttentionMode.PASSIVE or state.member_ref != str(member_ref or ""):
+        if state.mode == AttentionMode.PASSIVE:
             return 0
         return 20 if lexical_score(text, state.last_answered_question) >= self.relevance_threshold else 0
+
+    def note_engagement(self, group_id: Any) -> None:
+        state = self._state(group_id)
+        if state is not None:
+            state.unanswered = 0
+            state.quiet_until = 0.0
+
+    def can_interject(self, group_id: Any, *, engaged: bool = False, now: float | None = None) -> bool:
+        stamp = time.monotonic() if now is None else now
+        state = self._state(group_id, create=True)
+        if state is None:
+            return False
+        while state.participation_attempts and stamp - state.participation_attempts[0] >= 60:
+            state.participation_attempts.popleft()
+        if state.quiet_until and stamp >= state.quiet_until:
+            state.unanswered = 0
+            state.quiet_until = 0.0
+        return len(state.participation_attempts) < self.max_interjections_per_minute and (
+            engaged or stamp >= state.quiet_until
+        )
+
+    def reserve_interjection(self, group_id: Any, *, engaged: bool = False) -> bool:
+        """Budget admissions, including in-flight/ignored turns, to prevent bursts."""
+        if not self.can_interject(group_id, engaged=engaged):
+            return False
+        state = self._state(group_id)
+        if engaged:
+            self.note_engagement(group_id)
+        state.participation_attempts.append(time.monotonic())
+        return True
 
     def is_active_member(self, group_id: Any, member_ref: str, *, now: float | None = None) -> bool:
         state = self.get(group_id, now=now)

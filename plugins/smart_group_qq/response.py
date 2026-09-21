@@ -1,11 +1,14 @@
 """Fail-closed group reply envelopes and delivery correlation."""
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
+
+from .formatter import trim_chat_followup
 
 SILENT_MARKER = "[SILENT]"
 INVALID_REPLY_MESSAGE = "这次回复格式异常，请稍后重试。"
@@ -63,6 +66,10 @@ class ReplyRequest:
     model: str = ""
     record_on_success: bool = True
     consumed: bool = False
+    sent_chunks: list[str] = field(default_factory=list)
+    sent_message_ids: list[str] = field(default_factory=list)
+    send_lock: Any = field(default_factory=asyncio.Lock)
+    last_send_result: Any = None
 
 
 class ReplyRegistry:
@@ -170,6 +177,11 @@ class ReplyRegistry:
                 return SILENT_MARKER
             if action == "ignore":
                 self._audit("output_ignore", chat_id=record.group_id, message_id=record.message_id, source=record.source_kind)
+                record.consumed = True
+                self._records.pop(record.request_ref, None)
+                return SILENT_MARKER
+            message = trim_chat_followup(str(message))
+            if not message:
                 record.consumed = True
                 self._records.pop(record.request_ref, None)
                 return SILENT_MARKER

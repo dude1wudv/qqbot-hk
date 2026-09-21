@@ -5,10 +5,27 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 
-from smart_group_qq.formatter import format_for_qq, split_message
+from smart_group_qq.formatter import format_for_qq, split_message, split_group_reply, trim_chat_followup
 
 
 class FormatterTests(unittest.TestCase):
+    def test_group_bubbles_are_short_and_long_requested_answers_survive(self):
+        self.assertEqual(split_group_reply("终于跑通了。\n这次可以歇口气了！"), ["终于跑通了。", "这次可以歇口气了！"])
+        chunks = split_group_reply("分享。" * 100)
+        self.assertLessEqual(len(chunks), 3)
+        self.assertLessEqual(sum(map(len, chunks)), 180)
+        self.assertTrue(all(len(chunk) <= 120 for chunk in chunks))
+        self.assertEqual("".join(split_group_reply("x" * 1900, direct=True)), "x" * 1900)
+        self.assertEqual(split_group_reply("看这个 https://example.com/?q=hello!world", direct=True),
+                         ["看这个 https://example.com/?q=hello!world"])
+        self.assertEqual(split_group_reply("```python\nprint('hello? world')\n```", direct=True),
+                         ["代码（python）：\nprint('hello? world')"])
+
+    def test_canned_followups_removed_but_needed_questions_preserved(self):
+        for suffix in ("你呢？", "你怎么看？", "还需要我帮你整理吗？", "要不要我再介绍一下？"):
+            self.assertEqual(trim_chat_followup("终于跑通了。" + suffix), "终于跑通了。")
+        self.assertEqual(trim_chat_followup("你用的是哪个版本？"), "你用的是哪个版本？")
+
     def test_markdown_plain_text_degradation(self):
         value = format_for_qq("# 标题\n**重点**\n- 项\n> 引用\n[站点](https://example.com)\n```py\nx=1\n```")
         self.assertIn("标题", value)
