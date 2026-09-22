@@ -155,9 +155,15 @@ mv -f "$data_dir/.env.new" "$data_dir/.env"
 mv -f "$data_dir/.SOUL.md.new" "$data_dir/SOUL.md"
 mv -f "$data_dir/.smart-group-schedules.yaml.new" "$data_dir/smart-group-schedules.yaml"
 mv -f "$data_dir/scripts/.reconcile-smart-group-cron.py.new" "$data_dir/scripts/reconcile-smart-group-cron.py"
-rm -rf "$data_dir/plugins/smart_group_qq.old"
+# Hermes scans every plugin directory, including *.old. Keep rollback copies
+# outside that discovery root so stale code cannot register a second instance.
+install -d -o 10000 -g 10000 -m 0700 "$deploy_dir/backups/smart_group_qq"
+plugin_backup_dir="$(mktemp -d "$deploy_dir/backups/smart_group_qq/plugins.XXXXXX")"
+if test -d "$data_dir/plugins/smart_group_qq.old"; then
+  mv "$data_dir/plugins/smart_group_qq.old" "$plugin_backup_dir/legacy"
+fi
 if test -d "$data_dir/plugins/smart_group_qq"; then
-  mv "$data_dir/plugins/smart_group_qq" "$data_dir/plugins/smart_group_qq.old"
+  mv "$data_dir/plugins/smart_group_qq" "$plugin_backup_dir/current"
 fi
 mv "$stage_dir/smart_group_qq" "$data_dir/plugins/smart_group_qq"
 chown -R 10000:10000 "$data_dir/plugins/smart_group_qq" "$data_dir/plugin-data/smart_group_qq" "$data_dir/scripts"
@@ -200,4 +206,3 @@ PY
 
 docker exec "$service" python /opt/data/scripts/reconcile-smart-group-cron.py
 bash "$project_dir/scripts/verify-server.sh"
-rm -rf "$data_dir/plugins/smart_group_qq.old"

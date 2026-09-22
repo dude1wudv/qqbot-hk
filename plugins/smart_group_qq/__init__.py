@@ -1693,7 +1693,7 @@ def register(ctx: Any) -> None:
         logger.exception("smart_group_qq non-mention observer installation failed")
     ambient_cfg = ctx.get_config("ambient", {})
     memory_cfg = ctx.get_config("memory", {})
-    def start_maintenance(_payload=None):
+    async def start_maintenance(_payload=None):
         _start_maintenance(
             ctx, handler, store,
             interval_seconds=float(ambient_cfg.get("flush_interval_seconds", 30)),
