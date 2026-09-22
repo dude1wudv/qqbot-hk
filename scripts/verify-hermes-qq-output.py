@@ -93,10 +93,36 @@ async def verify_queued_followup_boundary() -> None:
     require(harness.queued_calls[0][0][0] == "next reply", "queued reply text changed unexpectedly")
 
 
+async def verify_first_bubble_quote() -> None:
+    from gateway.config import PlatformConfig
+    from gateway.platforms.qqbot.adapter import QQAdapter
+
+    adapter = QQAdapter(PlatformConfig(enabled=True, extra={"markdown_support": False}))
+    adapter._chat_type_map["group-smoke"] = "group"
+    bodies = []
+
+    async def connected():
+        return True
+
+    async def request(method, path, body, **kwargs):
+        bodies.append(body.copy())
+        return {"id": str(len(bodies))}
+
+    adapter._ensure_connected = connected
+    adapter._api_request = request
+    smart_group_qq._configure_adapter(adapter)
+    sent = await smart_group_qq._send_all(adapter, "group-smoke", "passive-anchor", "x" * 1600)
+    require(sent and len(bodies) == 2, "QQ quote smoke did not send two packets")
+    require(all(body.get("msg_id") == "passive-anchor" for body in bodies), "QQ passive anchor lost")
+    require("message_reference" in bodies[0] and "message_reference" not in bodies[1],
+            "QQ continuation repeated the visible quote")
+
+
 def main() -> None:
     verify_auto_media_boundary()
     asyncio.run(verify_normal_delivery_boundary())
     asyncio.run(verify_queued_followup_boundary())
+    asyncio.run(verify_first_bubble_quote())
     print("HERMES_QQ_OUTPUT=passed SILENT_MEDIA=blocked FAILED=blocked QUEUED=blocked NEXT_REPLY=deliverable")
 
 

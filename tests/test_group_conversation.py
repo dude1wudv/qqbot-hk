@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from test_smart_group_qq import FakeContext, ParticipationLLM, ObserverAdapter, observer_payload, event
-from smart_group_qq import build_handler, qq_observer, _configure_adapter
+from smart_group_qq import build_handler, qq_observer, _configure_adapter, _send_all
 from smart_group_qq.response import ReplyRegistry, ReplyRequest
 from smart_group_qq.store import Store
 
@@ -56,9 +56,16 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         class Adapter:
             def __init__(self):
                 self.calls = []
+                self.bodies = []
+
+            def _build_text_body(self, content, reply_to=None):
+                return {"content": content, "message_reference": {"message_id": reply_to}}
 
             async def send(self, chat_id, content, reply_to=None, metadata=None):
                 self.calls.append((chat_id, content, reply_to))
+                body = self._build_text_body(content, reply_to)
+                body["msg_id"] = reply_to
+                self.bodies.append(body)
                 count = len(self.calls)
                 if count == cancel_at:
                     registry.cancel_group("g")
@@ -81,7 +88,35 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.assertEqual(delivered, ["终于跑通了。\n可以歇口气了！\n你呢？"])
         self.assertEqual(record.sent_message_ids, ["bubble-1", "bubble-3", "bubble-4"])
+        self.assertEqual(["message_reference" in body for body in adapter.bodies], [True, False, False, False])
+        self.assertTrue(all(body["msg_id"] == "anchor" for body in adapter.bodies))
         self.assertEqual(registry.size, 0)
+
+    async def test_quote_control_is_isolated_between_concurrent_replies(self):
+        class Adapter:
+            def __init__(self):
+                self.bodies = []
+
+            def _build_text_body(self, content, reply_to=None):
+                return {"content": content, "message_reference": {"message_id": reply_to}}
+
+            async def send(self, chat_id, content, reply_to=None):
+                await asyncio.sleep(0)
+                body = self._build_text_body(content, reply_to)
+                body["msg_id"] = reply_to
+                self.bodies.append(body)
+                return SimpleNamespace(success=True)
+
+        adapter = Adapter()
+        _configure_adapter(adapter)
+        await asyncio.gather(
+            _send_all(adapter, "a", "anchor-a", "x" * 1600),
+            _send_all(adapter, "b", "anchor-b", "y" * 1600),
+        )
+        for anchor in ("anchor-a", "anchor-b"):
+            bodies = [body for body in adapter.bodies if body["msg_id"] == anchor]
+            self.assertEqual(["message_reference" in body for body in bodies], [True, False])
+        self.assertIn("message_reference", adapter._build_text_body("new reply", "new-anchor"))
 
     async def test_cancellation_stops_remaining_bubbles(self):
         adapter, registry, record, content, delivered = self.make_delivery(cancel_at=1)

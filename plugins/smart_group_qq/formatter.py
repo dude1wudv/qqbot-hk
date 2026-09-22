@@ -102,7 +102,36 @@ def split_group_reply(text: Any, *, direct: bool = False) -> list[str]:
     value = format_for_qq(text)
     if len(value) > 240 or "```" in str(text):
         return split_message(value, max_chars=1500)
-    return [part.strip() for part in re.split(r"(?<=[。！？])|(?<=[!?])(?=\s|$)|\n+", value) if part.strip()] or [value]
+    # A question inside a quote is not a bubble boundary: splitting there
+    # strands the closing quote and the rest of the sentence in another reply.
+    pairs = {"“": "”", "‘": "’", "「": "」", "『": "』", "（": "）", "(": ")"}
+    closing: list[str] = []
+    parts: list[str] = []
+    start = 0
+    for index, char in enumerate(value):
+        if closing and char == closing[-1]:
+            closing.pop()
+        elif char in pairs:
+            closing.append(pairs[char])
+        elif char == '"':
+            closing.append(char)
+        if closing:
+            continue
+        following = value[index + 1:index + 2]
+        boundary = char == "\n" or char in "。！？" or (
+            char in "!?" and (not following or following.isspace())
+        )
+        if boundary and following and following in "。！？!?":
+            continue
+        if boundary:
+            part = value[start:index + 1].strip()
+            if part:
+                parts.append(part)
+            start = index + 1
+    remainder = value[start:].strip()
+    if remainder:
+        parts.append(remainder)
+    return parts or [value]
 
 
 def split_message(text: Any, *, max_chars: int = DEFAULT_MAX_CHARS) -> list[str]:

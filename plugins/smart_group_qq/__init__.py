@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import hashlib
 import inspect
 import functools
@@ -41,6 +42,7 @@ from .store import Store
 
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "smart_group_qq"
+_SUPPRESS_REPLY_REFERENCE = ContextVar("smart_group_qq_suppress_reply_reference", default=False)
 _RESPONSE_MARKER = re.compile(r"\[群对话标记:([0-9a-f]{32})\]")
 _FILE_MARKER = re.compile(r"^\[file:\s*(.*?)\s+\((/[^\r\n]+)\)\]\s*$", re.MULTILINE)
 # Group messages that call the bot by name without @.  Configurable via
@@ -144,6 +146,17 @@ def _configure_adapter(adapter: Any, registry: ReplyRegistry | None = None) -> N
         adapter.format_message = lambda content: format_for_qq(content, markdown_support=markdown)
         adapter.MAX_MESSAGE_LENGTH = 1500
         adapter._smart_group_qq_formatting = True
+    build_body = getattr(adapter, "_build_text_body", None)
+    if callable(build_body) and not getattr(adapter, "_smart_group_qq_quote_control", False):
+        @functools.wraps(build_body)
+        def quoted_body(*args: Any, **kwargs: Any):
+            body = build_body(*args, **kwargs)
+            if _SUPPRESS_REPLY_REFERENCE.get():
+                body.pop("message_reference", None)
+            return body
+
+        adapter._build_text_body = quoted_body
+        adapter._smart_group_qq_quote_control = True
     if registry is None:
         return
     adapter._smart_group_qq_reply_registry = registry
@@ -178,8 +191,8 @@ def _configure_adapter(adapter: Any, registry: ReplyRegistry | None = None) -> N
                     return type("SendResult", (), {"success": False, "error": "stale smart group reply"})()
             if record is not None and __method == "send" and bound is not None and "content" in bound.arguments:
                 chunks = split_group_reply(bound.arguments["content"], direct=record.direct)
-                # Keep the original message anchor for every bubble; never
-                # turn later bubbles into unsolicited platform pushes.
+                # Preserve passive-send msg_id for every bubble; only the first
+                # carries a visible message_reference. State is task-local.
                 bound.arguments["reply_to"] = reply_to
                 async with record.send_lock:
                     result = record.last_send_result
@@ -193,7 +206,11 @@ def _configure_adapter(adapter: Any, registry: ReplyRegistry | None = None) -> N
                                                                "error": "changed smart group retry"})()
                             continue
                         bound.arguments["content"] = chunk
-                        result = await __original(*bound.args, **bound.kwargs)
+                        quote_token = _SUPPRESS_REPLY_REFERENCE.set(index > 0)
+                        try:
+                            result = await __original(*bound.args, **bound.kwargs)
+                        finally:
+                            _SUPPRESS_REPLY_REFERENCE.reset(quote_token)
                         if not bool(getattr(result, "success", False)):
                             current.finish_send(record, result)
                             return result
@@ -217,8 +234,12 @@ def _configure_adapter(adapter: Any, registry: ReplyRegistry | None = None) -> N
 async def _send_all(adapter: Any, chat_id: str, reply_to: str | None, text: str) -> bool:
     if adapter is None or not callable(getattr(adapter, "send", None)):
         return False
-    for chunk in split_message(format_for_qq(text)):
-        result = await adapter.send(chat_id, chunk, reply_to=reply_to)
+    for index, chunk in enumerate(split_message(format_for_qq(text))):
+        quote_token = _SUPPRESS_REPLY_REFERENCE.set(index > 0)
+        try:
+            result = await adapter.send(chat_id, chunk, reply_to=reply_to)
+        finally:
+            _SUPPRESS_REPLY_REFERENCE.reset(quote_token)
         if not bool(getattr(result, "success", False)):
             return False
     return True

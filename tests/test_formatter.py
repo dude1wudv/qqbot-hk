@@ -9,6 +9,20 @@ from smart_group_qq.formatter import format_for_qq, split_message, split_group_r
 
 
 class FormatterTests(unittest.TestCase):
+    def test_quoted_questions_and_continuations_stay_in_one_bubble(self):
+        for text in (
+            '看下来对方唯一一句反问是"怎么骗人了？"，没给出任何解释。',
+            '他问：“怎么骗人了？”但没有解释。',
+            '他说：“先问‘怎么了？’再回答。”',
+            '想想这个问题（真的需要吗？），再做决定。',
+            '他说：“第一行？\n第二行！”',
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(split_group_reply(text), [text])
+        self.assertEqual(split_group_reply('真的吗？！先核实。'), ['真的吗？！', '先核实。'])
+        self.assertEqual(split_group_reply('他说“你好！”然后离开。下一句。'),
+                         ['他说“你好！”然后离开。', '下一句。'])
+
     def test_group_bubbles_are_short_and_long_requested_answers_survive(self):
         self.assertEqual(split_group_reply("终于跑通了。\n这次可以歇口气了！"), ["终于跑通了。", "这次可以歇口气了！"])
         chunks = split_group_reply("分享。" * 100)
