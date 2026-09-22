@@ -28,7 +28,8 @@ for path in \
   "$project_dir/scripts/verify-hermes-qq-commands.py" \
   "$secrets_dir/qqbot.env" \
   "$secrets_dir/sub2api-api-key" \
-  "$secrets_dir/sub2api-deepseek-api-key"; do
+  "$secrets_dir/sub2api-deepseek-api-key" \
+  "$secrets_dir/sub2api-dialogue-api-key"; do
   test -e "$path" || { echo "ERROR: required deployment input missing" >&2; exit 1; }
 done
 
@@ -67,6 +68,7 @@ python3 - \
   "$secrets_dir/qqbot.env" \
   "$secrets_dir/sub2api-api-key" \
   "$secrets_dir/sub2api-deepseek-api-key" \
+  "$secrets_dir/sub2api-dialogue-api-key" \
   "$project_dir/config/hermes-config.yaml" \
   "$stage_dir/.env" \
   "$stage_dir/config.yaml" \
@@ -77,7 +79,7 @@ import os
 import re
 import sys
 
-qq_source, key_source, deepseek_key_source, config_source, env_target, config_target, runtime_env_source = map(Path, sys.argv[1:])
+qq_source, key_source, deepseek_key_source, dialogue_key_source, config_source, env_target, config_target, runtime_env_source = map(Path, sys.argv[1:])
 qq_values = {}
 for raw in qq_source.read_text(encoding="utf-8").splitlines():
     line = raw.strip()
@@ -103,7 +105,8 @@ if not groups:
 
 sub2api_key = key_source.read_text(encoding="utf-8").strip()
 deepseek_key = deepseek_key_source.read_text(encoding="utf-8").strip()
-if not sub2api_key or not deepseek_key:
+dialogue_key = dialogue_key_source.read_text(encoding="utf-8").strip()
+if not sub2api_key or not deepseek_key or not dialogue_key:
     raise SystemExit("Sub2API key is empty")
 
 config = config_source.read_text(encoding="utf-8")
@@ -117,7 +120,7 @@ config_target.write_text(config, encoding="utf-8")
 # Preserve runtime-owned settings and generated authentication keys.
 managed_names = {
     "QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_GROUP_ALLOWED_USERS", "SUB2API_API_KEY",
-    "SUB2API_DEEPSEEK_API_KEY", "QQ_STT_PREFER_BUILTIN", "QQ_STT_API_KEY",
+    "SUB2API_DEEPSEEK_API_KEY", "SUB2API_DIALOGUE_API_KEY", "QQ_STT_PREFER_BUILTIN", "QQ_STT_API_KEY",
     "VOICE_TOOLS_OPENAI_KEY", "QQ_SCHEDULE_GROUPS",
 }
 existing_lines = runtime_env_source.read_text(encoding="utf-8").splitlines() if runtime_env_source.is_file() else []
@@ -130,7 +133,8 @@ env_target.write_text(
     f"QQ_CLIENT_SECRET={qq_values['QQ_CLIENT_SECRET']}\n"
     f"QQ_SCHEDULE_GROUPS={','.join(groups)}\n"
     f"SUB2API_API_KEY={sub2api_key}\n"
-    f"SUB2API_DEEPSEEK_API_KEY={deepseek_key}\n",
+    f"SUB2API_DEEPSEEK_API_KEY={deepseek_key}\n"
+    f"SUB2API_DIALOGUE_API_KEY={dialogue_key}\n",
     encoding="utf-8",
 )
 os.chmod(env_target, 0o600)

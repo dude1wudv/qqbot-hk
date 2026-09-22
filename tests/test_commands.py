@@ -16,6 +16,15 @@ from smart_group_qq.commands import (
 
 
 class CommandTests(unittest.TestCase):
+    def test_bare_slashes_and_invisible_prefixes(self):
+        for raw in ("/", "／", "<@bot> /", "\u200b／"):
+            with self.subTest(raw=raw):
+                self.assertEqual(parse_command(raw).name, "help")
+        for alias, model in (("muse", "meta/muse-spark-1.3-contributor"), ("mimo", "xiaomi/mimo-v2.6-flash")):
+            for prefix in ("\u200b", "\ufeff", "<@bot>", "\u200b<@bot>"):
+                with self.subTest(alias=alias, prefix=prefix):
+                    self.assertEqual(model_alias_rewrite(prefix + "/" + alias), f"/model {model} --session")
+
     def test_mentions_and_fullwidth_slash(self):
         self.assertEqual(parse_command("<@!bot> ／help").name, "help")
         self.assertEqual(parse_command("@机器人 /clear").name, "reset")
@@ -28,12 +37,17 @@ class CommandTests(unittest.TestCase):
         self.assertIn("【小栖 · 常驻 AI 角色】", menu)
         for command in (
             "/help", "/reset", "/new", "/compress", "/status", "/summary", "/rules",
-            "/gemini", "/deepseek",
-            "/low /medium /high /max", "/kb", "/我的记忆", "/记住我", "/纠正记忆",
+            "/gemini", "/deepseek", "/mimo", "/muse",
+            "/low /medium /high /xhigh /max", "/kb", "/我的记忆", "/记住我", "/纠正记忆",
             "/忘记我", "/停止记忆",
         ):
             self.assertIn(command, menu)
         self.assertIn("/值日表 查看本周轮值安排（仅群聊）", menu)
+
+    def test_new_model_aliases_and_xhigh_rewrite(self):
+        self.assertEqual(model_alias_rewrite("<@bot> /mimo"), "/model xiaomi/mimo-v2.6-flash --session")
+        self.assertEqual(model_alias_rewrite("／ muse"), "/model meta/muse-spark-1.3-contributor --session")
+        self.assertEqual(reasoning_alias_rewrite("<@bot> ／ XHIGH"), "/reasoning xhigh --session")
 
     def test_model_aliases_rewrite_to_session_scoped_native_commands(self):
         self.assertEqual(

@@ -866,6 +866,9 @@ def build_handler(ctx: Any, store: Store):
         if static_decision.blocked:
             claim_action = "moderation:" + str(static_decision.rule_id or "static")
             reply = static_decision.notice or "此消息未能通过群聊安全审核。"
+        elif access_denial:
+            claim_action = "interaction:denied"
+            reply = str(access_denial)
         elif is_group and direct_control and text.lower() in {"/only", "/all"}:
             claim_action = "group_mode:" + text.lower()[1:]
             character.set_group_mode(group_id, text.lower()[1:])
@@ -877,9 +880,6 @@ def build_handler(ctx: Any, store: Store):
                 else "已恢复群聊自动参与；仍需 @ 才执行管理命令，主动 GitHub 推送保持关闭。"
             )
 
-        elif access_denial:
-            claim_action = "interaction:denied"
-            reply = str(access_denial)
         elif interaction and interaction.error:
             claim_action = "interaction:clarify"
             reply = interaction.error
@@ -887,7 +887,7 @@ def build_handler(ctx: Any, store: Store):
             return {"action": "rewrite", "text": interaction.text}
         elif text == "/配置":
             claim_action = "interaction:configuration"
-            reply = CONFIG_ERROR + "\n/model 查看当前模型；/reasoning 查看当前推理；/status 查看配置默认值。\n保留 /deepseek /gemini /low /medium /high /max，以及 /模型、/推理、/配置 等中文写法。"
+            reply = CONFIG_ERROR + "\n/model 查看当前模型；/reasoning 查看当前推理；/status 查看配置默认值。\n保留 /deepseek /gemini /mimo /muse /low /medium /high /xhigh /max，以及 /模型、/推理、/配置 等中文写法。"
         elif character_command and direct_control:
             claim_action = "character:" + character_command[0]
             try:
@@ -992,8 +992,8 @@ def build_handler(ctx: Any, store: Store):
                     )
                 elif command.name == "status":
                     reply = status_text(
-                        model=str(ctx.get_config("status_model", "deepseek/deepseek-v4.1-flash")),
-                        reasoning=str(ctx.get_config("status_reasoning", "medium")),
+                        model=str(ctx.get_config("status_model", "meta/muse-spark-1.3-contributor")),
+                        reasoning=str(ctx.get_config("status_reasoning", "xhigh")),
                     )
                 elif command.name == "summary":
                     generated = summary_reply(group_id)
@@ -1180,12 +1180,29 @@ def build_handler(ctx: Any, store: Store):
         return {"action": "rewrite", "text": normalized}
 
     async def observe_nonmention(record: Mapping[str, Any]) -> None:
+        text = str(record.get("text") or "")[:int(ambient_cfg.get("max_text_chars", 4000))].strip()
+        explicit_control = bool(record.get("mentions_bot") is True)
+        if not explicit_control:
+            normalized = str(text).strip()
+            for word in wake_words:
+                candidate = str(word).strip()
+                if not candidate:
+                    continue
+                for prefix in (candidate, "@" + candidate):
+                    if normalized.casefold().startswith(prefix.casefold()) and (
+                        len(normalized) == len(prefix) or normalized[len(prefix)] in " /／，,：:"
+                    ):
+                        explicit_control = True
+                        break
+                if explicit_control:
+                    break
+        if explicit_control and clean_text(text).startswith(("/", "／")):
+            return  # should_reply handles the control without ambient memory.
         if not bool(ambient_cfg.get("enabled", True)):
             return
         group_id = str(record.get("group_id") or "")
         member_id = str(record.get("member_id") or "")
         message_id = str(record.get("message_id") or "")
-        text = str(record.get("text") or "")[:int(ambient_cfg.get("max_text_chars", 4000))].strip()
         display_name = str(record.get("display_name") or record.get("username") or "")[:200]
         if policy.static(text).blocked:
             store.record_audit("ambient_blocked", chat_id=group_id, message_id=message_id, source="static")
@@ -1565,12 +1582,27 @@ def build_handler(ctx: Any, store: Store):
         batch_tasks[key] = task
 
     async def should_reply(record: Mapping[str, Any]) -> bool:
-        if not ambient_cfg.get("enabled", True) or not participation_cfg.get("enabled", False):
-            return False
+        # Explicit bot-addressed controls are not ambient participation; /all
+        # must still recover a group whose ordinary replies have been disabled.
         group_id = str(record.get("group_id") or "")
         message_id = str(record.get("message_id") or "")
         text = str(record.get("text") or "").strip()
-        if not group_id or not message_id or not text or clean_text(text).startswith(("/", "／")):
+        if not group_id or not message_id or not text:
+            return False
+        if clean_text(text).startswith(("/", "／")):
+            named_bot = any(
+                re.match(r"^@" + re.escape(str(word)) + r"(?=[\s/／，,：:])", text, re.I)
+                for word in wake_words if str(word)
+            )
+            if record.get("mentions_bot") is not True and (
+                record.get("mentions_others") is True or not named_bot
+            ):
+                return False
+            if isinstance(record, dict):
+                record["_explicit_bot_command"] = True
+            _cancel_batch(group_id)
+            return True
+        if not ambient_cfg.get("enabled", True) or not participation_cfg.get("enabled", False):
             return False
         if policy.static(text).blocked:
             return False
@@ -1612,10 +1644,20 @@ def build_handler(ctx: Any, store: Store):
     observe_nonmention.queue_max_size = int(ambient_cfg.get("queue_max_size", 2000))
 
     def fast_ingest(adapter: Any, payload: Mapping[str, Any]) -> bool:
-        if not bool(ambient_cfg.get("enabled", True)):
-            return False
         data = payload.get("d")
         if not isinstance(data, Mapping):
+            return False
+        text = str(data.get("content") or "").strip()
+        mentions = data.get("mentions")
+        mentions_bot = isinstance(mentions, list) and any(
+            isinstance(item, Mapping) and item.get("bot") is True for item in mentions
+        )
+        named_bot = any(
+            re.match(r"^@" + re.escape(str(word)) + r"(?=[\s/／，,：:])", text, re.I)
+            for word in wake_words if str(word)
+        )
+        explicit_control = clean_text(text).startswith(("/", "／")) and (mentions_bot or named_bot)
+        if not bool(ambient_cfg.get("enabled", True)) and not explicit_control:
             return False
         group_id = str(data.get("group_openid") or "").strip()
         author = data.get("author") if isinstance(data.get("author"), Mapping) else {}
@@ -1626,7 +1668,8 @@ def build_handler(ctx: Any, store: Store):
         allowed = getattr(adapter, "_is_group_allowed", None)
         if not callable(allowed) or not bool(allowed(group_id, member_id)):
             return False
-        text = str(data.get("content") or "").strip()
+        if explicit_control:
+            return True
         if policy.static(text).blocked:
             store.record_audit("ambient_blocked", chat_id=group_id, message_id=message_id, source="static")
             return False

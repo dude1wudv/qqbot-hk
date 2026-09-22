@@ -15,6 +15,9 @@ quick_commands:
   high:
     type: alias
     target: /reasoning high --session
+  xhigh:
+    type: alias
+    target: /reasoning xhigh --session
   max:
     type: alias
     target: /reasoning max --session
@@ -24,12 +27,19 @@ quick_commands:
   gemini:
     type: alias
     target: /model gemini-3.8-flash-high --session
+  mimo:
+    type: alias
+    target: /model xiaomi/mimo-v2.6-flash --session
+  muse:
+    type: alias
+    target: /model meta/muse-spark-1.3-contributor --session
 
 model:
-  provider: sub2api_deepseek
-  default: deepseek/deepseek-v4.1-flash
+  provider: sub2api_dialogue
+  default: meta/muse-spark-1.3-contributor
   api_mode: chat_completions
-  context_length: 1000000
+  # Conservative application budget, not a claim about the upstream maximum.
+  context_length: 131072
   streaming: true
 
 compression:
@@ -55,16 +65,28 @@ providers:
         context_length: 1048576
       gpt-5.6-luna:
         context_length: 330000
+  sub2api_dialogue:
+    base_url: http://sub2api:8080/v1
+    key_env: SUB2API_DIALOGUE_API_KEY
+    api_mode: chat_completions
+    discover_models: false
+    models:
+      xiaomi/mimo-v2.6-flash:
+        context_length: 131072
+      meta/muse-spark-1.3-contributor:
+        context_length: 131072
 
 
 agent:
-  reasoning_effort: medium
+  reasoning_effort: xhigh
   # Hermes passes attached images natively and translates them for the provider protocol.
   image_input_mode: native
   reasoning_overrides:
     deepseek/deepseek-v4.1-flash: medium
     gemini-3.8-flash-high: high
     gpt-5.6-luna: medium
+    xiaomi/mimo-v2.6-flash: xhigh
+    meta/muse-spark-1.3-contributor: xhigh
 
 auxiliary:
   compression:
@@ -134,8 +156,8 @@ plugins:
           # GitHub release discovery is disabled; normal @ and group replies remain available.
           think_interval_seconds: 900
           discovery_feeds: []
-        status_model: deepseek/deepseek-v4.1-flash
-        status_reasoning: medium
+        status_model: meta/muse-spark-1.3-contributor
+        status_reasoning: xhigh
         auto_pair:
           enabled: true
           until_utc: "2026-09-05T08:00:00Z"

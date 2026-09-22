@@ -22,6 +22,12 @@ MODELS = {
     "gemini": "gemini",
     "gemini-3.8-flash-high": "gemini",
     "双子座": "gemini",
+    "mimo": "mimo",
+    "xiaomi": "mimo",
+    "xiaomi/mimo-v2.6-flash": "mimo",
+    "muse": "muse",
+    "contributor": "muse",
+    "meta/muse-spark-1.3-contributor": "muse",
 }
 EFFORTS = {
     "low": "low",
@@ -33,6 +39,8 @@ EFFORTS = {
     "high": "high",
     "高": "high",
     "高档": "high",
+    "xhigh": "xhigh",
+    "超高": "xhigh",
     "max": "max",
     "最高": "max",
     "最大": "max",
@@ -68,7 +76,7 @@ REQUIRES_ARG = {
     "纠正记忆",
     "安静",
 }
-CONFIG_ERROR = "模型支持 DeepSeek、Gemini；推理强度支持 low、medium、high、max（低、中、高、最高）。例如：切换到 DeepSeek、推理强度调到高，或 /配置 模型 DeepSeek。配置只作用于当前会话。"
+CONFIG_ERROR = "模型支持 DeepSeek、Gemini、MiMo、Muse；推理强度支持 low、medium、high、xhigh、max（低、中、高、超高、最高）。例如：切换到 Muse、推理强度调到超高，或 /配置 模型 Muse。配置只作用于当前会话。"
 
 
 @dataclass(frozen=True)

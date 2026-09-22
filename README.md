@@ -7,7 +7,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 生产秘密位于 `/opt/qqbot-hk-deploy/secrets`，不得提交：
 
 - `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_SCHEDULE_GROUPS`。
-- `sub2api-api-key`：Hermes 通用模型 key；`sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的主模型 key。
+- `sub2api-api-key`：原有通用模型 key；`sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的 key；`sub2api-dialogue-api-key`：Muse/MiMo 专用 key，仅安装到服务器运行环境。
 - `QQ_SCHEDULE_GROUPS` 是固定公告的显式目标列表，使用逗号分隔的 QQ 群 OpenID，不能使用数字群号、用户 OpenID、空值或 `*`。固定公告默认禁用。部署会移除旧 `QQ_GROUP_ALLOWED_USERS`，防止 Hermes 环境变量覆盖群专属通配配置。
 - 开发体验阶段也使用 QQ 官方生产 API/Gateway；开放平台按“开发体验用户”名单限制可访问账号。
 
@@ -23,8 +23,8 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - 角色采用自然群友风格，可以主动提问和完整表达；不再机械过滤末尾问句，也不再截断主动回复为 180 字。短回复按句子/换行分条，引号或括号内部不拆句；长回复与代码完整保留，以每包最多 1500 字进行传输分段。命令回复也不再最多发送五段。常见 Markdown 统一降级为纯文本。同一轮仅首条显示引用，后续分条保留 QQ 被动回复凭据但不重复引用卡片；失败停止，重试跳过已成功分条；完整发送后只登记一轮回复及其各条消息引用。
 - QQ 工具集启用 `web`、`vision`、`skills`、`todo`、`terminal`、`file`；其中 `terminal` 提供 shell 能力，`tts`、`code`、`computer` 不暴露。文件写入受 `HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp` 限制，Hermes credential/project env 路径仍由内置防护拦截。
 - QQ 语音输入与输出均关闭：语音附件不进入 STT/模型，`send_voice` 在媒体上传前失败关闭，配置不包含 TTS provider 或音频密钥。普通文本与图片功能不受影响。
-- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、AI 结构化长期记忆、非 @ 消息旁听、群知识库/RAG，以及 `/help`、`/reset`、`/clear`、`/new`、`/compress`、`/status`、`/summary`、`/rules`、`/kb`、`/值日表`、`/gemini`、`/deepseek`、`/low`、`/medium`、`/high`、`/max`、`/我的记忆`、`/记住我`、`/纠正记忆`、`/停止记忆`、`/忘记我`。
-- `/low`、`/medium`、`/high`、`/max`、`/deepseek`、`/gemini` 注册为 Hermes 原生命令层的 `quick_commands`，群聊和私聊都会在未知命令拦截前展开。群聊仅将 `/compress`、`/new`、`/commands` 在剥离 QQ @ 后透传给 Hermes，避免恢复命令被包装进群上下文，同时不暴露其他原生管理命令。私聊 `/help` 优先显示中文自定义命令菜单，Hermes 原生命令折叠为 `/commands` 入口；`/值日表` 仍仅群聊可用。
+- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、长期记忆、群知识库和中文 `/help`。模型快捷命令为 `/deepseek`、`/gemini`、`/mimo`、`/muse`；推理强度为 `/low`、`/medium`、`/high`、`/xhigh`、`/max`，均只修改当前会话。
+- 支持 `/` 打开帮助、全角斜杠、斜杠后空格、QQ mention 紧接命令。已明确 @ 机器人的全量群消息也走命令入口；非定向旁听仍不能执行管理命令。忙碌群会话的 `/值日表`、`/all` 等本地命令不再并入聊天队列，原生模型/推理切换沿用 Hermes 的忙碌提示与权限控制；`/reset`、`/new` 保留原生生命周期。私聊 `/help` 优先显示中文菜单，`/值日表` 仅群聊可用。
 - `@机器人 /值日表` 按北京时间即时计算本周日到周六的轮值安排；2026 年 9 月 13 日开始，每周日轮换一次，开始前显示首轮预告。该功能不依赖主动群发或模型调用。
 - `/summary` 使用模型生成本群摘要、话题、决定、待办和未决问题；每群独立持久化，`/reset` 只清理会话与记忆，不删除知识库。
 - `/kb add 标题 | 正文` 添加资料；`/kb list`、`/kb search 关键词`、`/kb remove 文档ID`、`/kb clear confirm` 管理本群知识。支持缓存目录中的 TXT/Markdown/CSV/JSON/YAML/XML/TOML/DOCX，PDF 需镜像提供 `pypdf`。
@@ -113,15 +113,17 @@ QQ 当前“开发体验用户”机制使用生产 API/Gateway，并由开放�
 
 数据库 schema 4 新增 `character_state`、`character_items`、`character_relations`、`character_commands`。共同经历仅由成功发送的互动形成，每人只召回自己的经历；梗、宠物和剧情是明确共享内容。原始成员 OpenID 不进入角色提示词或成员关系键。
 
+Muse 风格的小栖更注重具体接话、独立观点和克制幽默，避免固定客服句式。每个群/私聊从自身持久化的成功互动记录派生有限的语气、详略与兴趣标签；至少三条记录才适应，最新三十条、每成员最多五条，不将原文写入高优先级人格。重启沿用记录，停止/忘记记忆、重置、到期清理同步撤回影响，不新增隐蔽画像；`/角色` 可查看本会话相处风格。
+
 共同经历/发现保存 30 天，目标 7 天，梗 90 天，每群每类最多 100 条；命令回执保存一天。`/停止记忆` 停止该成员的角色经历积累并清除其角色条目；重新授权前禁止保存目标或参与持久玩法。`/忘记我` 清除本人角色条目、关系、命令回执和可能包含衍生信息的群经历/发现及共享剧情，恢复宠物默认状态；他人独立目标/梗保留。`/reset` 清除当前会话角色进度，知识库保留；Hermes 原生 `/new` 仅换会话，不清除持久角色。无主动发送也执行过期清理。
 
 部署前按原流程备份数据库，回滚到 schema 3 必须恢复升级前快照。当前 PR 不替你部署服务器或打开 QQ 平台权限。
 
 ## 模型
 
-Hermes 默认通过专用 Sub2API DeepSeek 分组，以 OpenAI Chat Completions 协议调用 `deepseek/deepseek-v4.1-flash`，推理强度为 `medium`。每次请求显式携带 `reasoning_effort`；群内可用 `/low`、`/medium`、`/high`、`/max` 仅切换当前群会话的推理强度。Hermes 将原生图片内容块翻译为该协议；不再先调用 Gemini/Luna 视觉链，也不配置自动模型回退。`gemini-3.8-flash-high` 仍保留为群会话可手动切换的模型，并使用独立的通用 Sub2API key。
+Hermes 默认通过 `sub2api_dialogue` 的独立 key，以 OpenAI Chat Completions 调用 `meta/muse-spark-1.3-contributor`，默认及模型推理覆写均为 `xhigh`。请求显式携带顶层 `reasoning_effort`，不钳制为 `high` 或 `max`。`/muse`、`/mimo` 分别选择 `meta/muse-spark-1.3-contributor`、`xiaomi/mimo-v2.6-flash`；`/deepseek`、`/gemini` 保留各自原有密钥路由。新模型的 131072 token 是保守应用预算，不宣称为上游极限。切换选项不等同于上游可用：专用 key 的实际模型权限和在线探测为准。
 
-群内 @ 机器人发送 /gemini（兼容 / gemini）可将当前群会话切换到 `gemini-3.8-flash-high`；发送 /deepseek（兼容 / deepseek）可切回 `deepseek/deepseek-v4.1-flash`。两条命令都使用 Hermes 原生的会话级模型覆写，不修改其他群或全局默认模型。
+命令均为 Hermes 原生会话级覆写，不修改其他群或全局默认。已有显式模型/推理覆写的会话仍保留用户选择，发送 `/muse`、`/xhigh` 可更新；`/model`、`/reasoning` 查询实际设置。无显式覆写的会话跟随新默认。图片保持原生内容块，不配置自动模型回退。
 
 Hermes 的会话上下文达到 `50000` token 阈值时自动尝试压缩，受原生冷却和无效压缩保护约束；该值是触发阈值，不是完整请求硬上限。压缩在原会话继续，不调用 `/reset`，并固定使用 `deepseek/deepseek-v4.1-flash`、`low` 推理强度。若连续无效压缩触发持久化 anti-thrash breaker，QQ 网关会在下一条普通消息进入模型前自动执行完整 `/new` 等价轮换，并继续处理当前消息；手动 `/compress`、`/new` 不被抢占。群记忆与知识库不随该 Hermes 会话轮换清空。群记忆独立在 40 条新消息且距上次刷新至少 300 秒时整理；或至少 4 条新消息的最老一条等待 1200 秒后整理，单条闲聊不会因空闲自动摘要。
 

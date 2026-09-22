@@ -18,6 +18,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Mapping, Optional, Union
 
+from .commands import clean_text
+
 
 Observer = Callable[[dict[str, Any]], Union[Awaitable[Any], Any]]
 
@@ -382,11 +384,13 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
     if callable(should_reply) and callable(dispatch_message):
         try:
             if await should_reply(record):
-                # Reuse Hermes' group normalization, deduplication and session
-                # dispatch; the raw marker preserves that this was NOT an @.
-                # Never route the whole ambient stream to the agent.
+                # QQ's full-group event can also carry an explicit bot mention.
+                # Only should_reply's verified command path may promote it; ordinary
+                # ambient messages keep their non-command marker.
                 addressed = dict(data)
-                addressed["_smart_group_qq_nonmention"] = True
+                addressed["_smart_group_qq_nonmention"] = not bool(
+                    record.get("_explicit_bot_command")
+                )
                 await dispatch_message("GROUP_AT_MESSAGE_CREATE", addressed)
         except Exception:
             # Dispatch may already have produced a reply. Do not release the
@@ -501,6 +505,8 @@ def install_nonmention_observer(callback: Observer, logger: Optional[logging.Log
     if not callable(callback):
         raise TypeError("callback must be callable")
     adapter_class = _resolve_adapter_class()
+    from .ingress import install_command_ingress
+    install_command_ingress(adapter_class)
     dispatch = getattr(adapter_class, "_dispatch_payload", None)
     if not callable(dispatch):
         raise AttributeError("QQAdapter._dispatch_payload is unavailable")
@@ -575,6 +581,8 @@ def uninstall_nonmention_observer() -> bool:
     if not isinstance(state, dict) or not callable(state.get("original")):
         return False
     setattr(adapter_class, "_dispatch_payload", state["original"])
+    from .ingress import uninstall_command_ingress
+    uninstall_command_ingress(adapter_class)
     for attr in (_STATE_ATTR, _CALLBACK_ATTR, _LOGGER_ATTR):
         try:
             delattr(adapter_class, attr)

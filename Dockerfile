@@ -3,7 +3,7 @@ FROM nousresearch/hermes-agent@sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea8373
 LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.hermes-base-digest="sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1" \
       io.qqbot-hk.audio-patch="v2" \
-      io.qqbot-hk.chat-reasoning-patch="v1" \
+      io.qqbot-hk.chat-reasoning-patch="v2" \
       io.qqbot-hk.compression-recovery-patch="v1" \
       io.qqbot-hk.qq-help-patch="v1" \
       io.qqbot-hk.qq-output-patch="v1"

@@ -3,6 +3,9 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import sys
+from types import ModuleType
+from unittest.mock import Mock, patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "patch-hermes-chat-reasoning.py"
@@ -21,7 +24,7 @@ def fixture_source() -> str:
         "        thinking_off = isinstance(reasoning_config, dict) and reasoning_config.get(\"enabled\") is False\n"
         "        _e = requested_effort(reasoning_config)\n"
         "        if supports_reasoning and not is_lmstudio:\n"
-        "            pass\n"
+        "            api_kwargs['generic_branch'] = True\n"
     )
 
 
@@ -32,8 +35,57 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
         patched = PATCH.patch_source(source, digest)
         self.assertIn(PATCH.PATCH_MARKER, patched)
         self.assertIn('api_kwargs["reasoning_effort"] = clamp_effort(', patched)
-        self.assertIn("and not is_sub2api_deepseek", patched)
+        self.assertEqual(patched.count("is_sub2api_deepseek ="), 1)
+        self.assertEqual(patched.count("is_sub2api_native_effort ="), 1)
+        self.assertEqual(patched.count("if supports_reasoning and not is_lmstudio and not (is_sub2api_deepseek or is_sub2api_native_effort):"), 1)
         self.assertEqual(patched, PATCH.patch_source(patched, "wrong-on-purpose"))
+
+    def test_executed_patch_preserves_native_effort_and_route_boundaries(self):
+        effort = ModuleType("agent.reasoning_effort")
+        for name in ("DEEPSEEK_V4_EFFORTS", "KIMI_K3_EFFORTS", "OPENAI_COMPAT_WIRE_EFFORTS", "TOKENHUB_EFFORTS"):
+            setattr(effort, name, ("low", "medium", "high"))
+        effort.DEEPSEEK_V4_OVERRIDES = {"xhigh": "high"}
+        effort.KIMI_K3_OVERRIDES = {}
+        effort.clamp_effort = Mock(side_effect=lambda value, allowed, overrides: overrides.get(value, value))
+        requested = Mock(side_effect=lambda config: config.get("effort"))
+        namespace = {"requested_effort": requested}
+        source = fixture_source()
+        patched = PATCH.patch_source(source, hashlib.sha256(source.encode()).hexdigest())
+        with patch.dict(sys.modules, {"agent": ModuleType("agent"), "agent.reasoning_effort": effort}):
+            exec(compile(patched, "fixture_chat.py", "exec"), namespace)
+        models = ("xiaomi/mimo-v2.6-flash", "meta/muse-spark-1.3-contributor")
+        for model in (*models, "deepseek/deepseek-v4.1-flash"):
+            for enabled in (True, False):
+                for supports in (True, False):
+                    with self.subTest(model=model, enabled=enabled, supports=supports):
+                        effort.clamp_effort.reset_mock()
+                        kwargs = {"untouched": "Value"}
+                        config = {"enabled": enabled, "effort": "xhigh"}
+                        namespace["build"](config, {"base_url": PATCH.SUB2API_BASE_URL + "/"}, kwargs, model, supports, False)
+                        requested.assert_called_with(config)
+                        expected = {"untouched": "Value"}
+                        if enabled:
+                            expected["reasoning_effort"] = "xhigh" if model in models else "high"
+                        self.assertEqual(kwargs, expected)
+                        if enabled and model not in models:
+                            effort.clamp_effort.assert_called_once_with("xhigh", effort.DEEPSEEK_V4_EFFORTS, effort.DEEPSEEK_V4_OVERRIDES)
+                        else:
+                            effort.clamp_effort.assert_not_called()
+        for host, model in (
+            ("https://other.example/v1", models[0]),
+            ("http://sub2api:8080/v1.evil", models[1]),
+            (PATCH.SUB2API_BASE_URL, "other/model"),
+        ):
+            for supports, studio in ((True, False), (False, False), (True, True)):
+                with self.subTest(host=host, model=model, supports=supports, studio=studio):
+                    effort.clamp_effort.reset_mock()
+                    kwargs = {"reasoning_effort": "existing"}
+                    namespace["build"]({"effort": "xhigh"}, {"base_url": host}, kwargs, model, supports, studio)
+                    expected = {"reasoning_effort": "existing"}
+                    if supports and not studio:
+                        expected["generic_branch"] = True
+                    self.assertEqual(kwargs, expected)
+                    effort.clamp_effort.assert_not_called()
 
     def test_wrong_sha_fails_closed(self):
         with self.assertRaisesRegex(PATCH.PatchError, "SHA mismatch"):

@@ -120,6 +120,20 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         return result
 
+    async def test_models_full_ids_aliases_and_effort_in_both_scopes(self):
+        for chat_type in ("group", "dm"):
+            for alias, model in (("Muse", "meta/muse-spark-1.3-contributor"), ("MiMo", "xiaomi/mimo-v2.6-flash")):
+                for raw in (f"/{alias}", f"<@bot>/{alias}", f"\u200b/{alias}", f"/model {model}", f"/配置 模型 {model}"):
+                    with self.subTest(chat_type=chat_type, raw=raw):
+                        result = await self.send(raw, chat_type + raw, chat_type=chat_type)
+                        self.assertEqual(result, {"action": "rewrite", "text": f"/model {model} --session"})
+            result = await self.send("\ufeff<@bot>/XHIGH", chat_type + "effort", chat_type=chat_type)
+            self.assertEqual(result, {"action": "rewrite", "text": "/reasoning xhigh --session"})
+        payload = "/model Vendor/MyCaseSensitiveModel --provider MyProvider"
+        self.assertEqual((await self.send(payload, "native-payload", chat_type="dm"))["text"], payload)
+        raw = "\u200b<@bot>/记住我：项目叫 MyProject ＡＢＣ"
+        self.assertEqual(parse_profile_command(raw).argument, "项目叫 MyProject ＡＢＣ")
+
     async def test_natural_configuration_uses_native_session_scope(self):
         for index, raw in enumerate(
             ("切到DeepSeek", "/配置 模型 DeepSeek", "／ DEEPSEEK")

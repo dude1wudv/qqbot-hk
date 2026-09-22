@@ -409,6 +409,104 @@ class ObserverTests(IsolatedAsyncioTestCase):
         self.assertEqual(adapter.handled, 0)
 
 
+class ObserverCommandChainTests(IsolatedAsyncioTestCase):
+    async def test_full_event_observer_busy_handler_local_reply_and_cross_event_dedup(self):
+        from test_qq_command_ingress import Context, LocalQQAdapter, event
+
+        class Adapter(LocalQQAdapter):
+            def __init__(self, handler):
+                super().__init__(handler)
+                self.normal_seen = set()
+                self.dispatched = []
+
+            def _dispatch_payload(self, item):
+                return asyncio.create_task(self._on_message(item["t"], item["d"]))
+
+            def _is_group_allowed(self, group_id, member_id):
+                return True
+
+            async def _on_message(self, kind, data):
+                self.dispatched.append((kind, data))
+                if data["id"] in self.normal_seen:
+                    return
+                self.normal_seen.add(data["id"])
+                await self.handle_message(event(
+                    data["content"], data["id"], raw_message=data))
+
+        async def drain(adapter):
+            for queue in getattr(adapter, "_smart_group_qq_nonmention_queue", {}).values():
+                await asyncio.wait_for(queue.join(), 2)
+            await asyncio.sleep(0)
+
+        for ambient, participation in ((True, True), (False, True), (True, False), (False, False)):
+            with self.subTest(ambient=ambient, participation=participation):
+                store = Store(":memory:")
+                ctx = Context(ambient, participation)
+                handler = build_handler(ctx, store)
+                adapter = Adapter(handler)
+                handler.character.set_group_mode("test-group", "only")
+                trace = []
+
+                async def observe(record):
+                    trace.append(("observe", record["message_id"]))
+                    await handler.observe_nonmention(record)
+
+                async def should_reply(record):
+                    trace.append(("should_reply", record["message_id"]))
+                    return await handler.observe_nonmention.should_reply(record)
+
+                observe.fast_ingest = handler.observe_nonmention.fast_ingest
+                observe.should_reply = should_reply
+                with patch.object(qq_observer, "_resolve_adapter_class", return_value=Adapter):
+                    qq_observer.install_nonmention_observer(observe)
+                    try:
+                        for index, (text, mentions, expected) in enumerate((
+                            ("@小分队机器人 /all", None, "已恢复群聊自动参与"),
+                            ("/值日表", [{"bot": True}], "本周值日表"),
+                        )):
+                            message = payload(str(index), group="test-group", text=text)
+                            message["d"]["attachments"] = []
+                            if mentions is not None:
+                                message["d"]["mentions"] = mentions
+                            before = len(adapter.sent)
+                            adapter._dispatch_payload(message)
+                            await drain(adapter)
+                            self.assertEqual(len(adapter.sent), before + 1)
+                            self.assertIn(expected, adapter.sent[-1][1])
+                            self.assertEqual(trace[-2:], [("observe", str(index)), ("should_reply", str(index))])
+                            self.assertEqual(adapter.dispatched[-1][0], "GROUP_AT_MESSAGE_CREATE")
+                            self.assertFalse(adapter.dispatched[-1][1]["_smart_group_qq_nonmention"])
+                            adapter._dispatch_payload(message)
+                            await drain(adapter)
+                            official = dict(message, t="GROUP_AT_MESSAGE_CREATE")
+                            await adapter._dispatch_payload(official)
+                            self.assertEqual(len(adapter.sent), before + 1)
+                        self.assertEqual(handler.character.group_mode("test-group"), "all")
+                        before = len(adapter.dispatched)
+                        for index, text in enumerate(("/all", "@other /all", "@小分队机器人假冒 /all")):
+                            message = payload("silent-" + str(index), group="test-group", text=text)
+                            adapter._dispatch_payload(message)
+                        await drain(adapter)
+                        if not ambient or not participation:
+                            adapter._dispatch_payload(payload(
+                                "ordinary", group="test-group", text="普通群消息保持静默"))
+                            await drain(adapter)
+                        self.assertEqual(len(adapter.dispatched), before)
+                        self.assertEqual(len(adapter.sent), 2)
+                        self.assertEqual(adapter.queued, [])
+                        ctx.llm.acomplete_structured.assert_not_called()
+                        # Reverse delivery order also must not apply /only twice.
+                        reverse = payload("reverse", group="test-group", text="@小分队机器人 /only")
+                        await adapter._dispatch_payload(dict(reverse, t="GROUP_AT_MESSAGE_CREATE"))
+                        adapter._dispatch_payload(reverse)
+                        await drain(adapter)
+                        self.assertEqual(len(adapter.sent), 3)
+                        self.assertEqual(handler.character.group_mode("test-group"), "only")
+                    finally:
+                        qq_observer.uninstall_nonmention_observer()
+                        store.close()
+
+
 if __name__ == "__main__":
     import unittest
 

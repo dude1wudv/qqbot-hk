@@ -104,6 +104,51 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.gateway.adapters = {self.source_platform: self.adapter}
         return SimpleNamespace(text=text, message_id=message_id, source=source)
 
+    async def test_bare_slash_help_through_handler(self):
+        handler = build_handler(FakeContext(), self.store)
+        for index, raw in enumerate(("/", "／", "<@bot> /")):
+            with self.subTest(raw=raw):
+                result = handler(self.make_event(raw, f"bare-{index}"), self.gateway)
+                self.assertEqual(result["action"], "skip")
+                await asyncio.sleep(0)
+                self.assertIn("【小栖 · 常驻 AI 角色】", self.adapter.sent[-1][1])
+        self.assertEqual(len(self.adapter.sent), 3)
+        self.assertEqual(self.store.get_history("group-a"), [])
+
+    async def test_local_management_commands_reject_denied_and_synthetic_senders(self):
+        ctx = FakeContext()
+        ctx.llm = ParticipationLLM(error=AssertionError("local commands must not call LLM"))
+        handler = build_handler(ctx, self.store)
+        for denied in (False, True):
+            self.gateway._is_user_authorized_for_source = lambda source, denied=denied: not denied
+            for index, command in enumerate(("/值日表", "/all", "/only")):
+                handler.character.set_group_mode("group-a", "only" if command == "/all" else "all")
+                before = handler.character.group_mode("group-a")
+                sent = len(self.adapter.sent)
+                result = handler(self.make_event("<@bot>" + command, f"local-{denied}-{index}"), self.gateway)
+                await asyncio.sleep(0)
+                self.assertEqual(result["action"], "allow" if denied else "skip")
+                self.assertEqual(len(self.adapter.sent), sent if denied else sent + 1)
+                expected = before if denied or command == "/值日表" else command[1:]
+                self.assertEqual(handler.character.group_mode("group-a"), expected)
+                if not denied and command == "/值日表":
+                    self.assertIn("本周值日表", self.adapter.sent[-1][1])
+        self.gateway._is_user_authorized_for_source = lambda source: True
+        for index, command in enumerate(("/值日表", "/all", "/only", "/reset")):
+            handler.character.set_group_mode("group-a", "only" if command == "/all" else "all")
+            before = handler.character.group_mode("group-a")
+            epoch = self.store.memory_epoch("group-a")
+            sent = len(self.adapter.sent)
+            incoming = self.make_event(command, f"synthetic-local-{index}")
+            incoming.raw_message = {"_smart_group_qq_nonmention": True}
+            result = handler(incoming, self.gateway)
+            await asyncio.sleep(0)
+            self.assertEqual(result["action"], "skip")
+            self.assertEqual(len(self.adapter.sent), sent)
+            self.assertEqual(handler.character.group_mode("group-a"), before)
+            self.assertEqual(self.store.memory_epoch("group-a"), epoch)
+        self.assertEqual(ctx.llm.calls, [])
+
     async def test_non_group_passes_and_normal_message_rewrites(self):
         handler = build_handler(FakeContext(), self.store)
         self.gateway.adapters = {self.source_platform: self.adapter}
@@ -164,22 +209,24 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_model_aliases_delegate_to_native_session_switch(self):
         handler = build_handler(FakeContext(), self.store)
-        gemini = handler(self.make_event("<@bot> / gemini", "model-gemini"), self.gateway)
-        deepseek = handler(self.make_event("<@bot> /deepseek", "model-deepseek"), self.gateway)
-        self.assertEqual(gemini, {
-            "action": "rewrite",
-            "text": "/model gemini-3.8-flash-high --session",
-        })
-        self.assertEqual(deepseek, {
-            "action": "rewrite",
-            "text": "/model deepseek/deepseek-v4.1-flash --session",
-        })
+        cases = {
+            "<@bot> / gemini": "/model gemini-3.8-flash-high --session",
+            "<@bot> /deepseek": "/model deepseek/deepseek-v4.1-flash --session",
+            "<@bot> /mimo": "/model xiaomi/mimo-v2.6-flash --session",
+            "<@bot> /muse": "/model meta/muse-spark-1.3-contributor --session",
+        }
+        for index, (raw, expected) in enumerate(cases.items()):
+            with self.subTest(raw=raw):
+                self.assertEqual(
+                    handler(self.make_event(raw, f"model-{index}"), self.gateway),
+                    {"action": "rewrite", "text": expected},
+                )
         self.assertEqual(self.store.get_history("group-a"), [])
         self.assertEqual(self.adapter.sent, [])
 
     async def test_reasoning_aliases_delegate_to_native_session_switch(self):
         handler = build_handler(FakeContext(), self.store)
-        for effort in ("low", "medium", "high", "max"):
+        for effort in ("low", "medium", "high", "xhigh", "max"):
             with self.subTest(effort=effort):
                 result = handler(
                     self.make_event(f"<@bot> /{effort}", f"reasoning-{effort}"),
