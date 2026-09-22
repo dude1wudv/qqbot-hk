@@ -128,7 +128,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
                         result = await self.send(raw, chat_type + raw, chat_type=chat_type)
                         self.assertEqual(result, {"action": "rewrite", "text": f"/model {model} --session"})
             result = await self.send("\ufeff<@bot>/XHIGH", chat_type + "effort", chat_type=chat_type)
-            self.assertEqual(result, {"action": "rewrite", "text": "/reasoning xhigh --session"})
+            self.assertEqual(result, {"action": "rewrite", "text": "/reasoning xhigh"})
         payload = "/model Vendor/MyCaseSensitiveModel --provider MyProvider"
         self.assertEqual((await self.send(payload, "native-payload", chat_type="dm"))["text"], payload)
         raw = "\u200b<@bot>/记住我：项目叫 MyProject ＡＢＣ"
@@ -147,7 +147,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
         self.assertEqual(
-            (await self.send("推理调高", "high"))["text"], "/reasoning high --session"
+            (await self.send("推理调高", "high"))["text"], "/reasoning high"
         )
 
     async def test_denied_sender_cannot_mutate_or_reply(self):

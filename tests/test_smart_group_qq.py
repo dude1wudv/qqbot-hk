@@ -224,7 +224,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get_history("group-a"), [])
         self.assertEqual(self.adapter.sent, [])
 
-    async def test_reasoning_aliases_delegate_to_native_session_switch(self):
+    async def test_reasoning_aliases_delegate_to_native_current_session_switch(self):
         handler = build_handler(FakeContext(), self.store)
         for effort in ("low", "medium", "high", "xhigh", "max"):
             with self.subTest(effort=effort):
@@ -234,7 +234,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(result, {
                     "action": "rewrite",
-                    "text": f"/reasoning {effort} --session",
+                    "text": f"/reasoning {effort}",
                 })
         self.assertEqual(self.store.get_history("group-a"), [])
         self.assertEqual(self.adapter.sent, [])
@@ -274,16 +274,15 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all("/help" in row[1] for row in self.adapter.sent))
 
     async def test_private_aliases_delegate_to_native_session_commands(self):
-
         handler = build_handler(FakeContext(), self.store)
         self.gateway.adapters = {self.source_platform: self.adapter}
         cases = {
             "/deepseek": "/model deepseek/deepseek-v4.1-flash --session",
             "/gemini": "/model gemini-3.8-flash-high --session",
-            "/low": "/reasoning low --session",
-            "/medium": "/reasoning medium --session",
-            "/high": "/reasoning high --session",
-            "/max": "/reasoning max --session",
+            "/low": "/reasoning low",
+            "/medium": "/reasoning medium",
+            "/high": "/reasoning high",
+            "/max": "/reasoning max",
         }
         for index, (command, rewritten) in enumerate(cases.items()):
             with self.subTest(command=command):

@@ -106,12 +106,13 @@ def model_alias_rewrite(value: Any) -> str | None:
 
 
 def reasoning_alias_rewrite(value: Any) -> str | None:
-    """Translate friendly QQ aliases into Hermes' session reasoning command."""
-
+    """Translate friendly QQ aliases into Hermes' current-session reasoning command."""
     match = _REASONING_ALIAS_COMMAND.fullmatch(normalize_command_text(value))
     if not match:
         return None
-    return f"/reasoning {match.group(1).lower()} --session"
+    # Hermes applies /reasoning to the active conversation; its pinned command
+    # parser does not accept the model command's ``--session`` option here.
+    return f"/reasoning {match.group(1).lower()}"
 
 
 def native_group_command_rewrite(value: Any) -> str | None:

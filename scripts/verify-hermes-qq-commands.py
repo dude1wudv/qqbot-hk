@@ -30,11 +30,11 @@ from gateway.slash_commands import GatewaySlashCommandsMixin
 
 
 EXPECTED = {
-    "low": "/reasoning low --session",
-    "medium": "/reasoning medium --session",
-    "high": "/reasoning high --session",
-    "xhigh": "/reasoning xhigh --session",
-    "max": "/reasoning max --session",
+    "low": "/reasoning low",
+    "medium": "/reasoning medium",
+    "high": "/reasoning high",
+    "xhigh": "/reasoning xhigh",
+    "max": "/reasoning max",
     "deepseek": "/model deepseek/deepseek-v4.1-flash --session",
     "gemini": "/model gemini-3.8-flash-high --session",
     "mimo": "/model xiaomi/mimo-v2.6-flash --session",

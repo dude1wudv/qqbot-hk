@@ -47,7 +47,7 @@ class CommandTests(unittest.TestCase):
     def test_new_model_aliases_and_xhigh_rewrite(self):
         self.assertEqual(model_alias_rewrite("<@bot> /mimo"), "/model xiaomi/mimo-v2.6-flash --session")
         self.assertEqual(model_alias_rewrite("／ muse"), "/model meta/muse-spark-1.3-contributor --session")
-        self.assertEqual(reasoning_alias_rewrite("<@bot> ／ XHIGH"), "/reasoning xhigh --session")
+        self.assertEqual(reasoning_alias_rewrite("<@bot> ／ XHIGH"), "/reasoning xhigh")
 
     def test_model_aliases_rewrite_to_session_scoped_native_commands(self):
         self.assertEqual(
@@ -64,16 +64,16 @@ class CommandTests(unittest.TestCase):
         )
         self.assertIsNone(model_alias_rewrite("gemini"))
 
-    def test_reasoning_aliases_rewrite_to_session_scoped_native_commands(self):
+    def test_reasoning_aliases_rewrite_to_current_session_command(self):
         for effort in ("low", "medium", "high", "max"):
             with self.subTest(effort=effort):
                 self.assertEqual(
                     reasoning_alias_rewrite(f"<@bot> /{effort.upper()}"),
-                    f"/reasoning {effort} --session",
+                    f"/reasoning {effort}",
                 )
         self.assertEqual(
             reasoning_alias_rewrite("@机器人 ／ medium"),
-            "/reasoning medium --session",
+            "/reasoning medium",
         )
         self.assertIsNone(reasoning_alias_rewrite("medium"))
 

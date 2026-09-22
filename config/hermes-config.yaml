@@ -8,19 +8,19 @@ gateway:
 quick_commands:
   low:
     type: alias
-    target: /reasoning low --session
+    target: /reasoning low
   medium:
     type: alias
-    target: /reasoning medium --session
+    target: /reasoning medium
   high:
     type: alias
-    target: /reasoning high --session
+    target: /reasoning high
   xhigh:
     type: alias
-    target: /reasoning xhigh --session
+    target: /reasoning xhigh
   max:
     type: alias
-    target: /reasoning max --session
+    target: /reasoning max
   deepseek:
     type: alias
     target: /model deepseek/deepseek-v4.1-flash --session
@@ -90,11 +90,8 @@ agent:
 
 auxiliary:
   compression:
-    provider: custom
+    provider: sub2api_deepseek
     model: deepseek/deepseek-v4.1-flash
-    base_url: http://sub2api:8080/v1
-    key_env: SUB2API_DEEPSEEK_API_KEY
-    api_mode: chat_completions
     reasoning_effort: low
 
 voice:

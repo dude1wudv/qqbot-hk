@@ -268,16 +268,12 @@ if not isinstance(auxiliary, Mapping):
 compression_route = auxiliary.get("compression")
 if not isinstance(compression_route, Mapping):
     raise SystemExit("auxiliary.compression route is missing")
-if compression_route.get("provider") != "custom":
-    raise SystemExit("auxiliary.compression.provider must be custom")
+if compression_route.get("provider") != "sub2api_deepseek":
+    raise SystemExit("auxiliary.compression.provider must be sub2api_deepseek")
 if compression_route.get("model") != "deepseek/deepseek-v4.1-flash":
     raise SystemExit("auxiliary.compression.model must be deepseek/deepseek-v4.1-flash")
-if compression_route.get("base_url") != "http://sub2api:8080/v1":
-    raise SystemExit("auxiliary.compression.base_url is invalid")
-if compression_route.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
-    raise SystemExit("auxiliary.compression.key_env must be SUB2API_DEEPSEEK_API_KEY")
-if compression_route.get("api_mode") != "chat_completions":
-    raise SystemExit("auxiliary.compression.api_mode must be chat_completions")
+if set(compression_route) != {"provider", "model", "reasoning_effort"}:
+    raise SystemExit("auxiliary.compression must not define a duplicate custom provider")
 if compression_route.get("reasoning_effort") != "low":
     raise SystemExit("auxiliary.compression.reasoning_effort must be low")
 if auxiliary.get("vision"):
