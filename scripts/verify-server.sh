@@ -323,10 +323,10 @@ if not isinstance(participation_config, Mapping):
 if participation_config.get("enabled") is not True:
     raise SystemExit("smart_group_qq ambient.participation.enabled must be true")
 try:
-    if int(participation_config.get("cooldown_seconds", 0)) != 5:
+    if int(participation_config.get("cooldown_seconds", 0)) != 0:
         raise ValueError
 except (TypeError, ValueError):
-    raise SystemExit("smart_group_qq ambient.participation.cooldown_seconds must be 5")
+    raise SystemExit("smart_group_qq ambient.participation.cooldown_seconds must be 0")
 try:
     if int(participation_config.get("debounce_seconds", 0)) != 2:
         raise ValueError
@@ -344,10 +344,10 @@ except (TypeError, ValueError):
     raise SystemExit("smart_group_qq ambient.participation age/timeout config is invalid")
 try:
     participation_confidence = float(participation_config.get("min_confidence"))
-    if abs(participation_confidence - 0.70) > 1e-9:
+    if abs(participation_confidence - 0.55) > 1e-9:
         raise ValueError
 except (TypeError, ValueError):
-    raise SystemExit("smart_group_qq ambient.participation.min_confidence must be 0.70")
+    raise SystemExit("smart_group_qq ambient.participation.min_confidence must be 0.55")
 wake_words = participation_config.get("wake_words")
 if not isinstance(wake_words, list) or not any(str(item).strip() for item in wake_words):
     raise SystemExit("smart_group_qq ambient.participation.wake_words must be a non-empty list")
@@ -421,7 +421,7 @@ with sqlite3.connect(db_path) as connection:
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise SystemExit("plugin database integrity check failed")
     schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-    if schema_version != 3:
+    if schema_version != 4:
         raise SystemExit("plugin database schema version does not match this release")
     foreign_key_errors = list(connection.execute("PRAGMA foreign_key_check"))
     if foreign_key_errors:
@@ -435,7 +435,8 @@ with sqlite3.connect(db_path) as connection:
     required_tables = {
         "group_memories", "group_history", "knowledge_documents", "knowledge_chunks",
         "compaction_jobs", "group_members", "member_memory_facts",
-        "group_memory_epochs",
+        "group_memory_epochs", "character_state", "character_items",
+        "character_relations", "character_commands",
     }
     if not required_tables.issubset(tables):
         raise SystemExit("plugin memory/knowledge schema is incomplete")

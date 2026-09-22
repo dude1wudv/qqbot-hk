@@ -1,14 +1,16 @@
 """QQ group command parsing and deterministic local responses."""
+
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-_MENTION = re.compile(r"(?:<@!?[^>]+>|^@\S+)\s*")
+_MENTION = re.compile(r"^(?:<@!?[^>]+>|@\S+)\s*")
 _COMMAND = re.compile(r"^[／/]([A-Za-z]+|值日表)(?:\s+.*)?$")
 _PROFILE_COMMAND = re.compile(
-    r"^[／/](我的记忆|记住我|纠正记忆|忘记我|停止记忆)(?:\s*[:：]?\s*(.*))?$",
+    r"^/(我的记忆|记住我|纠正记忆|忘记我|停止记忆)(?:\s+(.*))?$",
     re.DOTALL,
 )
 _MODEL_ALIAS_COMMAND = re.compile(r"^[／/]\s*(gemini|deepseek)\s*$", re.IGNORECASE)
@@ -16,7 +18,9 @@ _MODEL_ALIASES = {
     "gemini": "gemini-3.8-flash-high",
     "deepseek": "deepseek/deepseek-v4.1-flash",
 }
-_REASONING_ALIAS_COMMAND = re.compile(r"^[／/]\s*(low|medium|high|max)\s*$", re.IGNORECASE)
+_REASONING_ALIAS_COMMAND = re.compile(
+    r"^[／/]\s*(low|medium|high|max)\s*$", re.IGNORECASE
+)
 _ALIASES = {"clear": "reset", "值日表": "duty_roster"}
 _SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules", "duty_roster"})
 _NATIVE_GROUP_PASSTHROUGH = frozenset({"commands", "compress", "new"})
@@ -44,8 +48,21 @@ def clean_text(value: Any) -> str:
     return text
 
 
+def normalize_command_text(value: Any) -> str:
+    """Normalize only the command token; preserve user payload bytes and casing."""
+    text = clean_text(value)
+    match = re.match(r"^[／/]\s*([^\s:：=＝]+)(?:\s*[:：=＝]\s*|\s+)?(.*)$", text, re.S)
+    if not match:
+        return text
+    head = unicodedata.normalize("NFKC", match[1]).casefold()
+    argument = match[2].strip()
+    if not argument:
+        head = head.rstrip("。！!？?")
+    return "/" + head + (" " + argument if argument else "")
+
+
 def parse_command(value: Any) -> Command | None:
-    text = clean_text(value).replace("／", "/", 1)
+    text = normalize_command_text(value)
     match = _COMMAND.fullmatch(text)
     if not match:
         return None
@@ -54,7 +71,7 @@ def parse_command(value: Any) -> Command | None:
 
 
 def parse_profile_command(value: Any) -> ProfileCommand | None:
-    text = clean_text(value).replace("／", "/", 1)
+    text = normalize_command_text(value)
     match = _PROFILE_COMMAND.fullmatch(text)
     if not match:
         return None
@@ -65,13 +82,16 @@ def parse_profile_command(value: Any) -> ProfileCommand | None:
         "忘记我": "forget",
         "停止记忆": "opt_out",
     }
-    return ProfileCommand(actions[match.group(1)], str(match.group(2) or "").strip())
+    argument = str(match.group(2) or "").strip()
+    if match.group(1) in {"我的记忆", "忘记我", "停止记忆"} and argument:
+        return None
+    return ProfileCommand(actions[match.group(1)], argument)
 
 
 def model_alias_rewrite(value: Any) -> str | None:
     """Translate friendly QQ aliases into Hermes' session model command."""
 
-    match = _MODEL_ALIAS_COMMAND.fullmatch(clean_text(value))
+    match = _MODEL_ALIAS_COMMAND.fullmatch(normalize_command_text(value))
     if not match:
         return None
     return f"/model {_MODEL_ALIASES[match.group(1).lower()]} --session"
@@ -80,7 +100,7 @@ def model_alias_rewrite(value: Any) -> str | None:
 def reasoning_alias_rewrite(value: Any) -> str | None:
     """Translate friendly QQ aliases into Hermes' session reasoning command."""
 
-    match = _REASONING_ALIAS_COMMAND.fullmatch(clean_text(value))
+    match = _REASONING_ALIAS_COMMAND.fullmatch(normalize_command_text(value))
     if not match:
         return None
     return f"/reasoning {match.group(1).lower()} --session"
@@ -89,7 +109,7 @@ def reasoning_alias_rewrite(value: Any) -> str | None:
 def native_group_command_rewrite(value: Any) -> str | None:
     """Return the small, explicitly safe set of native commands exposed in QQ groups."""
 
-    text = clean_text(value).replace("／", "/", 1)
+    text = normalize_command_text(value)
     if not text.startswith("/"):
         return None
     command = text[1:].split(maxsplit=1)[0].lower()
@@ -98,7 +118,13 @@ def native_group_command_rewrite(value: Any) -> str | None:
 
 def help_text() -> str:
     return (
-        "【QQ 助手】\n"
+        "【小栖 · 常驻 AI 角色】\n"
+        "可以直接说：切到 DeepSeek、推理调高、安静10分钟、给宠物喂点东西。\n"
+        "完成目标可填 ID 或名称；指代不清时会请你补充。\n"
+        "/配置 查看配置写法；/model、/reasoning 查看当前会话设置\n"
+        "/角色 角色状态与自然语言控制\n/经历 共同经历\n/梗簿、/记梗 内容、/忘梗 ID\n"
+        "/目标 内容、/完成目标 ID、/取消目标 ID\n/探索 查看有无新发现\n"
+        "/宠物、/喂食、/摸摸、/宠物取名 名字\n/剧情 设定、/投票 1或2、/结束剧情\n/表情 心情\n"
         "/help 功能说明\n/reset、/clear 或 /new 重置当前会话\n"
         "/compress 立即重试上下文压缩（上下文过大时）\n"
         "/status 运行状态\n/summary 近期互动摘要\n/rules 已启用规则\n"
@@ -114,19 +140,22 @@ def help_text() -> str:
 def status_text(*, model: str, reasoning: str, allowlisted: bool = True) -> str:
     return (
         "【运行状态】\n"
-        f"模型：{model or '未配置'}\n推理：{reasoning or '默认'}\n"
+        f"配置默认模型：{model or '未配置'}\n配置默认推理：{reasoning or '默认'}\n"
+        "当前会话可能已有覆写，发送 /model 或 /reasoning 查看原生状态。\n"
         f"本群白名单：{'已启用' if allowlisted else '未启用'}"
     )
 
 
 def rules_text(settings: Mapping[str, Any]) -> str:
     keyword_ids = [
-        str(item.get("id")) for item in settings.get("keyword_replies", ())
+        str(item.get("id"))
+        for item in settings.get("keyword_replies", ())
         if isinstance(item, Mapping) and item.get("enabled", True) and item.get("id")
     ]
     static = settings.get("moderation", {}).get("static_rules", ())
     moderation_ids = [
-        str(item.get("id")) for item in static
+        str(item.get("id"))
+        for item in static
         if isinstance(item, Mapping) and item.get("enabled", True) and item.get("id")
     ]
     lines = ["【本群规则】"]
@@ -136,7 +165,15 @@ def rules_text(settings: Mapping[str, Any]) -> str:
 
 
 __all__ = [
-    "Command", "ProfileCommand", "clean_text", "parse_command", "parse_profile_command",
-    "model_alias_rewrite", "reasoning_alias_rewrite", "native_group_command_rewrite",
-    "help_text", "status_text", "rules_text",
+    "Command",
+    "ProfileCommand",
+    "clean_text",
+    "parse_command",
+    "parse_profile_command",
+    "model_alias_rewrite",
+    "reasoning_alias_rewrite",
+    "native_group_command_rewrite",
+    "help_text",
+    "status_text",
+    "rules_text",
 ]

@@ -25,7 +25,7 @@ class CommandTests(unittest.TestCase):
 
     def test_help_is_chinese_custom_command_menu(self):
         menu = help_text()
-        self.assertIn("【QQ 助手】", menu)
+        self.assertIn("【小栖 · 常驻 AI 角色】", menu)
         for command in (
             "/help", "/reset", "/new", "/compress", "/status", "/summary", "/rules",
             "/gemini", "/deepseek",

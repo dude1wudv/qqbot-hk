@@ -8,7 +8,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
-from .formatter import trim_chat_followup
 
 SILENT_MARKER = "[SILENT]"
 INVALID_REPLY_MESSAGE = "这次回复格式异常，请稍后重试。"
@@ -62,6 +61,7 @@ class ReplyRequest:
     direct: bool
     created_at: float = field(default_factory=time.monotonic)
     cancelled: bool = False
+    transport_chat_id: str = ""
     pending_message: str | None = None
     model: str = ""
     record_on_success: bool = True
@@ -111,7 +111,7 @@ class ReplyRegistry:
                     continue
                 if value.pending_message is not None:
                     value.cancelled = True
-                    self._blocked[(value.group_id, value.message_id)] = (value, now + 3600)
+                    self._blocked[(value.transport_chat_id or value.group_id, value.message_id)] = (value, now + 3600)
                 self._records.pop(key, None)
             for key, (_, expires) in list(self._blocked.items()):
                 if expires <= now:
@@ -135,7 +135,7 @@ class ReplyRegistry:
                 ):
                     record.cancelled = True
                     if record.pending_message is not None:
-                        self._blocked[(record.group_id, record.message_id)] = (
+                        self._blocked[(record.transport_chat_id or record.group_id, record.message_id)] = (
                             record, time.monotonic() + 3600
                         )
 
@@ -162,7 +162,11 @@ class ReplyRegistry:
             if record is None or not self._valid_locked(record):
                 return SILENT_MARKER
             try:
-                action, message = parse_reply_decision(str(response_text or ""))
+                if record.source_kind == "private":
+                    message = str(response_text or "").strip()
+                    action = "reply" if message and message != SILENT_MARKER else "ignore"
+                else:
+                    action, message = parse_reply_decision(str(response_text or ""))
             except ValueError as exc:
                 self._audit(
                     "output_invalid", chat_id=record.group_id, message_id=record.message_id,
@@ -180,7 +184,7 @@ class ReplyRegistry:
                 record.consumed = True
                 self._records.pop(record.request_ref, None)
                 return SILENT_MARKER
-            message = trim_chat_followup(str(message))
+            message = str(message).strip()
             if not message:
                 record.consumed = True
                 self._records.pop(record.request_ref, None)
@@ -203,7 +207,7 @@ class ReplyRegistry:
         with self._lock:
             candidates = [
                 item for item in self._records.values()
-                if item.group_id == group and item.message_id == anchor and item.pending_message is not None
+                if (item.transport_chat_id or item.group_id) == group and item.message_id == anchor and item.pending_message is not None
             ]
             if candidates:
                 return min(candidates, key=lambda item: item.created_at)

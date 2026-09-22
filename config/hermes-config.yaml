@@ -1,4 +1,4 @@
-_config_version: 12
+_config_version: 13
 
 timezone: Asia/Hong_Kong
 
@@ -128,6 +128,15 @@ plugins:
         # Structured plugin tasks may use the configured model routes.
         allow_task_override: true
       settings:
+        character:
+          enabled: true
+          proactive_enabled: true
+          # Thinking cadence, not a quota on normal group participation.
+          think_interval_seconds: 900
+          discovery_feeds:
+            - https://github.com/moeru-ai/airi/releases.atom
+            - https://github.com/mindcraft-bots/mindcraft/releases.atom
+            - https://github.com/SillyTavern/SillyTavern/releases.atom
         status_model: deepseek/deepseek-v4.1-flash
         status_reasoning: medium
         auto_pair:
@@ -183,19 +192,20 @@ plugins:
           context_window_seconds: 900
           participation:
             enabled: true
-            cooldown_seconds: 5
+            cooldown_seconds: 0
             max_age_seconds: 120
             timeout_seconds: 12
-            min_confidence: 0.70
-            # Admission budget also bounds in-flight/ignored unsolicited turns.
-            max_interjections_per_minute: 2
-            unanswered_pause_seconds: 300
+            min_confidence: 0.55
+            # 0 disables local frequency/retreat limits; platform quotas still apply.
+            max_interjections_per_minute: 0
+            unanswered_pause_seconds: 0
             # Tail debounce for consecutive messages from the same member.
             debounce_seconds: 2
             max_wait_seconds: 5
             # Bot-name calls are direct signals. Generic help phrases are scored separately.
             wake_words:
               - 小分队机器人
+              - 小栖
               - 群助手
               - 小助手
               - 小分队

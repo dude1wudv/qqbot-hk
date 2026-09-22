@@ -108,12 +108,12 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler = build_handler(FakeContext(), self.store)
         self.gateway.adapters = {self.source_platform: self.adapter}
         dm = event("hello", platform="qqbot", chat_type="dm")
-        self.assertEqual(handler(dm, self.gateway)["action"], "allow")
+        self.assertEqual(handler(dm, self.gateway)["action"], "rewrite")
         self.assertTrue(self.adapter._smart_group_qq_formatting)
         self.assertEqual(self.adapter.format_message("**你好**"), "你好")
         result = handler(self.make_event("<@bot> hello"), self.gateway)
         self.assertEqual(result["action"], "rewrite")
-        self.assertRegex(result["text"], r"^\[群记忆键:[0-9a-f]{12}\]\n")
+        self.assertRegex(result["text"], r"\[群记忆键:[0-9a-f]{12}\]\n")
         self.assertRegex(result["text"], r"\[群成员:m-[0-9a-f]{20}\]: hello\n\n\[群聊最终输出协议\]")
         self.assertNotIn("摘要后新增上下文", result["text"])
 
@@ -132,7 +132,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
         dm = event("[Voice] 私聊内容", platform="qqbot", chat_type="dm")
         dm.message_type = "voice"
-        self.assertEqual(handler(dm, self.gateway)["action"], "allow")
+        self.assertEqual(handler(dm, self.gateway)["action"], "rewrite")
 
     async def test_static_precedes_keyword_and_is_idempotent(self):
         settings = {
@@ -158,7 +158,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(first["action"], "skip")
         self.assertEqual(second["reason"], "duplicate")
-        self.assertEqual(render.call_count, 2)
+        self.assertEqual(render.call_count, 1)
         render.assert_called_with()
         self.assertEqual(self.adapter.sent, [("group-a", expected, "roster-1")])
 
@@ -221,10 +221,10 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         for index, raw in enumerate(("<@bot> /update", "<@bot> /platform pause", "<@bot> /reload-mcp")):
             with self.subTest(raw=raw):
                 result = handler(self.make_event(raw, f"unknown-native-{index}"), self.gateway)
-                self.assertEqual(result["action"], "rewrite")
-                self.assertNotEqual(result["text"], raw.removeprefix("<@bot> "))
-                self.assertIn("群记忆键", result["text"])
-        self.assertEqual(self.adapter.sent, [])
+                self.assertEqual(result["action"], "skip")
+                await asyncio.sleep(0)
+        self.assertEqual(len(self.adapter.sent), 3)
+        self.assertTrue(all("/help" in row[1] for row in self.adapter.sent))
 
     async def test_private_aliases_delegate_to_native_session_commands(self):
 
@@ -287,7 +287,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         ), self.gateway), {"action": "rewrite", "text": "/update"})
         await asyncio.sleep(0)
         replies = [content for _, content, _ in self.adapter.sent]
-        self.assertTrue(any("【QQ 助手】" in content for content in replies))
+        self.assertTrue(any("【小栖 · 常驻 AI 角色】" in content for content in replies))
         self.assertIn("该功能仅群聊可用。", replies)
 
     async def test_keyword_send_failure_fails_open_and_can_retry(self):
@@ -747,13 +747,15 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         self.assertEqual(adapter_low.dispatched, [])
 
-    async def test_private_nonsplash_message_is_left_to_hermes(self):
+    async def test_private_message_receives_only_private_character_context(self):
         handler = build_handler(FakeContext(), self.store)
         result = handler(
             event("你好", message_id="dm-1", chat_type="dm", group="user-a"),
             self.gateway,
         )
-        self.assertEqual(result, {"action": "allow"})
+        self.assertEqual(result["action"], "rewrite")
+        self.assertIn("[当前私聊消息]", result["text"])
+        self.assertNotIn("群聊最终输出协议", result["text"])
 
     async def test_nonmention_slash_command_with_mention_prefix_is_not_executed(self):
         ctx = FakeContext({"ambient": {"participation": {"enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0}}})
