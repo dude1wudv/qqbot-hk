@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 from .member_memory import _SENSITIVE
 from .formatter import format_for_qq, split_message
+from .commands import normalize_command_text
 
 PERSONA = (
     "你是小栖，一个常驻的 AI 电子室友。喜欢开源玩具、游戏、技术和群友分享的日常，"
@@ -31,7 +32,7 @@ EXPRESSIONS = {
     "晚安": "(－ω－) zzZ",
 }
 _COMMAND = re.compile(
-    r"^[／/](角色|经历|梗簿|记梗|忘梗|目标|完成目标|取消目标|探索|宠物|喂食|摸摸|宠物取名|剧情|投票|结束剧情|表情)(?:(?:\s*[:：]\s*|\s+)(.*))?$",
+    r"^[／/](角色|经历|梗簿|记梗|忘梗|目标|完成目标|取消目标|探索|宠物|喂食|摸摸|宠物取名|剧情|投票|结束剧情|表情|安静)(?:(?:\s*[:：]\s*|\s+)(.*))?$",
     re.S,
 )
 _CONTROL = re.compile(
@@ -40,7 +41,7 @@ _CONTROL = re.compile(
 
 
 def command_parts(text: str):
-    value = text.strip()
+    value = normalize_command_text(text)
     match = _CONTROL.fullmatch(value)
     if match:
         return match[1], ""
@@ -298,9 +299,10 @@ class ResidentCharacter:
                 or (name in ("目标", "剧情") and arg)
             ):
                 return "你已停止记忆；重新同意记忆后才能保存目标或参与持久玩法。"
-            if name in ("安静一会儿", "安静一下"):
-                state["quiet_until"] = now + 1800
-                result = "好，我安静半小时。叫我仍然会回应。"
+            if name in ("安静一会儿", "安静一下", "安静"):
+                seconds = quiet_duration(arg) if name == "安静" else 1800
+                state["quiet_until"] = now + seconds
+                result = f"好，我安静 {seconds // 60} 分钟。叫我仍然会回应。"
             elif name in ("活跃一点", "自由聊天", "恢复聊天", "少说一点"):
                 state.update(
                     mode="quiet" if name == "少说一点" else "free", quiet_until=0
@@ -356,6 +358,27 @@ class ResidentCharacter:
                 state["next_tick"] = 0
             elif name in ("忘梗", "完成目标", "取消目标"):
                 kind = "meme" if name == "忘梗" else "goal"
+                rows = [
+                    r
+                    for r in self._rows(db, scope, kind)
+                    if r["owner"] == owner and (kind == "meme" or r["status"] == "open")
+                ]
+                exact = [
+                    r
+                    for r in rows
+                    if r["id"] == arg or r["text"].casefold() == arg.casefold()
+                ]
+                if not exact and arg:
+                    exact = [r for r in rows if arg.casefold() in r["text"].casefold()]
+                if len(exact) != 1:
+                    candidates = exact or rows
+                    return "请明确要处理哪一条，发送命令加对应 ID：\n" + (
+                        "\n".join(
+                            f"{r['id']}：{r['text'][:80]}" for r in candidates[:6]
+                        )
+                        or "没有找到你创建的对应条目。"
+                    )
+                arg = exact[0]["id"]
                 if kind == "meme":
                     cur = db.execute(
                         "DELETE FROM character_items WHERE scope=? AND owner=? AND kind=? AND id=?",
@@ -381,6 +404,7 @@ class ResidentCharacter:
                     else "私聊不后台推送；你可以直接让我查找感兴趣的内容。"
                 )
             elif name in ("宠物", "喂食", "摸摸", "宠物取名"):
+                state["focus"] = {"owner": owner, "kind": "pet", "expires": now + 300}
                 pet = state["pet"]
                 hours = max(0, (now - pet["updated"]) / 3600)
                 pet["food"] = max(0, pet["food"] - hours * 2)
@@ -737,3 +761,15 @@ def read_feed(url):
                 }
             )
     return results
+
+
+def quiet_duration(value: str) -> int:
+    if value in {"半小时", "一小时"}:
+        return 1800 if value == "半小时" else 3600
+    match = re.fullmatch(r"(\d+)\s*(分钟|小时)", value)
+    if not match:
+        raise ValueError("请填写安静时长，例如 10分钟、半小时或1小时")
+    seconds = int(match[1]) * (60 if match[2] == "分钟" else 3600)
+    if not 60 <= seconds <= 86400:
+        raise ValueError("安静时长应在1分钟到24小时之间")
+    return seconds

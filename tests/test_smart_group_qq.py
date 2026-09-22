@@ -158,7 +158,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(first["action"], "skip")
         self.assertEqual(second["reason"], "duplicate")
-        self.assertEqual(render.call_count, 2)
+        self.assertEqual(render.call_count, 1)
         render.assert_called_with()
         self.assertEqual(self.adapter.sent, [("group-a", expected, "roster-1")])
 
@@ -221,10 +221,10 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         for index, raw in enumerate(("<@bot> /update", "<@bot> /platform pause", "<@bot> /reload-mcp")):
             with self.subTest(raw=raw):
                 result = handler(self.make_event(raw, f"unknown-native-{index}"), self.gateway)
-                self.assertEqual(result["action"], "rewrite")
-                self.assertNotEqual(result["text"], raw.removeprefix("<@bot> "))
-                self.assertIn("群记忆键", result["text"])
-        self.assertEqual(self.adapter.sent, [])
+                self.assertEqual(result["action"], "skip")
+                await asyncio.sleep(0)
+        self.assertEqual(len(self.adapter.sent), 3)
+        self.assertTrue(all("/help" in row[1] for row in self.adapter.sent))
 
     async def test_private_aliases_delegate_to_native_session_commands(self):
 

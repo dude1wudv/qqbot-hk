@@ -30,6 +30,7 @@ from .formatter import format_for_qq, split_message, split_group_reply
 from .attention import AttentionManager, AttentionMode
 from .character import ResidentCharacter, command_parts
 from .expressions import render_expression
+from .interaction import resolve_interaction, CONFIG_ERROR
 from .knowledge import KnowledgeBase, KnowledgeError, kb_help_text, parse_kb_command
 from .memory import GroupMemory, normalize_member_message
 from .member_memory import MemberMemory, should_extract
@@ -733,6 +734,15 @@ def build_handler(ctx: Any, store: Store):
         source = getattr(event, "source", None)
         if source is None or _platform_name(source) != "qqbot":
             return {"action": "allow"}
+        # Hermes invokes this hook BEFORE its central authorization gate. Local
+        # commands must not mutate state or send a reply on behalf of a denied sender.
+        authorized = getattr(gateway, "_is_user_authorized_for_source", None)
+        if callable(authorized):
+            try:
+                if not authorized(source):
+                    return {"action": "allow"}  # Let Hermes run pairing/rejection.
+            except Exception:
+                return {"action": "allow"}
         adapter = _adapter(gateway, source)
         _configure_adapter(adapter, response_registry)
         chat_type = str(getattr(source, "chat_type", "") or "").lower()
@@ -753,15 +763,28 @@ def build_handler(ctx: Any, store: Store):
         if not group_id or (not text and not image_paths):
             return {"action": "allow"}
         character_scope = group_id if is_group else "dm:" + group_id
+        direct_control = official or not is_group or bool(
+            isinstance(raw_message, Mapping) and raw_message.get("_smart_group_qq_direct")
+        )
+        interaction = None
+        if direct_control:
+            state = character.state(character_scope)
+            focus = state.get("focus") or {}
+            focused = (focus.get("kind") == "pet"
+                       and focus.get("owner") == store.member_ref_for(character_scope, member_id)
+                       and focus.get("expires", 0) > time.time())
+            interaction = resolve_interaction(
+                text, wake_words=wake_words, pet_name=state["pet"]["name"],
+                pet_focused=focused, private=not is_group,
+            )
+        original_text = text
+        if interaction and not interaction.error:
+            text = interaction.text
         character_text = text
-        for word in wake_words:
-            if character_text.startswith(word):
-                character_text = character_text[len(word):].lstrip(" ，,:：")
-                break
         character_command = command_parts(character_text)
         if is_group and not policy.static(text).blocked:
             character.bind(group_id, adapter, member_id)
-        if not is_group and not text.startswith(("/", "／")) and not character_command and not policy.static(text).blocked:
+        if not is_group and not text.startswith(("/", "／")) and not interaction and not character_command and not policy.static(text).blocked:
             background = character.context(character_scope, member_id, text)
             if not background:
                 return {"action": "allow"}
@@ -792,19 +815,49 @@ def build_handler(ctx: Any, store: Store):
         profile_command = parse_profile_command(text)
         model_rewrite = model_alias_rewrite(text)
         reasoning_rewrite = reasoning_alias_rewrite(text)
-        static_decision = policy.static(text)
+        static_decision = policy.static(original_text)
+        access_denial = None
+        check_access = getattr(gateway, "_check_slash_access", None)
+        if interaction and direct_control and callable(check_access):
+            command_name = text.lstrip("/").split(maxsplit=1)[0] if text else "角色"
+            try:
+                access_denial = check_access(source, command_name)
+            except Exception:
+                access_denial = "暂时无法确认命令权限，请稍后重试。"
+        local_command = (character_command or profile_command or parse_command(text)
+                         or text.startswith("/kb") or text == "/配置"
+                         or (interaction and interaction.error))
+        if direct_control and local_command and message_id and not static_decision.blocked and not access_denial:
+            # Claim before side effects, including ambiguous requests. A replay
+            # must not become a different mutation after the context changes.
+            dispatch_claim = ("qqbot", message_id, "interaction:dispatch")
+            if not store.claim_message(*dispatch_claim):
+                return {"action": "skip", "reason": "duplicate"}
+            store.finish_claim(*dispatch_claim, success=True)
         if static_decision.blocked:
             claim_action = "moderation:" + str(static_decision.rule_id or "static")
             reply = static_decision.notice or "此消息未能通过群聊安全审核。"
-        elif character_command and (official or not is_group or bool(raw_message.get("_smart_group_qq_direct"))):
+        elif access_denial:
+            claim_action = "interaction:denied"
+            reply = str(access_denial)
+        elif interaction and interaction.error:
+            claim_action = "interaction:clarify"
+            reply = interaction.error
+        elif interaction and interaction.native:
+            return {"action": "rewrite", "text": interaction.text}
+        elif text == "/配置":
+            claim_action = "interaction:configuration"
+            reply = CONFIG_ERROR + "\n/model 查看当前模型；/reasoning 查看当前推理；/status 查看配置默认值。\n保留 /deepseek /gemini /low /medium /high /max，以及 /模型、/推理、/配置 等中文写法。"
+        elif character_command and direct_control:
             claim_action = "character:" + character_command[0]
             try:
                 reply = character.command(character_scope, member_id, character_text, message_id)
-                if character_command[0] in {"安静一会儿", "安静一下", "少说一点", "停止主动分享"}:
+                if character_command[0] in {"安静", "安静一会儿", "安静一下", "少说一点", "停止主动分享"}:
                     _cancel_batch(group_id)
                     response_registry.cancel_group(group_id, ordinary_only=True)
             except ValueError:
-                reply = "请检查内容，角色记忆不保存敏感信息。"
+                reply = ("请填写1分钟到24小时的安静时长，例如 /安静 10分钟。"
+                         if character_command[0] == "安静" else "请检查内容，角色记忆不保存敏感信息。")
         elif model_rewrite or reasoning_rewrite:
             # Let Hermes' native session-scoped implementations own persistence,
             # cached-agent eviction and confirmation.
@@ -919,6 +972,9 @@ def build_handler(ctx: Any, store: Store):
                     "action": "rewrite",
                     "text": native_rewrite if is_group else text.replace("／", "/", 1),
                 }
+            elif direct_control and text.startswith("/"):
+                claim_action = "interaction:unknown"
+                reply = "这条命令暂不支持，请发送 /help 查看可用命令；配置模型或推理可用 /配置。"
             elif not is_group:
                 # Non-slash DM traffic is already filtered above; keep allow for
                 # any remaining private-chat edge cases.
