@@ -46,7 +46,7 @@ class AttentionManager:
         self.max_groups = max(1, int(max_groups))
         self.reply_ttl_seconds = max(1.0, float(reply_ttl_seconds))
         self.max_reply_ids = max(1, int(max_reply_ids))
-        self.max_interjections_per_minute = max(1, int(max_interjections_per_minute))
+        self.max_interjections_per_minute = max(0, int(max_interjections_per_minute))
         self.unanswered_pause_seconds = max(0, float(unanswered_pause_seconds))
         self._groups: OrderedDict[str, AttentionState] = OrderedDict()
 
@@ -109,7 +109,7 @@ class AttentionManager:
             self.note_engagement(group_id)
         else:
             state.unanswered += 1
-            if state.unanswered >= 2:
+            if self.unanswered_pause_seconds > 0 and state.unanswered >= 2:
                 state.quiet_until = stamp + self.unanswered_pause_seconds
         if message_id:
             self.remember_reply(group_id, message_id, now=stamp)
@@ -143,7 +143,7 @@ class AttentionManager:
         if state.quiet_until and stamp >= state.quiet_until:
             state.unanswered = 0
             state.quiet_until = 0.0
-        return len(state.participation_attempts) < self.max_interjections_per_minute and (
+        return (self.max_interjections_per_minute == 0 or len(state.participation_attempts) < self.max_interjections_per_minute) and (
             engaged or stamp >= state.quiet_until
         )
 
@@ -154,7 +154,8 @@ class AttentionManager:
         state = self._state(group_id)
         if engaged:
             self.note_engagement(group_id)
-        state.participation_attempts.append(time.monotonic())
+        if self.max_interjections_per_minute:
+            state.participation_attempts.append(time.monotonic())
         return True
 
     def is_active_member(self, group_id: Any, member_ref: str, *, now: float | None = None) -> bool:

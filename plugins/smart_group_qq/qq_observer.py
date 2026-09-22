@@ -517,6 +517,14 @@ def install_nonmention_observer(callback: Observer, logger: Optional[logging.Log
 
     @functools.wraps(original)
     def wrapped(self: Any, payload: Any) -> Any:
+        if isinstance(payload, Mapping) and payload.get("op") == 0 and payload.get("t") in {
+            "GROUP_MSG_REJECT", "GROUP_DEL_ROBOT", "GROUP_MSG_RECEIVE", "GROUP_ADD_ROBOT"
+        }:
+            data = payload.get("d")
+            callback = getattr(type(self), _CALLBACK_ATTR, None)
+            lifecycle = getattr(callback, "platform_event", None)
+            if isinstance(data, Mapping) and callable(lifecycle):
+                lifecycle(str(data.get("group_openid") or ""), str(payload["t"]))
         if (
             isinstance(payload, Mapping) and payload.get("op") == 0
             and payload.get("t") in {"GROUP_AT_MESSAGE_CREATE", "GROUP_ADD_ROBOT", "GROUP_MSG_RECEIVE"}

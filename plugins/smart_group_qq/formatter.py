@@ -98,24 +98,11 @@ def trim_chat_followup(text: str) -> str:
 
 
 def split_group_reply(text: Any, *, direct: bool = False) -> list[str]:
-    """Use natural chat bubbles; unsolicited turns have a hard size budget."""
+    """Preserve full output; packet size is separate from conversational freedom."""
     value = format_for_qq(text)
-    if not direct and len(value) > 180:
-        value = value[:179].rstrip() + "…"
-    limit = 120
-    # Preserve explicitly requested long answers, while avoiding a flood of
-    # tiny bubbles. Normal conversation stays within three short messages.
-    if direct and (len(value) > 600 or "```" in str(text)):
+    if len(value) > 240 or "```" in str(text):
         return split_message(value, max_chars=1500)
-    pieces = [part.strip() for part in re.split(r"(?<=[。！？])|(?<=[!?])(?=\s|$)|\n+", value) if part.strip()]
-    chunks: list[str] = []
-    for piece in pieces:
-        chunks.extend(split_message(piece, max_chars=limit))
-    max_bubbles = 5 if direct else 3
-    if len(chunks) > max_bubbles:
-        # Coalesce short fragments without dropping any text.
-        return [value[index:index + limit].strip() for index in range(0, len(value), limit)]
-    return chunks or [value]
+    return [part.strip() for part in re.split(r"(?<=[。！？])|(?<=[!?])(?=\s|$)|\n+", value) if part.strip()] or [value]
 
 
 def split_message(text: Any, *, max_chars: int = DEFAULT_MAX_CHARS) -> list[str]:

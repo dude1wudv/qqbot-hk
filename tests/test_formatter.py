@@ -13,8 +13,8 @@ class FormatterTests(unittest.TestCase):
         self.assertEqual(split_group_reply("终于跑通了。\n这次可以歇口气了！"), ["终于跑通了。", "这次可以歇口气了！"])
         chunks = split_group_reply("分享。" * 100)
         self.assertLessEqual(len(chunks), 3)
-        self.assertLessEqual(sum(map(len, chunks)), 180)
-        self.assertTrue(all(len(chunk) <= 120 for chunk in chunks))
+        self.assertEqual("".join(chunks), "分享。" * 100)
+        self.assertTrue(all(len(chunk) <= 1500 for chunk in chunks))
         self.assertEqual("".join(split_group_reply("x" * 1900, direct=True)), "x" * 1900)
         self.assertEqual(split_group_reply("看这个 https://example.com/?q=hello!world", direct=True),
                          ["看这个 https://example.com/?q=hello!world"])

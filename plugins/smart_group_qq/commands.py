@@ -98,7 +98,10 @@ def native_group_command_rewrite(value: Any) -> str | None:
 
 def help_text() -> str:
     return (
-        "【QQ 助手】\n"
+        "【小栖 · 常驻 AI 角色】\n"
+        "/角色 角色状态与自然语言控制\n/经历 共同经历\n/梗簿、/记梗 内容、/忘梗 ID\n"
+        "/目标 内容、/完成目标 ID、/取消目标 ID\n/探索 查看有无新发现\n"
+        "/宠物、/喂食、/摸摸、/宠物取名 名字\n/剧情 设定、/投票 1或2、/结束剧情\n/表情 心情\n"
         "/help 功能说明\n/reset、/clear 或 /new 重置当前会话\n"
         "/compress 立即重试上下文压缩（上下文过大时）\n"
         "/status 运行状态\n/summary 近期互动摘要\n/rules 已启用规则\n"

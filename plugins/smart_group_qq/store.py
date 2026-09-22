@@ -24,7 +24,7 @@ from typing import Any, Iterator
 
 
 PENDING_STALE_SECONDS = 300.0
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _MEMBER_REF_NAMESPACE = b"smart_group_qq/member-ref/v1"
 _SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
@@ -92,6 +92,24 @@ class Store:
             )
         self.db.executescript(
             """
+            CREATE TABLE IF NOT EXISTS character_state (
+                scope TEXT PRIMARY KEY, payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS character_items (
+                id TEXT NOT NULL, scope TEXT NOT NULL, kind TEXT NOT NULL,
+                owner TEXT NOT NULL, text TEXT NOT NULL, evidence TEXT NOT NULL,
+                status TEXT NOT NULL, created REAL NOT NULL, expires REAL NOT NULL,
+                PRIMARY KEY(scope,id)
+            );
+            CREATE INDEX IF NOT EXISTS character_items_scope ON character_items(scope,kind,expires);
+            CREATE TABLE IF NOT EXISTS character_relations (
+                scope TEXT NOT NULL, owner TEXT NOT NULL, count INTEGER NOT NULL,
+                PRIMARY KEY(scope,owner)
+            );
+            CREATE TABLE IF NOT EXISTS character_commands (
+                scope TEXT NOT NULL, message_id TEXT NOT NULL, result TEXT NOT NULL,
+                created REAL NOT NULL, PRIMARY KEY(scope,message_id)
+            );
             CREATE TABLE IF NOT EXISTS message_claims (
                 platform TEXT NOT NULL,
                 message_id TEXT NOT NULL,
@@ -590,6 +608,8 @@ class Store:
     def clear_group(self, group_id: str) -> None:
         with self.transaction() as db:
             self._advance_memory_epoch(group_id)
+            for table in ("character_state", "character_items", "character_relations", "character_commands"):
+                db.execute(f"DELETE FROM {table} WHERE scope=?", (str(group_id),))
             db.execute("DELETE FROM group_history WHERE group_id=?", (str(group_id),))
             db.execute("DELETE FROM group_memories WHERE group_id=?", (str(group_id),))
             db.execute("DELETE FROM compaction_jobs WHERE group_id=?", (str(group_id),))
@@ -1082,6 +1102,10 @@ class Store:
         ref, _ = self._member_identity(group_id, member_id)
         with self.transaction() as db:
             self._advance_memory_epoch(group_id)
+            db.execute("DELETE FROM character_items WHERE scope=? AND (owner=? OR kind IN ('discovery','episode'))", (str(group_id), ref))
+            db.execute("DELETE FROM character_relations WHERE scope=? AND owner=?", (str(group_id), ref))
+            db.execute("DELETE FROM character_commands WHERE scope=?", (str(group_id),))
+            db.execute("DELETE FROM character_state WHERE scope=?", (str(group_id),))
             facts = db.execute(
                 "DELETE FROM member_memory_facts WHERE group_id=? AND member_ref=?",
                 (str(group_id), ref),
