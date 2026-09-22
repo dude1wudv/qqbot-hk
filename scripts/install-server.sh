@@ -15,6 +15,8 @@ for path in \
   "$project_dir/config/SOUL.md" \
   "$project_dir/config/scheduled-messages.yaml" \
   "$project_dir/plugins/smart_group_qq/plugin.yaml" \
+  "$project_dir/hooks/smart_group_qq/HOOK.yaml" \
+  "$project_dir/hooks/smart_group_qq/handler.py" \
   "$project_dir/scripts/reconcile-smart-group-cron.py" \
   "$project_dir/scripts/patch-hermes-audio.py" \
   "$project_dir/scripts/verify-hermes-audio.py" \
@@ -135,6 +137,9 @@ os.chmod(env_target, 0o600)
 PY
 
 install -m 0644 "$project_dir/config/SOUL.md" "$stage_dir/SOUL.md"
+install -d -o 10000 -g 10000 -m 0755 "$data_dir/hooks/smart_group_qq"
+install -o 10000 -g 10000 -m 0644 "$project_dir/hooks/smart_group_qq/HOOK.yaml" "$data_dir/hooks/smart_group_qq/HOOK.yaml"
+install -o 10000 -g 10000 -m 0644 "$project_dir/hooks/smart_group_qq/handler.py" "$data_dir/hooks/smart_group_qq/handler.py"
 install -m 0644 "$project_dir/config/scheduled-messages.yaml" "$stage_dir/smart-group-schedules.yaml"
 install -m 0755 "$project_dir/scripts/reconcile-smart-group-cron.py" "$stage_dir/reconcile-smart-group-cron.py"
 cp -a "$project_dir/plugins/smart_group_qq" "$stage_dir/smart_group_qq"

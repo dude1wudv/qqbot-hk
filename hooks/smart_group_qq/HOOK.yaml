@@ -1,0 +1,4 @@
+name: smart_group_qq
+description: Start QQ maintenance on the running gateway event loop
+events:
+  - gateway:startup

@@ -12,6 +12,27 @@ health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}
 test "$state" = "running"
 test "$health" = "healthy"
 
+# A healthy gateway process alone does not prove the plugin timer was started.
+started_at="$(docker inspect -f '{{.State.StartedAt}}' "$container_id")"
+docker exec -i "$container_id" python - "$started_at" <<'PY'
+import datetime
+import sqlite3
+import sys
+import time
+
+started = datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()
+db = sqlite3.connect("file:/opt/data/plugin-data/smart_group_qq/data.db?mode=ro", uri=True)
+deadline = time.monotonic() + 60
+while True:
+    if db.execute("SELECT 1 FROM audit_events WHERE event_type='maintenance_ready' AND created_at>=? LIMIT 1", (started,)).fetchone():
+        print("smart_group_qq maintenance cycle: OK")
+        break
+    if time.monotonic() >= deadline:
+        raise SystemExit("smart_group_qq maintenance cycle did not complete after startup")
+    time.sleep(2)
+db.close()
+PY
+
 image_id="$(docker inspect -f '{{.Image}}' "$container_id")"
 base_digest_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.hermes-base-digest"}}' "$image_id")"
 audio_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.audio-patch"}}' "$image_id")"

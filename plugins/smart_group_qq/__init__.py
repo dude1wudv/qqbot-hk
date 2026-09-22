@@ -433,11 +433,12 @@ def _start_maintenance(
 
     previous = getattr(ctx, "_smart_group_qq_maintenance_task", None)
     if isinstance(previous, asyncio.Task) and not previous.done():
-        previous.cancel()
+        return
 
     async def run() -> None:
         memory = handler.memory
         profiles = handler.profiles
+        first_cycle = True
         while True:
             await asyncio.sleep(max(10.0, float(interval_seconds)))
             try:
@@ -462,6 +463,10 @@ def _start_maintenance(
                 registry = getattr(handler, "response_registry", None)
                 if registry is not None:
                     registry.cleanup()
+                if first_cycle:
+                    logger.info("smart_group_qq maintenance first cycle completed")
+                    store.record_audit("maintenance_ready", source="gateway_startup")
+                    first_cycle = False
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -472,8 +477,10 @@ def _start_maintenance(
     except RuntimeError:
         logger.warning("smart_group_qq maintenance loop unavailable")
         return
-    task = loop.create_task(run())
+    spawn = getattr(ctx, "spawn_task", loop.create_task)
+    task = spawn(run(), name="smart_group_qq:maintenance")
     setattr(ctx, "_smart_group_qq_maintenance_task", task)
+    logger.info("smart_group_qq maintenance loop started")
 
 
 def _knowledge_context(results: list[dict[str, Any]], *, char_budget: int = 1000) -> str:
@@ -1686,16 +1693,20 @@ def register(ctx: Any) -> None:
         logger.exception("smart_group_qq non-mention observer installation failed")
     ambient_cfg = ctx.get_config("ambient", {})
     memory_cfg = ctx.get_config("memory", {})
-    _start_maintenance(
-        ctx,
-        handler,
-        store,
-        interval_seconds=float(ambient_cfg.get("flush_interval_seconds", 30)),
-        ambient_retention_days=int(memory_cfg.get("ambient_retention_days", 7)),
-        addressed_retention_days=int(memory_cfg.get("addressed_retention_days", 30)),
-        audit_retention_days=int(memory_cfg.get("audit_retention_days", 90)),
-        claim_retention_days=int(memory_cfg.get("claim_retention_days", 7)),
-    )
+    def start_maintenance(_payload=None):
+        _start_maintenance(
+            ctx, handler, store,
+            interval_seconds=float(ambient_cfg.get("flush_interval_seconds", 30)),
+            ambient_retention_days=int(memory_cfg.get("ambient_retention_days", 7)),
+            addressed_retention_days=int(memory_cfg.get("addressed_retention_days", 30)),
+            audit_retention_days=int(memory_cfg.get("audit_retention_days", 90)),
+            claim_retention_days=int(memory_cfg.get("claim_retention_days", 7)),
+        )
+
+    # Discovery can run before asyncio.run(). The installed gateway lifecycle
+    # hook invokes this subscription on the real gateway loop, not the event
+    # bus worker thread. Hermes owns task cancellation on plugin unload.
+    ctx.subscribe("smart_group_qq:gateway_startup", start_maintenance)
 
 
 __all__ = ["PLUGIN_ID", "build_handler", "register"]
