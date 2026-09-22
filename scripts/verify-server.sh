@@ -236,14 +236,14 @@ if deepseek_provider.get("api_mode") != "chat_completions":
 agent_config = config.get("agent")
 if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
     raise SystemExit("image input must use native content parts")
-if agent_config.get("reasoning_effort") != "xhigh":
-    raise SystemExit("agent.reasoning_effort must be xhigh")
+if agent_config.get("reasoning_effort") != "low":
+    raise SystemExit("agent.reasoning_effort must be low")
 reasoning_overrides = agent_config.get("reasoning_overrides") or {}
 if reasoning_overrides.get("deepseek/deepseek-v4.1-flash") != "medium":
     raise SystemExit("DeepSeek reasoning override must be medium")
 for model in ("meta/muse-spark-1.3-contributor", "xiaomi/mimo-v2.6-flash"):
-    if reasoning_overrides.get(model) != "xhigh":
-        raise SystemExit("new model reasoning override must be xhigh")
+    if reasoning_overrides.get(model) != ("low" if model == "meta/muse-spark-1.3-contributor" else "xhigh"):
+        raise SystemExit("new model reasoning override is invalid")
     if model not in (providers.get("sub2api_dialogue", {}).get("models") or {}):
         raise SystemExit("new model provider registration missing")
 if providers.get("sub2api_dialogue", {}).get("key_env") != "SUB2API_DIALOGUE_API_KEY":
@@ -258,9 +258,9 @@ if compression_config.get("enabled") is not True:
     raise SystemExit("compression.enabled must be true")
 if (
     type(compression_config.get("threshold_tokens")) is not int
-    or compression_config.get("threshold_tokens") != 50000
+    or compression_config.get("threshold_tokens") != 100000
 ):
-    raise SystemExit("compression.threshold_tokens must be exactly 50000")
+    raise SystemExit("compression.threshold_tokens must be exactly 100000")
 
 auxiliary = config.get("auxiliary")
 if not isinstance(auxiliary, Mapping):
@@ -283,7 +283,7 @@ if compression_route.get("reasoning_effort") != "low":
 if auxiliary.get("vision"):
     raise SystemExit("auxiliary vision fallback must be disabled")
 print(
-    "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=50000 "
+    "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=100000 "
     "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
 )
 tools = (((config.get("platform_toolsets") or {}).get("qqbot") or []))

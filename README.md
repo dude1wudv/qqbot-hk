@@ -121,11 +121,11 @@ Muse 风格的小栖更注重具体接话、独立观点和克制幽默，避免
 
 ## 模型
 
-Hermes 默认通过 `sub2api_dialogue` 的独立 key，以 OpenAI Chat Completions 调用 `meta/muse-spark-1.3-contributor`，默认及模型推理覆写均为 `xhigh`。请求显式携带顶层 `reasoning_effort`，不钳制为 `high` 或 `max`。`/muse`、`/mimo` 分别选择 `meta/muse-spark-1.3-contributor`、`xiaomi/mimo-v2.6-flash`；`/deepseek`、`/gemini` 保留各自原有密钥路由。新模型的 131072 token 是保守应用预算，不宣称为上游极限。切换选项不等同于上游可用：专用 key 的实际模型权限和在线探测为准。
+Hermes 默认通过 `sub2api_dialogue` 的独立 key，以 OpenAI Chat Completions 调用 `meta/muse-spark-1.3-contributor`，默认推理强度为 `low`，请求显式携带顶层 `reasoning_effort`，不钳制为 `high` 或 `max`。`/muse`、`/mimo` 分别选择 `meta/muse-spark-1.3-contributor`、`xiaomi/mimo-v2.6-flash`；`/deepseek`、`/gemini` 保留各自密钥路由。新模型的 131072 token 是保守应用预算，不宣称为上游极限。切换选项不等同于上游可用：专用 key 的实际模型权限和在线探测为准。
 
-命令均为 Hermes 原生会话级覆写，不修改其他群或全局默认。已有显式模型/推理覆写的会话仍保留用户选择，发送 `/muse`、`/xhigh` 可更新；`/model`、`/reasoning` 查询实际设置。无显式覆写的会话跟随新默认。图片保持原生内容块，不配置自动模型回退。
+命令均为 Hermes 原生会话级覆写，不修改其他群或全局默认。已有显式模型/推理覆写的会话仍保留用户选择，发送 `/muse`、`/low` 可更新；`/model`、`/reasoning` 查询实际设置。无显式覆写的会话跟随新默认。图片保持原生内容块，不配置自动模型回退。
 
-Hermes 的会话上下文达到 `50000` token 阈值时自动尝试压缩，受原生冷却和无效压缩保护约束；该值是触发阈值，不是完整请求硬上限。压缩在原会话继续，不调用 `/reset`，并固定使用 `deepseek/deepseek-v4.1-flash`、`low` 推理强度。若连续无效压缩触发持久化 anti-thrash breaker，QQ 网关会在下一条普通消息进入模型前自动执行完整 `/new` 等价轮换，并继续处理当前消息；手动 `/compress`、`/new` 不被抢占。群记忆与知识库不随该 Hermes 会话轮换清空。群记忆独立在 40 条新消息且距上次刷新至少 300 秒时整理；或至少 4 条新消息的最老一条等待 1200 秒后整理，单条闲聊不会因空闲自动摘要。
+Hermes 的会话上下文达到 `100000` token 阈值时自动尝试压缩，受原生冷却和无效压缩保护约束；该值是触发阈值，不是完整请求硬上限。压缩在原会话继续，不调用 `/reset`，并固定使用 `deepseek/deepseek-v4.1-flash`、`low` 推理强度。若连续无效压缩触发持久化 anti-thrash breaker，QQ 网关会在下一条普通消息进入模型前自动执行完整 `/new` 等价轮换，并继续处理当前消息；手动 `/compress`、`/new` 不被抢占。群记忆与知识库不随 Hermes 会话轮换清空。群记忆独立在 40 条新消息且距上次刷新至少 300 秒时整理；或至少 4 条新消息的最老一条等待 1200 秒后整理，单条闲聊不会因空闲自动摘要。
 
 已开始的群摘要任务独立于新任务门槛：失败任务按退避时间重试，分批剩余消息会继续处理，即使群里没有新发言；有效租约期间不重复执行。模型失败时保留最后一次有效摘要及其游标，未整理原文仍保留待重试，不用聊天原文尾部覆盖已有摘要。摘要输入预算小于首条消息时对该条限长，避免游标永久停滞。成员事实的来源原文按保留期清理后，仍用持久来源序号阻止较旧提取覆盖较新事实。
 
@@ -146,7 +146,7 @@ bash /opt/qqbot-hk/scripts/verify-server.sh
 
 `install-server.sh` 会校验固定公告目标列表，保留配置模板的群专属通配授权，移除旧沙箱路由和包括私聊在内的全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像并只重建 `hermes-qqbot`，等待健康、运行 cron 对账并完成验收。旧插件副本在启动前移到部署备份目录，避免 Hermes 将 `plugins/*.old` 当作另一份活动插件加载。源码配置不含真实 OpenID 或 API key。
 
-`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、语音输入/输出双重禁用与音频环境变量清理、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、50k 压缩触发与无效压缩自动换新、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、语音输入/输出双重禁用与音频环境变量清理、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、100k 压缩触发与无效压缩自动换新、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
 部署后验证任意已加入的新群通过适配器与中央群授权，未批准私聊仍被拒绝或进入 pairing，两名成员共享本群上下文且不串群。群管理员打开“接收所有消息”并确认平台实际投递后，再验证：有内容的分享按需接话、纯表情/收尾静默、多人延续话题、自由参与、手动安静与恢复、短句分条、重复事件只处理一次、非 @ 管理命令不执行、近期旁听能作为后续 @ 的上下文。主动推送还要求群内允许主动发送，不能用修改本地配置绕过平台权限。
 
