@@ -104,7 +104,7 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("secret-value", str(payload))
         self.assertNotIn("sk-abcdefghijklmnop", str(payload))
 
-    async def test_model_failure_keeps_previous_memory_and_adds_new_text(self):
+    async def test_model_failure_keeps_previous_memory_and_pending_history(self):
         self.store.set_memory(
             "group-a", "旧摘要", structured={
                 "summary": "旧摘要", "topics": ["旧话题"], "facts": [],
@@ -119,9 +119,11 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
 
         payload = await self.memory.refresh_ai(type("Ctx", (), {"llm": BrokenLLM()})(), "group-a", force=True)
         self.assertIn("旧摘要", payload["summary"])
-        self.assertIn("新增事实", payload["summary"])
+        self.assertNotIn("新增事实", payload["summary"])
         self.assertEqual(payload["topics"], ["旧话题"])
-        self.assertEqual(self.store.memory_payload("group-a")["model"], "deterministic-fallback")
+        self.assertEqual(self.store.memory_payload("group-a")["model"], "")
+        self.assertEqual(self.store.memory_payload("group-a")["last_history_id"], 0)
+        self.assertIn("新增事实", self.memory.background("group-a"))
 
     def test_existing_v1_database_is_migrated_without_losing_summary(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1214,6 +1214,9 @@ class Store:
                         previous_source is not None
                         and (float(source["created_at"]), int(source["id"]))
                         < (float(previous_source["created_at"]), int(previous_source["id"]))
+                    ) or (
+                        previous_source is None and source is not None
+                        and int(source["id"]) < int(existing["source_history_id"])
                     )
                 if protected:
                     return {**dict(existing), "deduplicated": True, "applied": False}

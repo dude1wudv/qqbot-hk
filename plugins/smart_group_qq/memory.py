@@ -182,6 +182,15 @@ class GroupMemory:
         pending = self.store.get_history_since(group_id, cursor, self.compact_after_messages)
         if not pending:
             return False
+        # Continue already-started work independently of the thresholds for
+        # creating a new summary. Quiet groups still need retries and tails.
+        read_job = getattr(self.store, "get_compaction_job", None)
+        job = read_job(group_id) if callable(read_job) else None
+        if job is not None:
+            if job["status"] == "running":
+                return job["lease_until"] is not None and float(job["lease_until"]) <= stamp
+            if job["status"] in {"pending", "failed"}:
+                return float(job["next_retry_at"] or 0) <= stamp
         updated_at = float(state.get("updated_at", 0) or 0)
         if updated_at and stamp - updated_at < self.summary_min_interval_seconds:
             return False
@@ -212,7 +221,12 @@ class GroupMemory:
             line = f"[{kind}/{who}] {_redact(row['text']).strip()[:1200]}"
             extra = len(line) + (1 if lines else 0)
             if used + extra > self.summary_input_char_budget:
-                break
+                if lines:
+                    break
+                # Even the first row must fit the configured budget, otherwise
+                # one long message would permanently block the cursor.
+                line = line[:self.summary_input_char_budget]
+                extra = len(line)
             lines.append(line)
             used += extra
             last_id = int(row["id"])
@@ -262,6 +276,15 @@ class GroupMemory:
             batch_previous: Mapping[str, Any],
             failed_cursor: int,
         ) -> dict[str, Any]:
+            current = self.store.memory_payload(group_id)
+            if self.store.memory_epoch(group_id) != epoch:
+                return current.get("structured") or {}
+            if current.get("summary") and current.get("model") != "deterministic-fallback":
+                # A model outage must not overwrite a good summary with a
+                # truncated tail of raw chat. Pending history remains retryable.
+                if job_id:
+                    self.store.finish_compaction_job(job_id, False, error="AI compaction failed")
+                return current.get("structured") or {}
             payload = self._fallback_payload(batch_source, batch_previous)
             # A fallback is useful for this response, but the durable cursor
             # stays at the last successfully summarized row.  The job remains
