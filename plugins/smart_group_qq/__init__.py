@@ -854,6 +854,7 @@ def build_handler(ctx: Any, store: Store):
                 access_denial = "暂时无法确认命令权限，请稍后重试。"
         local_command = (character_command or profile_command or parse_command(text)
                          or text.startswith("/kb") or text == "/配置"
+                         or (is_group and text.lower() in {"/only", "/all"})
                          or (interaction and interaction.error))
         if direct_control and local_command and message_id and not static_decision.blocked and not access_denial:
             # Claim before side effects, including ambiguous requests. A replay
@@ -865,6 +866,17 @@ def build_handler(ctx: Any, store: Store):
         if static_decision.blocked:
             claim_action = "moderation:" + str(static_decision.rule_id or "static")
             reply = static_decision.notice or "此消息未能通过群聊安全审核。"
+        elif is_group and direct_control and text.lower() in {"/only", "/all"}:
+            claim_action = "group_mode:" + text.lower()[1:]
+            character.set_group_mode(group_id, text.lower()[1:])
+            _cancel_batch(group_id)
+            response_registry.cancel_group(group_id, ordinary_only=True)
+            reply = (
+                "已切换为仅 @ 模式，普通群聊不再自动响应。主动 GitHub 推送已关闭。"
+                if text.lower() == "/only"
+                else "已恢复群聊自动参与；仍需 @ 才执行管理命令，主动 GitHub 推送保持关闭。"
+            )
+
         elif access_denial:
             claim_action = "interaction:denied"
             reply = str(access_denial)
@@ -1352,6 +1364,9 @@ def build_handler(ctx: Any, store: Store):
             )
             return False, False
 
+        if character.group_mode(group_id) == "only":
+            return False
+
     async def _dispatch_participation(
         items: list[Mapping[str, Any]], *, direct: bool
     ) -> bool:
@@ -1399,6 +1414,8 @@ def build_handler(ctx: Any, store: Store):
         key: tuple[str, str], items: list[Mapping[str, Any]], token: int
     ) -> None:
         group_id, _ = key
+        if character.group_mode(group_id) == "only":
+            return
         lock = group_locks.setdefault(group_id, asyncio.Lock())
         async with lock:
             cooldown = float(participation_cfg.get("cooldown_seconds", 5))

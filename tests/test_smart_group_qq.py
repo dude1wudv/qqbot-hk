@@ -351,6 +351,21 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         row = self.store.get_history("group-a", 2)[0]
         self.assertEqual(row["source_kind"], "ambient")
 
+    async def test_only_and_all_toggle_group_ambient_mode(self):
+        handler = build_handler(FakeContext(), self.store)
+
+        only = handler(self.make_event("<@bot> /only", "mode-only"), self.gateway)
+        self.assertEqual(only["action"], "skip")
+        await asyncio.sleep(0)
+        self.assertEqual(handler.character.group_mode("group-a"), "only")
+        self.assertIn("仅 @ 模式", self.adapter.sent[-1][1])
+
+        restored = handler(self.make_event("<@bot> /all", "mode-all"), self.gateway)
+        self.assertEqual(restored["action"], "skip")
+        await asyncio.sleep(0)
+        self.assertEqual(handler.character.group_mode("group-a"), "all")
+        self.assertIn("恢复群聊自动参与", self.adapter.sent[-1][1])
+
     async def test_disabled_ambient_rejects_async_and_fast_ingestion(self):
         handler = build_handler(FakeContext({"ambient": {"enabled": False}}), self.store)
         await handler.observe_nonmention({

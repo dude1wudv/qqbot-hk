@@ -130,13 +130,10 @@ plugins:
       settings:
         character:
           enabled: true
-          proactive_enabled: true
-          # Thinking cadence, not a quota on normal group participation.
+          proactive_enabled: false
+          # GitHub release discovery is disabled; normal @ and group replies remain available.
           think_interval_seconds: 900
-          discovery_feeds:
-            - https://github.com/moeru-ai/airi/releases.atom
-            - https://github.com/mindcraft-bots/mindcraft/releases.atom
-            - https://github.com/SillyTavern/SillyTavern/releases.atom
+          discovery_feeds: []
         status_model: deepseek/deepseek-v4.1-flash
         status_reasoning: medium
         auto_pair:

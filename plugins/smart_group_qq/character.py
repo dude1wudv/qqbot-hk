@@ -73,6 +73,7 @@ class ResidentCharacter:
         state = json.loads(row[0]) if row else {}
         defaults = dict(
             mode="free",
+            group_mode="all",
             quiet_until=0,
             revision=0,
             next_tick=0,
@@ -96,6 +97,19 @@ class ResidentCharacter:
     def state(self, scope):
         with self.store.transaction() as db:
             return self._load(db, scope)
+
+    def set_group_mode(self, scope, mode):
+        """Persist whether this group admits ambient replies."""
+        normalized = "only" if str(mode).lower() == "only" else "all"
+        with self.store.transaction() as db:
+            state = self._load(db, scope)
+            state["group_mode"] = normalized
+            state["revision"] += 1
+            self._save(db, scope, state)
+        return normalized
+
+    def group_mode(self, scope):
+        return str(self.state(scope).get("group_mode") or "all").lower()
 
     def paused(self, scope):
         return self.state(scope)["quiet_until"] > time.time()
@@ -560,7 +574,8 @@ class ResidentCharacter:
                 ):
                     continue
                 if (
-                    state["platform_blocked"]
+                    state.get("group_mode", "all") == "only"
+                    or state["platform_blocked"]
                     or not state["proactive"]
                     or state["quiet_until"] > now
                     or state["mode"] == "quiet"
