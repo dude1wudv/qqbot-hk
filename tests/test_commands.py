@@ -40,7 +40,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("【小栖 · 常驻 AI 角色】", menu)
         for command in (
             "/help", "/reset", "/new", "/compress", "/status", "/summary", "/rules",
-            "/deepseek",
+            "/deepseek", "/mimo",
             "/low /medium /high /xhigh /max", "/kb", "/我的记忆", "/记住我", "/纠正记忆",
             "/忘记我", "/停止记忆",
         ):
@@ -50,7 +50,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("DeepSeek 的 xhigh 实际按 max 请求", menu)
 
     def test_new_model_aliases_and_xhigh_rewrite(self):
-        self.assertIsNone(model_alias_rewrite("<@bot> /mimo"))
+        self.assertEqual(model_alias_rewrite("<@bot> /mimo"), "/model xiaomi/mimo-v2.6-flash --session")
         self.assertIsNone(model_alias_rewrite("／ muse"))
         self.assertEqual(reasoning_alias_rewrite("<@bot> ／ XHIGH"), "/reasoning xhigh")
 

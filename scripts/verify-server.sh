@@ -42,7 +42,7 @@ qq_help_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot
 qq_output_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-output-patch"}}' "$image_id")"
 test "$base_digest_label" = "sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1"
 test "$audio_patch_label" = "v2"
-test "$chat_reasoning_patch_label" = "v3"
+test "$chat_reasoning_patch_label" = "v4"
 test "$compression_recovery_patch_label" = "v1"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
@@ -99,6 +99,25 @@ deepseek_text = (
 if "OK" not in deepseek_text.upper():
     raise SystemExit("deepseek/deepseek-v4.1-flash: unexpected response")
 print("MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions EFFORT=low RESULT=OK")
+
+mimo = post(
+    "/v1/chat/completions",
+    {
+        "model": "xiaomi/mimo-v2.6-flash",
+        "messages": [{"role": "user", "content": "Reply only OK"}],
+        "reasoning_effort": "low",
+        "stream": False,
+        "max_tokens": 128,
+    },
+    deepseek_key,
+)
+mimo_choices = mimo.get("choices") or []
+mimo_text = (
+    ((mimo_choices[0] if mimo_choices else {}).get("message") or {}).get("content") or ""
+).strip()
+if not mimo_text:
+    raise SystemExit("xiaomi/mimo-v2.6-flash: empty response")
+print("MODEL=xiaomi/mimo-v2.6-flash API_MODE=chat_completions EFFORT=low RESULT=OK")
 
 image_buffer = io.BytesIO()
 Image.new("RGB", (16, 16), (0, 120, 255)).save(image_buffer, format="PNG")
@@ -201,8 +220,14 @@ if deepseek_provider.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
     raise SystemExit("DeepSeek provider key wiring is invalid")
 if deepseek_provider.get("api_mode") != "chat_completions":
     raise SystemExit("DeepSeek provider must use chat_completions")
-if "deepseek/deepseek-v4.1-flash" not in (deepseek_provider.get("models") or {}):
-    raise SystemExit("DeepSeek model registration is missing")
+if set(deepseek_provider.get("models") or {}) != {
+    "deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"
+}:
+    raise SystemExit("DeepSeek and MiMo model registrations are required on the shared key")
+commands = config.get("quick_commands") or {}
+if ((commands.get("mimo") or {}).get("target")
+        != "/model xiaomi/mimo-v2.6-flash --session"):
+    raise SystemExit("MiMo session switch command is missing")
 agent_config = config.get("agent")
 if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
     raise SystemExit("image input must use native content parts")
@@ -211,8 +236,10 @@ if agent_config.get("reasoning_effort") != "low":
 reasoning_overrides = agent_config.get("reasoning_overrides") or {}
 if reasoning_overrides.get("deepseek/deepseek-v4.1-flash") != "low":
     raise SystemExit("DeepSeek reasoning override must be low")
-if set(reasoning_overrides) != {"deepseek/deepseek-v4.1-flash"}:
-    raise SystemExit("reasoning overrides must only cover DeepSeek")
+if reasoning_overrides.get("xiaomi/mimo-v2.6-flash") != "low":
+    raise SystemExit("MiMo reasoning override must be low")
+if set(reasoning_overrides) != {"deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"}:
+    raise SystemExit("reasoning overrides must only cover DeepSeek and MiMo")
 if config.get("fallback_providers"):
     raise SystemExit("automatic fallback providers must be disabled")
 if (config.get("display") or {}).get("busy_ack_enabled") is not False:
@@ -258,12 +285,12 @@ try:
         override = (json.loads(raw).get("model_override") or {})
         if override and (
             override.get("provider") not in (None, "sub2api_deepseek")
-            or override.get("model") != "deepseek/deepseek-v4.1-flash"
+            or override.get("model") not in {"deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"}
         ):
             raise SystemExit("retired QQ model override remains after session rotation")
     stale = session_db.execute(
         "SELECT COUNT(*) FROM sessions WHERE source='qqbot' AND ended_at IS NULL "
-        "AND model IS NOT NULL AND model!='deepseek/deepseek-v4.1-flash'"
+        "AND model IS NOT NULL AND model NOT IN ('deepseek/deepseek-v4.1-flash','xiaomi/mimo-v2.6-flash')"
     ).fetchone()[0]
     if stale:
         raise SystemExit("retired QQ model sessions remain active after rotation")

@@ -20,6 +20,7 @@ class ParsingTests(unittest.TestCase):
         for raw in (
             "切到 DeepSeek",
             "切到DeepSeek吧",
+            "切到MiMo吧",
             "请把模型切换到 DeepSeek",
             "/deepseek",
             "／ ＤＥＥＰＳＥＥＫ",
@@ -30,7 +31,7 @@ class ParsingTests(unittest.TestCase):
         ):
             with self.subTest(raw=raw):
                 result = resolve_interaction(raw, wake_words=("小栖",))
-                self.assertEqual(result.text, "/deepseek")
+                self.assertEqual(result.text, "/mimo" if "MiMo" in raw else "/deepseek")
                 self.assertFalse(result.error)
         for raw in (
             "推理调高",
@@ -122,7 +123,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_models_full_ids_aliases_and_effort_in_both_scopes(self):
         for chat_type in ("group", "dm"):
-            for alias, model in (("DeepSeek", "deepseek/deepseek-v4.1-flash"),):
+            for alias, model in (("DeepSeek", "deepseek/deepseek-v4.1-flash"), ("MiMo", "xiaomi/mimo-v2.6-flash")):
                 for raw in (f"/{alias}", f"<@bot>/{alias}", f"\u200b/{alias}", f"/model {model}", f"/配置 模型 {model}"):
                     with self.subTest(chat_type=chat_type, raw=raw):
                         result = await self.send(raw, chat_type + raw, chat_type=chat_type)

@@ -36,6 +36,7 @@ EXPECTED = {
     "xhigh": "/reasoning xhigh",
     "max": "/reasoning max",
     "deepseek": "/model deepseek/deepseek-v4.1-flash --session",
+    "mimo": "/model xiaomi/mimo-v2.6-flash --session",
 }
 
 
@@ -183,6 +184,7 @@ async def verify_real_ingress(config) -> None:
             # Same content, new transport IDs (QQ correctly deduplicates old IDs).
             cases = (("/值日表", "/值日表"), ("/all", "/all"),
                      ("/deepseek", EXPECTED["deepseek"]),
+                     ("/mimo", EXPECTED["mimo"]),
                      ("/xhigh", EXPECTED["xhigh"]))
             for index, (text, normalized) in enumerate(cases):
                 data = payload(f"after-{index}", "@小分队机器人" + text)["d"]
@@ -240,7 +242,7 @@ def main(config_path: Path) -> None:
     asyncio.run(verify_help())
     asyncio.run(verify_alias_resolution(config))
     asyncio.run(verify_real_ingress(config))
-    print("QQ_NATIVE_COMMANDS=passed HELP=custom-first HERMES=folded ALIASES=low,medium,high,xhigh,max,deepseek")
+    print("QQ_NATIVE_COMMANDS=passed HELP=custom-first HERMES=folded ALIASES=low,medium,high,xhigh,max,deepseek,mimo")
 
 
 if __name__ == "__main__":

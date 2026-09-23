@@ -7,7 +7,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 生产秘密位于 `/opt/qqbot-hk-deploy/secrets`，不得提交：
 
 - `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_SCHEDULE_GROUPS`。
-- `sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的 key；旧通用和 Muse/MiMo key 不再注入 QQ bot 容器。
+- `sub2api-deepseek-api-key`：聚合国模分组 key，同时用于 DeepSeek 与 MiMo；仅在服务器运行环境注入，旧通用和 Muse/MiMo 专用 key 不再注入 QQ bot。
 - `QQ_SCHEDULE_GROUPS` 是固定公告的显式目标列表，使用逗号分隔的 QQ 群 OpenID，不能使用数字群号、用户 OpenID、空值或 `*`。固定公告默认禁用。部署会移除旧 `QQ_GROUP_ALLOWED_USERS`，防止 Hermes 环境变量覆盖群专属通配配置。
 - 开发体验阶段也使用 QQ 官方生产 API/Gateway；开放平台按“开发体验用户”名单限制可访问账号。
 
@@ -23,7 +23,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - 角色采用自然群友风格，可以主动提问和完整表达；不再机械过滤末尾问句，也不再截断主动回复为 180 字。短回复按句子/换行分条，引号或括号内部不拆句；长回复与代码完整保留，以每包最多 1500 字进行传输分段。命令回复也不再最多发送五段。常见 Markdown 统一降级为纯文本。同一轮仅首条显示引用，后续分条保留 QQ 被动回复凭据但不重复引用卡片；失败停止，重试跳过已成功分条；完整发送后只登记一轮回复及其各条消息引用。
 - QQ 工具集启用 `web`、`vision`、`skills`、`todo`、`terminal`、`file`；其中 `terminal` 提供 shell 能力，`tts`、`code`、`computer` 不暴露。文件写入受 `HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp` 限制，Hermes credential/project env 路径仍由内置防护拦截。
 - QQ 语音输入与输出均关闭：语音附件不进入 STT/模型，`send_voice` 在媒体上传前失败关闭，配置不包含 TTS provider 或音频密钥。普通文本与图片功能不受影响。
-- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、长期记忆、群知识库和中文 `/help`。模型快捷命令为 `/deepseek`；推理强度为 `/low`、`/medium`、`/high`、`/xhigh`、`/max`，均只修改当前会话。DeepSeek 将 `xhigh` 映射为实际请求的 `max`。
+- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、长期记忆、群知识库和中文 `/help`。模型快捷命令为 `/deepseek`、`/mimo`；推理强度为 `/low`、`/medium`、`/high`、`/xhigh`、`/max`，均只修改当前会话。DeepSeek 将 `xhigh` 映射为实际请求的 `max`。
 - 支持 `/` 打开帮助、全角斜杠、斜杠后空格、QQ mention 紧接命令。已明确 @ 机器人的全量群消息也走命令入口；非定向旁听仍不能执行管理命令。忙碌群会话的 `/值日表`、`/all` 等本地命令不再并入聊天队列，原生模型/推理切换沿用 Hermes 的忙碌提示与权限控制；`/reset`、`/new` 保留原生生命周期。群共享会话的待审批操作无法绑定发起成员，因此群内不透传 `/approve`、`/cancel`、`/deny`，需确认的操作请改在私聊执行；私聊 `/help` 优先显示中文菜单，`/值日表` 仅群聊可用。
 - `@机器人 /值日表` 按北京时间即时计算本周日到周六的轮值安排；2026 年 9 月 13 日开始，每周日轮换一次，开始前显示首轮预告。该功能不依赖主动群发或模型调用。
 - `/summary` 使用模型生成本群摘要、话题、决定、待办和未决问题；每群独立持久化，`/reset` 只清理会话与记忆，不删除知识库。
@@ -65,6 +65,7 @@ QQ 当前“开发体验用户”机制使用生产 API/Gateway，并由开放�
 | 直接说 | 等效操作 |
 | --- | --- |
 | 切到 DeepSeek | `/deepseek`，仅当前会话 |
+| 切到 MiMo | `/mimo`，仅当前会话 |
 | 推理调高 / 推理强度调到最高 | `/high` / `/max`，仅当前会话 |
 | 查看当前模型 / 当前推理强度是多少 | Hermes `/model` / `/reasoning` 查询 |
 | 安静10分钟 / 安静半小时 / 恢复聊天 | 按时暂停或恢复主动参与；被叫到仍回应 |
@@ -73,7 +74,7 @@ QQ 当前“开发体验用户”机制使用生产 API/Gateway，并由开放�
 | 记住这个梗：电子土豆 / 我选第一个 | 保存梗 / 剧情投票 |
 | 查看我的记忆 / 停止记住我 / 删除我的记忆 | 原成员记忆操作 |
 
-配置解析兼容 `/ deepseek`、`／ ＤＥＥＰＳＥＥＫ`、`/模型 DeepSeek`、`/配置 模型：DeepSeek`、`/设置 model=DeepSeek`、`/推理 高`、`/配置 推理强度 high` 和原有英文快捷命令。`/配置` 展示写法，`/配置 模型`、`/配置 推理强度` 查询会话状态。只规范化命令头和配置枚举，记忆、目标等正文保留大小写与全角文字。私聊显式 `/model`、`/reasoning` 的其他原生参数仍交给 Hermes；群聊配置仅支持会话级已知模型及档位，不开放全局配置。`/status` 明确显示配置默认值，当前会话实际值用原生命令查询。
+配置解析兼容 `/ deepseek`、`／ ＤＥＥＰＳＥＥＫ`、`/mimo`、`/模型 MiMo`、`/模型 DeepSeek`、`/配置 模型：DeepSeek`、`/设置 model=DeepSeek`、`/推理 高`、`/配置 推理强度 high` 和原有英文快捷命令。`/配置` 展示写法，`/配置 模型`、`/配置 推理强度` 查询会话状态。只规范化命令头和配置枚举，记忆、目标等正文保留大小写与全角文字。私聊显式 `/model`、`/reasoning` 的其他原生参数仍交给 Hermes；群聊配置仅支持会话级已知模型及档位，不开放全局配置。`/status` 明确显示配置默认值，当前会话实际值用原生命令查询。
 
 “以后叫它土豆吧”只在本人五分钟内操作过当前会话的宠物时执行，否则询问对象。目标/梗只匹配本人的当前作用域条目，多个匹配会列出 ID；不猜测“昨天那个任务”或缺少正文的“这个梗”。引用、假设、否定和多步配置句保持普通聊天，未识别的群内斜杠命令提示 `/help`。非定向旁听不执行命令。插件本地操作先检查 Hermes 用户授权及命令权限；重复投递在修改状态前去重（若回执发送失败，请发一条新消息查询结果）。
 
@@ -117,11 +118,11 @@ Muse 风格的小栖更注重具体接话、独立观点和克制幽默，避免
 
 共同经历/发现保存 30 天，目标 7 天，梗 90 天，每群每类最多 100 条；命令回执保存一天。`/停止记忆` 停止该成员的角色经历积累并清除其角色条目；重新授权前禁止保存目标或参与持久玩法。`/忘记我` 清除本人角色条目、关系、命令回执和可能包含衍生信息的群经历/发现及共享剧情，恢复宠物默认状态；他人独立目标/梗保留。`/reset` 清除当前会话角色进度，知识库保留；Hermes 原生 `/new` 仅换会话，不清除持久角色。无主动发送也执行过期清理。
 
-部署前按原流程备份数据库，回滚到 schema 3 必须恢复升级前快照。当前 PR 不替你部署服务器或打开 QQ 平台权限。
+部署前按原流程备份数据库，回滚到 schema 3 必须恢复升级前快照。
 
 ## 模型
 
-Hermes 只注册 `sub2api_deepseek` 一个供应商，以 OpenAI Chat Completions 调用 `deepseek/deepseek-v4.1-flash`。默认推理强度和该模型覆写都是 `low`，请求显式携带顶层 `reasoning_effort`。`/deepseek` 把当前会话切回这个模型。模型上下文按已注册的 1000000 token 预算，压缩仍在 100000 token 时用同一模型、`low` 推理强度。切换选项不等同于上游可用：专用 key 的实际模型权限和在线探测为准。
+Hermes 只注册 `sub2api_deepseek` 一个供应商，以同一把服务器密钥和 OpenAI Chat Completions 调用 `deepseek/deepseek-v4.1-flash` 与 `xiaomi/mimo-v2.6-flash`。DeepSeek 保持默认，`/mimo` 与 `/deepseek` 只切换当前会话。两模型的推理强度覆写均为 `low`，请求显式携带顶层 `reasoning_effort`。DeepSeek 与 MiMo 的注册上下文预算分别为 1000000、131072 token；压缩仍在 100000 token 时固定使用 DeepSeek 和 `low`。上线前已用该 key 对 MiMo 文本请求进行在线探测。
 
 已有会话里的模型或供应商覆写不会自动跟着配置变。部署时会结束当前打开的会话，下一条消息按 DeepSeek 与 `low` 重新开始；群记忆和知识库保留。`/model`、`/reasoning` 查询实际设置。图片保持原生内容块，不配置自动模型回退。群聊不再发送 “Interrupting current task” 忙碌确认。打断后若模型仍输出 `action`/`message` 信封，发送前会取出正文并做 QQ 纯文本清洗。
 
@@ -146,7 +147,7 @@ bash /opt/qqbot-hk/scripts/verify-server.sh
 
 `install-server.sh` 会校验固定公告目标列表，保留配置模板的群专属通配授权，移除旧沙箱路由和包括私聊在内的全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像，只停启 `hermes-qqbot`，在隔离容器中轮换旧 QQ 路由并清除旧模型覆写，等待健康、运行 cron 对账并完成验收。旧插件副本在启动前移到部署备份目录，避免 Hermes 将 `plugins/*.old` 当作另一份活动插件加载。源码配置不含真实 OpenID 或 API key。
 
-`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、语音输入/输出双重禁用与音频环境变量清理、仅 DeepSeek key 注入、DeepSeek 文本/识图、100k 压缩触发与无效压缩自动换新、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 与 MiMo 的 OpenAI Chat Completions 路由及显式推理强度、语音输入/输出双重禁用与音频环境变量清理、单把 Sub2API key 注入、DeepSeek 文本/识图与 MiMo 文本、100k 压缩触发与无效压缩自动换新、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
 部署后验证任意已加入的新群通过适配器与中央群授权，未批准私聊仍被拒绝或进入 pairing，两名成员共享本群上下文且不串群。群管理员打开“接收所有消息”并确认平台实际投递后，再验证：有内容的分享按需接话、纯表情/收尾静默、多人延续话题、自由参与、手动安静与恢复、短句分条、重复事件只处理一次、非 @ 管理命令不执行、近期旁听能作为后续 @ 的上下文。主动推送还要求群内允许主动发送，不能用修改本地配置绕过平台权限。
 

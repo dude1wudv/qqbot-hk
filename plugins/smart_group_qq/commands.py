@@ -14,10 +14,11 @@ _PROFILE_COMMAND = re.compile(
     re.DOTALL,
 )
 _MODEL_ALIAS_COMMAND = re.compile(
-    r"^[／/]\s*(deepseek)\s*$", re.IGNORECASE
+    r"^[／/]\s*(deepseek|mimo)\s*$", re.IGNORECASE
 )
 _MODEL_ALIASES = {
     "deepseek": "deepseek/deepseek-v4.1-flash",
+    "mimo": "xiaomi/mimo-v2.6-flash",
 }
 _REASONING_ALIAS_COMMAND = re.compile(
     r"^[／/]\s*(low|medium|high|xhigh|max)\s*$", re.IGNORECASE
@@ -123,7 +124,7 @@ def native_group_command_rewrite(value: Any) -> str | None:
 def help_text() -> str:
     return (
         "【小栖 · 常驻 AI 角色】\n"
-        "可以直接说：切到 DeepSeek、推理调高、安静10分钟、给宠物喂点东西。\n"
+        "可以直接说：切到 DeepSeek、切到 MiMo、推理调高、安静10分钟、给宠物喂点东西。\n"
         "完成目标可填 ID 或名称；指代不清时会请你补充。\n"
         "/配置 查看配置写法；/model、/reasoning 查看当前会话设置\n"
         "/角色 角色状态与自然语言控制\n/经历 共同经历\n/梗簿、/记梗 内容、/忘梗 ID\n"
@@ -132,7 +133,7 @@ def help_text() -> str:
         "/help 功能说明\n/reset、/clear 或 /new 重置当前会话\n"
         "/compress 立即重试上下文压缩（上下文过大时）\n/approve /cancel /deny 仅私聊可处理工具确认提示\n"
         "/status 运行状态\n/summary 近期互动摘要\n/rules 已启用规则\n"
-        "/deepseek 切回当前会话的 DeepSeek\n"
+        "/deepseek 切回当前会话的 DeepSeek\n/mimo 切到当前会话的 MiMo V2.6 Flash\n"
         "/low /medium /high /xhigh /max 切换当前会话推理强度（DeepSeek 的 xhigh 实际按 max 请求）\n"
         "/kb 知识库\n/我的记忆 查看个人记忆\n/记住我：内容 保存或更新个人信息\n"
         "/纠正记忆：字段=新内容 以本人确认更正旧记忆\n"

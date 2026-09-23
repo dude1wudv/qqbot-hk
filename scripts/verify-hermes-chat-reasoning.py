@@ -28,17 +28,21 @@ def require(condition: bool, message: str) -> None:
 
 
 def main() -> None:
-    default = build(None)
-    require(default.get("reasoning_effort") == "medium", "transport fallback effort is not medium")
-    for effort in ("low", "medium", "high", "max"):
-        request = build(effort)
-        require(request.get("reasoning_effort") == effort, f"DeepSeek Chat request did not carry {effort}")
-        require("reasoning" not in (request.get("extra_body") or {}), "duplicate reasoning body remains")
+    for model in (MODEL, "xiaomi/mimo-v2.6-flash"):
+        default = build(None, model)
+        require(default.get("reasoning_effort") == "medium", f"{model}: transport fallback effort is not medium")
+        levels = ("low", "medium", "high", "max") if model == MODEL else ("low", "medium", "high", "xhigh", "max")
+        for effort in levels:
+            request = build(effort, model)
+            require(request.get("reasoning_effort") == effort, f"{model}: Chat request did not carry {effort}")
+            require("reasoning" not in (request.get("extra_body") or {}), "duplicate reasoning body remains")
+        require("reasoning_effort" not in build("xhigh", model, enabled=False), f"{model}: disabled thinking forced an effort")
     require(build("xhigh").get("reasoning_effort") == "max", "DeepSeek xhigh must be clamped to max")
-    require("reasoning_effort" not in build("xhigh", enabled=False), "disabled thinking forced an effort")
+    require(build("xhigh", "xiaomi/mimo-v2.6-flash", supports_reasoning=False).get("reasoning_effort") == "xhigh",
+            "MiMo explicit xhigh was lost when model is unlisted")
     other = build("xhigh", "meta/muse-spark-1.3-contributor", supports_reasoning=False)
     require("reasoning_effort" not in other, "retired dialogue model was routed as DeepSeek")
-    print("HERMES_SUB2API_CHAT=passed MODEL=deepseek LEVELS=low,medium,high,max XHIGH=max")
+    print("HERMES_SUB2API_CHAT=passed MODELS=deepseek,mimo DEEPSEEK_XHIGH=max MIMO_XHIGH=xhigh")
 
 
 if __name__ == "__main__":

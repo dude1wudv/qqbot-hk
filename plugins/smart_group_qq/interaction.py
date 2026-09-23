@@ -19,6 +19,9 @@ MODELS = {
     "deepseek/deepseek-v4.1-flash": "deepseek",
     "deepseek-v4.1-flash": "deepseek",
     "深度求索": "deepseek",
+    "mimo": "mimo",
+    "xiaomi": "mimo",
+    "xiaomi/mimo-v2.6-flash": "mimo",
 }
 EFFORTS = {
     "low": "low",
@@ -67,7 +70,7 @@ REQUIRES_ARG = {
     "纠正记忆",
     "安静",
 }
-CONFIG_ERROR = "当前只使用 DeepSeek V4.1 Flash。推理强度支持 low、medium、high、xhigh、max（低、中、高、超高、最高）；DeepSeek 的 xhigh 实际按 max 请求。例如：切换到 DeepSeek、推理强度调到低，或 /配置 模型 DeepSeek。配置只作用于当前会话。"
+CONFIG_ERROR = "默认 DeepSeek V4.1 Flash，可切换到 MiMo V2.6 Flash。推理强度支持 low、medium、high、xhigh、max（低、中、高、超高、最高）；DeepSeek 的 xhigh 实际按 max 请求。例如：切换到 MiMo、推理强度调到低，或 /配置 模型 DeepSeek。配置只作用于当前会话。"
 
 
 @dataclass(frozen=True)
