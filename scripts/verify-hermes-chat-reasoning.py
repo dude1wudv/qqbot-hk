@@ -5,7 +5,7 @@ from agent.transports.chat_completions import ChatCompletionsTransport
 
 
 BASE_URL = "http://sub2api:8080/v1"
-MODEL = "meta/muse-spark-1.3-contributor"
+MODEL = "deepseek/deepseek-v4.1-flash"
 
 
 def build(effort: str | None, model: str = MODEL, *, enabled=True, supports_reasoning=True) -> dict:
@@ -28,20 +28,17 @@ def require(condition: bool, message: str) -> None:
 
 
 def main() -> None:
-    for model in (MODEL, "xiaomi/mimo-v2.6-flash", "deepseek/deepseek-v4.1-flash"):
-        default = build(None, model)
-        require(default.get("reasoning_effort") == "medium", "transport fallback effort is not medium")
-        levels = ("low", "medium", "high", "max") if "deepseek" in model else ("low", "medium", "high", "xhigh", "max")
-        for effort in levels:
-            request = build(effort, model)
-            require(request.get("reasoning_effort") == effort, f"{model}: Chat request did not carry {effort}")
-            require("reasoning" not in (request.get("extra_body") or {}), "duplicate reasoning body remains")
-        disabled = build("xhigh", model, enabled=False)
-        require("reasoning_effort" not in disabled, "disabled thinking forced an effort")
-        if "deepseek" not in model:
-            require(build("xhigh", model, supports_reasoning=False).get("reasoning_effort") == "xhigh",
-                    "unlisted custom model lost explicit xhigh")
-    print("HERMES_SUB2API_CHAT=passed MODELS=muse,mimo,deepseek LEVELS=low,medium,high,xhigh,max")
+    default = build(None)
+    require(default.get("reasoning_effort") == "medium", "transport fallback effort is not medium")
+    for effort in ("low", "medium", "high", "max"):
+        request = build(effort)
+        require(request.get("reasoning_effort") == effort, f"DeepSeek Chat request did not carry {effort}")
+        require("reasoning" not in (request.get("extra_body") or {}), "duplicate reasoning body remains")
+    require(build("xhigh").get("reasoning_effort") == "max", "DeepSeek xhigh must be clamped to max")
+    require("reasoning_effort" not in build("xhigh", enabled=False), "disabled thinking forced an effort")
+    other = build("xhigh", "meta/muse-spark-1.3-contributor", supports_reasoning=False)
+    require("reasoning_effort" not in other, "retired dialogue model was routed as DeepSeek")
+    print("HERMES_SUB2API_CHAT=passed MODEL=deepseek LEVELS=low,medium,high,max XHIGH=max")
 
 
 if __name__ == "__main__":

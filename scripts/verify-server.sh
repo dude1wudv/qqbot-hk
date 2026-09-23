@@ -42,7 +42,7 @@ qq_help_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot
 qq_output_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-output-patch"}}' "$image_id")"
 test "$base_digest_label" = "sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1"
 test "$audio_patch_label" = "v2"
-test "$chat_reasoning_patch_label" = "v2"
+test "$chat_reasoning_patch_label" = "v3"
 test "$compression_recovery_patch_label" = "v1"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
@@ -62,11 +62,9 @@ with open("/opt/data/.env", encoding="utf-8") as handle:
         if "=" in raw and not raw.lstrip().startswith("#"):
             name, value = raw.split("=", 1)
             env[name.strip()] = value.strip()
-key = os.environ.get("SUB2API_API_KEY") or env.get("SUB2API_API_KEY", "")
 deepseek_key = os.environ.get("SUB2API_DEEPSEEK_API_KEY") or env.get("SUB2API_DEEPSEEK_API_KEY", "")
-dialogue_key = os.environ.get("SUB2API_DIALOGUE_API_KEY") or env.get("SUB2API_DIALOGUE_API_KEY", "")
-if not key or not deepseek_key or not dialogue_key:
-    raise SystemExit("missing Sub2API key")
+if not deepseek_key:
+    raise SystemExit("missing DeepSeek Sub2API key")
 
 def post(path, body, api_key):
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -168,9 +166,11 @@ if not groups:
     raise SystemExit("QQ schedule target list is empty")
 if "QQ_GROUP_ALLOWED_USERS" in env:
     raise SystemExit("deprecated QQ_GROUP_ALLOWED_USERS must be absent")
-for name in ("SUB2API_API_KEY", "SUB2API_DEEPSEEK_API_KEY", "SUB2API_DIALOGUE_API_KEY"):
-    if not env.get(name):
-        raise SystemExit(f"required Sub2API secret missing: {name}")
+if not env.get("SUB2API_DEEPSEEK_API_KEY"):
+    raise SystemExit("required DeepSeek Sub2API secret missing")
+for name in ("SUB2API_API_KEY", "SUB2API_DIALOGUE_API_KEY"):
+    if name in env:
+        raise SystemExit(f"retired Sub2API secret remains in runtime environment: {name}")
 for name in (
     "QQ_STT_PREFER_BUILTIN", "QQ_STT_API_KEY", "QQ_STT_BASE_URL", "QQ_STT_MODEL",
     "VOICE_TOOLS_OPENAI_KEY",
@@ -249,6 +249,27 @@ print(
     "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=100000 "
     "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
 )
+session_db = sqlite3.connect("file:/opt/data/state.db?mode=ro", uri=True)
+try:
+    qq_routes = session_db.execute(
+        "SELECT entry_json FROM gateway_routing WHERE session_key LIKE 'agent:main:qqbot:%'"
+    ).fetchall()
+    for (raw,) in qq_routes:
+        override = (json.loads(raw).get("model_override") or {})
+        if override and (
+            override.get("provider") not in (None, "sub2api_deepseek")
+            or override.get("model") != "deepseek/deepseek-v4.1-flash"
+        ):
+            raise SystemExit("retired QQ model override remains after session rotation")
+    stale = session_db.execute(
+        "SELECT COUNT(*) FROM sessions WHERE source='qqbot' AND ended_at IS NULL "
+        "AND model IS NOT NULL AND model!='deepseek/deepseek-v4.1-flash'"
+    ).fetchone()[0]
+    if stale:
+        raise SystemExit("retired QQ model sessions remain active after rotation")
+finally:
+    session_db.close()
+print(f"QQ_SESSION_ROUTES={len(qq_routes)} RETIRED_MODELS=absent")
 tools = (((config.get("platform_toolsets") or {}).get("qqbot") or []))
 if "terminal" not in tools or "file" not in tools:
     raise SystemExit("QQ terminal/file toolset is not enabled")

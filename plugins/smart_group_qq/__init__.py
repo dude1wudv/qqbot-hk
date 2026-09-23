@@ -1004,10 +1004,10 @@ def build_handler(ctx: Any, store: Store):
             elif text.startswith(("/", "／")) and (
                 not is_group or (native_rewrite := native_group_command_rewrite(text))
             ):
-                # DMs retain Hermes' native command surface. Groups expose only the
-                # explicitly reviewed recovery/help commands: the production QQ
-                # scope has no per-member native-command admin gate, so forwarding
-                # every unknown slash command would also expose management actions.
+                # DMs retain Hermes' native command surface. A group session is
+                # shared by every member: forwarding approval/cancel commands
+                # would let one member control another's pending tool action.
+                # Keep group passthrough limited to reviewed commands.
                 return {
                     "action": "rewrite",
                     "text": native_rewrite if is_group else text.replace("／", "/", 1),

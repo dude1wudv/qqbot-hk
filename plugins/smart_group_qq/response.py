@@ -187,14 +187,16 @@ class ReplyRegistry:
                     refs.append(value)
                 start = end + 1
         if not refs:
-            return str(response_text or "")
+            rendered = render_reply_envelope(response_text)
+            return SILENT_MARKER if rendered == "" else (rendered if rendered is not None else str(response_text or ""))
         with self._lock:
             record = next((self._records.get(ref) for ref in refs if ref in self._records), None)
             if record is None or not self._valid_locked(record):
                 return SILENT_MARKER
             try:
                 if record.source_kind == "private":
-                    message = str(response_text or "").strip()
+                    rendered = render_reply_envelope(response_text)
+                    message = str(response_text or "").strip() if rendered is None else rendered.strip()
                     action = "reply" if message and message != SILENT_MARKER else "ignore"
                 else:
                     action, message = parse_reply_decision(str(response_text or ""))

@@ -7,7 +7,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 生产秘密位于 `/opt/qqbot-hk-deploy/secrets`，不得提交：
 
 - `qqbot.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_SCHEDULE_GROUPS`。
-- `sub2api-api-key`：原有通用模型 key；`sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的 key；`sub2api-dialogue-api-key`：Muse/MiMo 专用 key，仅安装到服务器运行环境。
+- `sub2api-deepseek-api-key`：仅绑定 DeepSeek 分组的 key；旧通用和 Muse/MiMo key 不再注入 QQ bot 容器。
 - `QQ_SCHEDULE_GROUPS` 是固定公告的显式目标列表，使用逗号分隔的 QQ 群 OpenID，不能使用数字群号、用户 OpenID、空值或 `*`。固定公告默认禁用。部署会移除旧 `QQ_GROUP_ALLOWED_USERS`，防止 Hermes 环境变量覆盖群专属通配配置。
 - 开发体验阶段也使用 QQ 官方生产 API/Gateway；开放平台按“开发体验用户”名单限制可访问账号。
 
@@ -23,8 +23,8 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - 角色采用自然群友风格，可以主动提问和完整表达；不再机械过滤末尾问句，也不再截断主动回复为 180 字。短回复按句子/换行分条，引号或括号内部不拆句；长回复与代码完整保留，以每包最多 1500 字进行传输分段。命令回复也不再最多发送五段。常见 Markdown 统一降级为纯文本。同一轮仅首条显示引用，后续分条保留 QQ 被动回复凭据但不重复引用卡片；失败停止，重试跳过已成功分条；完整发送后只登记一轮回复及其各条消息引用。
 - QQ 工具集启用 `web`、`vision`、`skills`、`todo`、`terminal`、`file`；其中 `terminal` 提供 shell 能力，`tts`、`code`、`computer` 不暴露。文件写入受 `HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp` 限制，Hermes credential/project env 路径仍由内置防护拦截。
 - QQ 语音输入与输出均关闭：语音附件不进入 STT/模型，`send_voice` 在媒体上传前失败关闭，配置不包含 TTS provider 或音频密钥。普通文本与图片功能不受影响。
-- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、长期记忆、群知识库和中文 `/help`。模型快捷命令为 `/deepseek`；推理强度为 `/low`、`/medium`、`/high`、`/xhigh`、`/max`，均只修改当前会话。
-- 支持 `/` 打开帮助、全角斜杠、斜杠后空格、QQ mention 紧接命令。已明确 @ 机器人的全量群消息也走命令入口；非定向旁听仍不能执行管理命令。忙碌群会话的 `/值日表`、`/all` 等本地命令不再并入聊天队列，原生模型/推理切换沿用 Hermes 的忙碌提示与权限控制；`/reset`、`/new` 保留原生生命周期。私聊 `/help` 优先显示中文菜单，`/值日表` 仅群聊可用。
+- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、长期记忆、群知识库和中文 `/help`。模型快捷命令为 `/deepseek`；推理强度为 `/low`、`/medium`、`/high`、`/xhigh`、`/max`，均只修改当前会话。DeepSeek 将 `xhigh` 映射为实际请求的 `max`。
+- 支持 `/` 打开帮助、全角斜杠、斜杠后空格、QQ mention 紧接命令。已明确 @ 机器人的全量群消息也走命令入口；非定向旁听仍不能执行管理命令。忙碌群会话的 `/值日表`、`/all` 等本地命令不再并入聊天队列，原生模型/推理切换沿用 Hermes 的忙碌提示与权限控制；`/reset`、`/new` 保留原生生命周期。群共享会话的待审批操作无法绑定发起成员，因此群内不透传 `/approve`、`/cancel`、`/deny`，需确认的操作请改在私聊执行；私聊 `/help` 优先显示中文菜单，`/值日表` 仅群聊可用。
 - `@机器人 /值日表` 按北京时间即时计算本周日到周六的轮值安排；2026 年 9 月 13 日开始，每周日轮换一次，开始前显示首轮预告。该功能不依赖主动群发或模型调用。
 - `/summary` 使用模型生成本群摘要、话题、决定、待办和未决问题；每群独立持久化，`/reset` 只清理会话与记忆，不删除知识库。
 - `/kb add 标题 | 正文` 添加资料；`/kb list`、`/kb search 关键词`、`/kb remove 文档ID`、`/kb clear confirm` 管理本群知识。支持缓存目录中的 TXT/Markdown/CSV/JSON/YAML/XML/TOML/DOCX，PDF 需镜像提供 `pypdf`。
@@ -136,7 +136,7 @@ Hermes 的会话上下文达到 `100000` token 阈值时自动尝试压缩，受
 - 应用与 Compose：`/opt/qqbot-hk`
 - 持久数据与秘密：`/opt/qqbot-hk-deploy`
 
-部署前备份 Compose 以及 `/opt/qqbot-hk-deploy/hermes-data` 中的 `config.yaml`、`SOUL.md`、`plugins`、`cron`。安装脚本会先对 `plugin-data/smart_group_qq/data.db` 执行完整性检查与 SQLite 一致性快照，再开始重建：
+部署前备份 Compose 以及 `/opt/qqbot-hk-deploy/hermes-data` 中的 `config.yaml`、`SOUL.md`、`plugins`、`cron`。安装脚本先对 `plugin-data/smart_group_qq/data.db` 执行完整性检查和 SQLite 快照；停下目标容器后再一致性备份 `state.db` 与 `sessions.json` 到服务器部署备份目录，并用 Hermes 原生复位 API 轮换 QQ 会话，保留旧会话记录：
 
 ```bash
 bash /opt/qqbot-hk/scripts/install-server.sh
@@ -144,12 +144,12 @@ bash /opt/qqbot-hk/scripts/install-server.sh
 bash /opt/qqbot-hk/scripts/verify-server.sh
 ```
 
-`install-server.sh` 会校验固定公告目标列表，保留配置模板的群专属通配授权，移除旧沙箱路由和包括私聊在内的全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像并只重建 `hermes-qqbot`，等待健康、运行 cron 对账并完成验收。旧插件副本在启动前移到部署备份目录，避免 Hermes 将 `plugins/*.old` 当作另一份活动插件加载。源码配置不含真实 OpenID 或 API key。
+`install-server.sh` 会校验固定公告目标列表，保留配置模板的群专属通配授权，移除旧沙箱路由和包括私聊在内的全员放行开关，原子安装 SOUL/plugin/schedule/reconciler，构建固定摘要派生镜像，只停启 `hermes-qqbot`，在隔离容器中轮换旧 QQ 路由并清除旧模型覆写，等待健康、运行 cron 对账并完成验收。旧插件副本在启动前移到部署备份目录，避免 Hermes 将 `plugins/*.old` 当作另一份活动插件加载。源码配置不含真实 OpenID 或 API key。
 
-`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、语音输入/输出双重禁用与音频环境变量清理、两把 Sub2API key 的隔离路由、DeepSeek 文本/识图、Gemini 文本、100k 压缩触发与无效压缩自动换新、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
+`verify-server.sh` 验证基础摘要/补丁标签、DeepSeek 的 OpenAI Chat Completions 路由及显式推理强度、语音输入/输出双重禁用与音频环境变量清理、仅 DeepSeek key 注入、DeepSeek 文本/识图、100k 压缩触发与无效压缩自动换新、QQ 中间输出关闭、群聊最终输出补丁、2秒/5秒聚合与分段预算、QQ `terminal`/`file` 工具集与写入安全边界、容器健康、QQ 生产网关、私聊策略、插件、白名单、owned cron，以及 SQLite 和记忆/知识库表结构；不会输出 OpenID、消息正文或秘密。
 
 部署后验证任意已加入的新群通过适配器与中央群授权，未批准私聊仍被拒绝或进入 pairing，两名成员共享本群上下文且不串群。群管理员打开“接收所有消息”并确认平台实际投递后，再验证：有内容的分享按需接话、纯表情/收尾静默、多人延续话题、自由参与、手动安静与恢复、短句分条、重复事件只处理一次、非 @ 管理命令不执行、近期旁听能作为后续 @ 的上下文。主动推送还要求群内允许主动发送，不能用修改本地配置绕过平台权限。
 
 ## 回滚
 
-恢复上一个精确代码/镜像和部署前备份，再运行安装与验证。本版本 SQLite schema 为 `4`，增量新增角色状态、角色条目、关系计数和命令回执表，不删除已有成员事实或知识库。旧版代码会拒绝更高 schema，回滚时必须使用对应升级前的一致性数据库快照，不能只切换旧镜像；不得通过删库初始化解决兼容问题。cron 回滚只删除 `smart-group-qq::` 前缀任务，不覆盖整个 Hermes cron。备份与原始生产数据始终留在服务器，按独立保留策略管理。
+恢复上一个精确代码/镜像和部署前备份，再运行安装与验证；如需恢复旧会话路由，应同时恢复部署前服务器侧 `state.db` 与 `sessions.json` 一致性快照，不应直接覆盖运行中的 SQLite。本版本 SQLite schema 为 `4`，增量新增角色状态、角色条目、关系计数和命令回执表，不删除已有成员事实或知识库。旧版代码会拒绝更高 schema，回滚时必须使用对应升级前的一致性数据库快照，不能只切换旧镜像；不得通过删库初始化解决兼容问题。cron 回滚只删除 `smart-group-qq::` 前缀任务，不覆盖整个 Hermes cron。备份与原始生产数据始终留在服务器，按独立保留策略管理。

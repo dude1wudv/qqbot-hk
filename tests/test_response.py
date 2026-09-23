@@ -1,3 +1,4 @@
+import json
 import time
 import unittest
 from types import SimpleNamespace
@@ -6,6 +7,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
+
+from smart_group_qq.formatter import format_for_qq, split_group_reply
 
 from smart_group_qq.response import (
     INVALID_REPLY_MESSAGE,
@@ -70,6 +73,72 @@ class ResponseTests(unittest.TestCase):
             direct=direct,
             created_at=time.monotonic() if created_at is None else created_at,
         )
+
+    def test_parsed_group_answer_is_not_interpreted_as_another_envelope(self):
+        literal = '{"action":"ignore","message":null}'
+        for direct in (False, True):
+            with self.subTest(direct=direct):
+                registry, audits, delivered = self._registry()
+                record = self._record(direct=direct)
+                self.assertTrue(registry.register(record))
+                output = registry.transform(
+                    json.dumps({"action": "reply", "message": literal}),
+                    "[群对话标记:" + record.request_ref + "]",
+                )
+                self.assertEqual(output, literal)
+                self.assertEqual(format_for_qq(output), literal)
+                self.assertEqual(split_group_reply(output, direct=direct), [literal])
+                self.assertEqual(record.pending_message, literal)
+                self.assertEqual(audits, [])
+                registry.finish_send(record, SimpleNamespace(success=True))
+                self.assertEqual(len(delivered), 1)
+                self.assertEqual(delivered[0][0].pending_message, literal)
+
+    def test_native_reply_envelope_is_unwrapped_before_plain_text_formatting(self):
+        registry, _, _ = self._registry()
+        raw = (
+            "{'action':\"reply\",\"message\":\"确实，官key便宜了。\\n\\n"
+            "**luna** 留给长推理。\"}"
+        )
+        output = registry.transform(raw, "无标记的原生 QQ 请求")
+        self.assertEqual(output, "确实，官key便宜了。\n\n**luna** 留给长推理。")
+        self.assertEqual(format_for_qq(output), "确实，官key便宜了。\n\nluna 留给长推理。")
+        self.assertEqual(split_group_reply(output)[0], "确实，官key便宜了。")
+
+    def test_unmarked_and_private_native_envelopes_are_converted_once(self):
+        literal = '{"action":"ignore","message":null}'
+        cases = (
+            ('{"action":"reply","message":"  **答案**  "}', "**答案**"),
+            ("{'action':'reply','message':'答案'}", "答案"),
+            ('```json\n{"action":"reply","message":"答案"}\n```', "答案"),
+            (json.dumps({"action": "reply", "message": literal}), literal),
+            ('{"action":"ignore","message":null}', SILENT_MARKER),
+            ('{"action":"ignore","message":"不应发送"}', SILENT_MARKER),
+            ("普通回答", "普通回答"),
+            ('{"other":"普通 JSON"}', '{"other":"普通 JSON"}'),
+        )
+        for private in (False, True):
+            for raw, expected in cases:
+                with self.subTest(private=private, raw=raw):
+                    registry, audits, delivered = self._registry()
+                    user_message = "无标记的原生 QQ 请求"
+                    if private:
+                        record = self._record(direct=True)
+                        record.source_kind = "private"
+                        self.assertTrue(registry.register(record))
+                        user_message = "[群对话标记:" + record.request_ref + "]"
+                    self.assertEqual(registry.transform(raw, user_message), expected)
+                    self.assertEqual(delivered, [])
+                    if private and expected == SILENT_MARKER:
+                        self.assertEqual(registry.size, 0)
+                        self.assertIsNone(record.pending_message)
+                        self.assertEqual(audits[-1][0][0], "output_ignore")
+                    elif private:
+                        self.assertEqual(record.pending_message, expected)
+                        self.assertEqual(registry.size, 1)
+                    else:
+                        self.assertEqual(registry.size, 0)
+                        self.assertEqual(audits, [])
 
     def test_registry_is_fail_closed_for_ignore_invalid_epoch_cancel_and_expiry(self):
         registry, audits, _ = self._registry()

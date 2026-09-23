@@ -46,6 +46,8 @@ class CommandTests(unittest.TestCase):
         ):
             self.assertIn(command, menu)
         self.assertIn("/值日表 查看本周轮值安排（仅群聊）", menu)
+        self.assertIn("/approve /cancel /deny 仅私聊可处理工具确认提示", menu)
+        self.assertIn("DeepSeek 的 xhigh 实际按 max 请求", menu)
 
     def test_new_model_aliases_and_xhigh_rewrite(self):
         self.assertIsNone(model_alias_rewrite("<@bot> /mimo"))

@@ -24,7 +24,7 @@ _REASONING_ALIAS_COMMAND = re.compile(
 )
 _ALIASES = {"clear": "reset", "值日表": "duty_roster"}
 _SUPPORTED = frozenset({"help", "reset", "status", "summary", "rules", "duty_roster"})
-_NATIVE_GROUP_PASSTHROUGH = frozenset({"commands", "compress", "new", "approve", "cancel", "deny"})
+_NATIVE_GROUP_PASSTHROUGH = frozenset({"commands", "compress", "new"})
 
 
 @dataclass(frozen=True)
@@ -130,10 +130,10 @@ def help_text() -> str:
         "/目标 内容、/完成目标 ID、/取消目标 ID\n/探索 查看有无新发现\n"
         "/宠物、/喂食、/摸摸、/宠物取名 名字\n/剧情 设定、/投票 1或2、/结束剧情\n/表情 心情\n"
         "/help 功能说明\n/reset、/clear 或 /new 重置当前会话\n"
-        "/compress 立即重试上下文压缩（上下文过大时）\n/approve /cancel /deny 处理模型或工具确认提示\n"
+        "/compress 立即重试上下文压缩（上下文过大时）\n/approve /cancel /deny 仅私聊可处理工具确认提示\n"
         "/status 运行状态\n/summary 近期互动摘要\n/rules 已启用规则\n"
         "/deepseek 切回当前会话的 DeepSeek\n"
-        "/low /medium /high /xhigh /max 切换当前会话推理强度\n"
+        "/low /medium /high /xhigh /max 切换当前会话推理强度（DeepSeek 的 xhigh 实际按 max 请求）\n"
         "/kb 知识库\n/我的记忆 查看个人记忆\n/记住我：内容 保存或更新个人信息\n"
         "/纠正记忆：字段=新内容 以本人确认更正旧记忆\n"
         "/忘记我 删除个人记忆\n/停止记忆 禁止继续建立个人记忆\n"

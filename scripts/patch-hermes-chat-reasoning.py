@@ -11,7 +11,7 @@ import sys
 
 
 EXPECTED_ORIGINAL_SHA256 = "8606a5d18ea7c0b8c9c3f442799f83df49f76f5bb70b534acb30ce5cb393c47c"
-PATCH_MARKER = '# QQBOT_HK_CHAT_REASONING_PATCH = "v2"'
+PATCH_MARKER = '# QQBOT_HK_CHAT_REASONING_PATCH = "v3"'
 SUB2API_BASE_URL = "http://sub2api:8080/v1"
 
 
@@ -32,25 +32,19 @@ PATCHES = (
         "        thinking_off = isinstance(reasoning_config, dict) and reasoning_config.get(\"enabled\") is False\n"
         "        _e = requested_effort(reasoning_config)\n"
         f"        {PATCH_MARKER}\n"
-        f"        is_sub2api = (\n"
+        f"        is_sub2api_deepseek = (\n"
         f"            str(params.get(\"base_url\") or \"\").strip().rstrip(\"/\") == \"{SUB2API_BASE_URL}\"\n"
+        "            and \"deepseek-v4\" in (model or \"\").lower()\n"
         "        )\n"
-        "        is_sub2api_deepseek = is_sub2api and \"deepseek-v4\" in (model or \"\").lower()\n"
-        "        is_sub2api_native_effort = is_sub2api and (model or \"\").lower() in {\n"
-        "            \"xiaomi/mimo-v2.6-flash\", \"meta/muse-spark-1.3-contributor\",\n"
-        "        }\n"
         "        if is_sub2api_deepseek and not thinking_off:\n"
         "            api_kwargs[\"reasoning_effort\"] = clamp_effort(\n"
         "                _e or \"medium\", DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES\n"
-        "            )\n"
-        "        elif is_sub2api_native_effort and not thinking_off:\n"
-        "            # Preserve xhigh verbatim for the explicitly configured Chat routes.\n"
-        "            api_kwargs[\"reasoning_effort\"] = _e or \"medium\"\n",
+        "            )\n",
         "Sub2API top-level reasoning effort",
     ),
     (
         "        if supports_reasoning and not is_lmstudio:\n",
-        "        if supports_reasoning and not is_lmstudio and not (is_sub2api_deepseek or is_sub2api_native_effort):\n",
+        "        if supports_reasoning and not is_lmstudio and not is_sub2api_deepseek:\n",
         "generic reasoning-body exclusion",
     ),
 )
@@ -66,8 +60,7 @@ def verify_patched_source(source: str) -> None:
         "DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES": 2,
         'api_kwargs["reasoning_effort"] = clamp_effort(': 1,
         "is_sub2api_deepseek =": 1,
-        'api_kwargs["reasoning_effort"] = _e or "medium"': 1,
-        "and not (is_sub2api_deepseek or is_sub2api_native_effort)": 1,
+        "and not is_sub2api_deepseek:": 1,
     }
     for sentinel, expected_count in required.items():
         actual = source.count(sentinel)
