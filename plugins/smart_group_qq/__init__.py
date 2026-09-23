@@ -887,7 +887,7 @@ def build_handler(ctx: Any, store: Store):
             return {"action": "rewrite", "text": interaction.text}
         elif text == "/配置":
             claim_action = "interaction:configuration"
-            reply = CONFIG_ERROR + "\n/model 查看当前模型；/reasoning 查看当前推理；/status 查看配置默认值。\n保留 /deepseek /gemini /mimo /muse /low /medium /high /xhigh /max，以及 /模型、/推理、/配置 等中文写法。"
+            reply = CONFIG_ERROR + "\n/model 查看当前模型；/reasoning 查看当前推理；/status 查看配置默认值。\n保留 /deepseek /low /medium /high /xhigh /max，以及 /模型、/推理、/配置 等中文写法。"
         elif character_command and direct_control:
             claim_action = "character:" + character_command[0]
             try:
@@ -992,8 +992,8 @@ def build_handler(ctx: Any, store: Store):
                     )
                 elif command.name == "status":
                     reply = status_text(
-                        model=str(ctx.get_config("status_model", "meta/muse-spark-1.3-contributor")),
-                        reasoning=str(ctx.get_config("status_reasoning", "xhigh")),
+                        model=str(ctx.get_config("status_model", "deepseek/deepseek-v4.1-flash")),
+                        reasoning=str(ctx.get_config("status_reasoning", "low")),
                     )
                 elif command.name == "summary":
                     generated = summary_reply(group_id)

@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .response import render_reply_envelope
+
 DEFAULT_MAX_CHARS = 1500
 
 
@@ -26,6 +28,9 @@ class MessageChunk:
 def format_for_qq(text: Any, *, markdown_support: bool = False) -> str:
     """Turn common Markdown into quiet, readable QQ plain text."""
     value = "" if text is None else str(text)
+    rendered = render_reply_envelope(value)
+    if rendered is not None:
+        value = rendered
     if markdown_support:
         return value
     lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")

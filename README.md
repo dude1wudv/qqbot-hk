@@ -23,7 +23,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - 角色采用自然群友风格，可以主动提问和完整表达；不再机械过滤末尾问句，也不再截断主动回复为 180 字。短回复按句子/换行分条，引号或括号内部不拆句；长回复与代码完整保留，以每包最多 1500 字进行传输分段。命令回复也不再最多发送五段。常见 Markdown 统一降级为纯文本。同一轮仅首条显示引用，后续分条保留 QQ 被动回复凭据但不重复引用卡片；失败停止，重试跳过已成功分条；完整发送后只登记一轮回复及其各条消息引用。
 - QQ 工具集启用 `web`、`vision`、`skills`、`todo`、`terminal`、`file`；其中 `terminal` 提供 shell 能力，`tts`、`code`、`computer` 不暴露。文件写入受 `HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp` 限制，Hermes credential/project env 路径仍由内置防护拦截。
 - QQ 语音输入与输出均关闭：语音附件不进入 STT/模型，`send_voice` 在媒体上传前失败关闭，配置不包含 TTS provider 或音频密钥。普通文本与图片功能不受影响。
-- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、长期记忆、群知识库和中文 `/help`。模型快捷命令为 `/deepseek`、`/gemini`、`/mimo`、`/muse`；推理强度为 `/low`、`/medium`、`/high`、`/xhigh`、`/max`，均只修改当前会话。
+- `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、长期记忆、群知识库和中文 `/help`。模型快捷命令为 `/deepseek`；推理强度为 `/low`、`/medium`、`/high`、`/xhigh`、`/max`，均只修改当前会话。
 - 支持 `/` 打开帮助、全角斜杠、斜杠后空格、QQ mention 紧接命令。已明确 @ 机器人的全量群消息也走命令入口；非定向旁听仍不能执行管理命令。忙碌群会话的 `/值日表`、`/all` 等本地命令不再并入聊天队列，原生模型/推理切换沿用 Hermes 的忙碌提示与权限控制；`/reset`、`/new` 保留原生生命周期。私聊 `/help` 优先显示中文菜单，`/值日表` 仅群聊可用。
 - `@机器人 /值日表` 按北京时间即时计算本周日到周六的轮值安排；2026 年 9 月 13 日开始，每周日轮换一次，开始前显示首轮预告。该功能不依赖主动群发或模型调用。
 - `/summary` 使用模型生成本群摘要、话题、决定、待办和未决问题；每群独立持久化，`/reset` 只清理会话与记忆，不删除知识库。
@@ -64,7 +64,7 @@ QQ 当前“开发体验用户”机制使用生产 API/Gateway，并由开放�
 
 | 直接说 | 等效操作 |
 | --- | --- |
-| 切到 DeepSeek / 把模型切换到 Gemini | `/deepseek` / `/gemini`，仅当前会话 |
+| 切到 DeepSeek | `/deepseek`，仅当前会话 |
 | 推理调高 / 推理强度调到最高 | `/high` / `/max`，仅当前会话 |
 | 查看当前模型 / 当前推理强度是多少 | Hermes `/model` / `/reasoning` 查询 |
 | 安静10分钟 / 安静半小时 / 恢复聊天 | 按时暂停或恢复主动参与；被叫到仍回应 |
@@ -121,9 +121,9 @@ Muse 风格的小栖更注重具体接话、独立观点和克制幽默，避免
 
 ## 模型
 
-Hermes 默认通过 `sub2api_dialogue` 的独立 key，以 OpenAI Chat Completions 调用 `meta/muse-spark-1.3-contributor`，默认推理强度为 `low`，请求显式携带顶层 `reasoning_effort`，不钳制为 `high` 或 `max`。`/muse`、`/mimo` 分别选择 `meta/muse-spark-1.3-contributor`、`xiaomi/mimo-v2.6-flash`；`/deepseek`、`/gemini` 保留各自密钥路由。新模型的 131072 token 是保守应用预算，不宣称为上游极限。切换选项不等同于上游可用：专用 key 的实际模型权限和在线探测为准。
+Hermes 只注册 `sub2api_deepseek` 一个供应商，以 OpenAI Chat Completions 调用 `deepseek/deepseek-v4.1-flash`。默认推理强度和该模型覆写都是 `low`，请求显式携带顶层 `reasoning_effort`。`/deepseek` 把当前会话切回这个模型。模型上下文按已注册的 1000000 token 预算，压缩仍在 100000 token 时用同一模型、`low` 推理强度。切换选项不等同于上游可用：专用 key 的实际模型权限和在线探测为准。
 
-命令均为 Hermes 原生会话级覆写，不修改其他群或全局默认。已有显式模型/推理覆写的会话仍保留用户选择，发送 `/muse`、`/low` 可更新；`/model`、`/reasoning` 查询实际设置。无显式覆写的会话跟随新默认。图片保持原生内容块，不配置自动模型回退。
+已有会话里的模型或供应商覆写不会自动跟着配置变。部署时会结束当前打开的会话，下一条消息按 DeepSeek 与 `low` 重新开始；群记忆和知识库保留。`/model`、`/reasoning` 查询实际设置。图片保持原生内容块，不配置自动模型回退。群聊不再发送 “Interrupting current task” 忙碌确认。打断后若模型仍输出 `action`/`message` 信封，发送前会取出正文并做 QQ 纯文本清洗。
 
 Hermes 的会话上下文达到 `100000` token 阈值时自动尝试压缩，受原生冷却和无效压缩保护约束；该值是触发阈值，不是完整请求硬上限。压缩在原会话继续，不调用 `/reset`，并固定使用 `deepseek/deepseek-v4.1-flash`、`low` 推理强度。若连续无效压缩触发持久化 anti-thrash breaker，QQ 网关会在下一条普通消息进入模型前自动执行完整 `/new` 等价轮换，并继续处理当前消息；手动 `/compress`、`/new` 不被抢占。群记忆与知识库不随 Hermes 会话轮换清空。群记忆独立在 40 条新消息且距上次刷新至少 300 秒时整理；或至少 4 条新消息的最老一条等待 1200 秒后整理，单条闲聊不会因空闲自动摘要。
 

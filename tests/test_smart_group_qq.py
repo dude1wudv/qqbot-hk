@@ -210,10 +210,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_aliases_delegate_to_native_session_switch(self):
         handler = build_handler(FakeContext(), self.store)
         cases = {
-            "<@bot> / gemini": "/model gemini-3.8-flash-high --session",
             "<@bot> /deepseek": "/model deepseek/deepseek-v4.1-flash --session",
-            "<@bot> /mimo": "/model xiaomi/mimo-v2.6-flash --session",
-            "<@bot> /muse": "/model meta/muse-spark-1.3-contributor --session",
         }
         for index, (raw, expected) in enumerate(cases.items()):
             with self.subTest(raw=raw):
@@ -278,7 +275,6 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.gateway.adapters = {self.source_platform: self.adapter}
         cases = {
             "/deepseek": "/model deepseek/deepseek-v4.1-flash --session",
-            "/gemini": "/model gemini-3.8-flash-high --session",
             "/low": "/reasoning low",
             "/medium": "/reasoning medium",
             "/high": "/reasoning high",

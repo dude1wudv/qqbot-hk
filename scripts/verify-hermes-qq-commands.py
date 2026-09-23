@@ -36,9 +36,6 @@ EXPECTED = {
     "xhigh": "/reasoning xhigh",
     "max": "/reasoning max",
     "deepseek": "/model deepseek/deepseek-v4.1-flash --session",
-    "gemini": "/model gemini-3.8-flash-high --session",
-    "mimo": "/model xiaomi/mimo-v2.6-flash --session",
-    "muse": "/model meta/muse-spark-1.3-contributor --session",
 }
 
 
@@ -185,7 +182,7 @@ async def verify_real_ingress(config) -> None:
             require(QQAdapter.handle_message is patched, "Ingress install is not idempotent")
             # Same content, new transport IDs (QQ correctly deduplicates old IDs).
             cases = (("/值日表", "/值日表"), ("/all", "/all"),
-                     ("/muse", EXPECTED["muse"]), ("/mimo", EXPECTED["mimo"]),
+                     ("/deepseek", EXPECTED["deepseek"]),
                      ("/xhigh", EXPECTED["xhigh"]))
             for index, (text, normalized) in enumerate(cases):
                 data = payload(f"after-{index}", "@小分队机器人" + text)["d"]
@@ -243,7 +240,7 @@ def main(config_path: Path) -> None:
     asyncio.run(verify_help())
     asyncio.run(verify_alias_resolution(config))
     asyncio.run(verify_real_ingress(config))
-    print("QQ_NATIVE_COMMANDS=passed HELP=custom-first HERMES=folded ALIASES=low,medium,high,xhigh,max,deepseek,gemini,mimo,muse")
+    print("QQ_NATIVE_COMMANDS=passed HELP=custom-first HERMES=folded ALIASES=low,medium,high,xhigh,max,deepseek")
 
 
 if __name__ == "__main__":

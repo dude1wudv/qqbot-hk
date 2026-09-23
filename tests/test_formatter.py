@@ -40,7 +40,19 @@ class FormatterTests(unittest.TestCase):
             self.assertEqual(trim_chat_followup("终于跑通了。" + suffix), "终于跑通了。")
         self.assertEqual(trim_chat_followup("你用的是哪个版本？"), "你用的是哪个版本？")
 
-    def test_markdown_plain_text_degradation(self):
+    def test_reply_envelope_is_rendered_as_plain_text(self):
+        raw = (
+            "{'action':\"reply\",\"message\":\"确实，官key便宜了。\\n\\n"
+            "**luna** 留给长推理。\"}"
+        )
+        value = format_for_qq(raw)
+        self.assertNotIn("action", value)
+        self.assertNotIn("{", value)
+        self.assertIn("确实，官key便宜了。", value)
+        self.assertIn("luna 留给长推理。", value)
+        self.assertNotIn("**", value)
+        self.assertEqual(format_for_qq('{"action":"ignore","message":null}'), "")
+        self.assertEqual(split_group_reply(raw)[0], "确实，官key便宜了。")
         value = format_for_qq("# 标题\n**重点**\n- 项\n> 引用\n[站点](https://example.com)\n```py\nx=1\n```")
         self.assertIn("标题", value)
         self.assertIn("重点", value)

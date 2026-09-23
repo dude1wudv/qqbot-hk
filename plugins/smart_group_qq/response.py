@@ -1,8 +1,10 @@
 """Fail-closed group reply envelopes and delivery correlation."""
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -11,16 +13,34 @@ from typing import Any, Callable, Mapping
 
 SILENT_MARKER = "[SILENT]"
 INVALID_REPLY_MESSAGE = "这次回复格式异常，请稍后重试。"
+_FENCE = re.compile(r"^```(?:json|python|py)?\s*(.*?)\s*```$", re.IGNORECASE | re.DOTALL)
+
+
+def _reply_object(response_text: str) -> dict[str, Any]:
+    """Accept strict JSON and the Python-literal form models emit after an interrupt."""
+    candidate = str(response_text or "").strip()
+    fenced = _FENCE.fullmatch(candidate)
+    if fenced:
+        candidate = fenced.group(1).strip()
+    errors: list[Exception] = []
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            value = loader(candidate)
+        except (TypeError, ValueError, SyntaxError, json.JSONDecodeError, MemoryError) as exc:
+            errors.append(exc)
+            continue
+        if isinstance(value, dict):
+            return value
+        errors.append(ValueError("not_object"))
+    raise ValueError("invalid_json") from (errors[-1] if errors else None)
 
 
 def parse_reply_decision(response_text: str) -> tuple[str, str | None]:
     """Parse the only accepted group final-output envelope."""
     try:
-        value = json.loads(str(response_text))
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        value = _reply_object(response_text)
+    except ValueError as exc:
         raise ValueError("invalid_json") from exc
-    if not isinstance(value, dict):
-        raise ValueError("not_object")
     if set(value) != {"action", "message"}:
         raise ValueError("invalid_fields")
     action = value.get("action")
@@ -34,6 +54,17 @@ def parse_reply_decision(response_text: str) -> tuple[str, str | None]:
     if not isinstance(message, str) or not message.strip():
         raise ValueError("invalid_reply_message")
     return "reply", message.strip()
+
+
+def render_reply_envelope(response_text: Any) -> str | None:
+    """Return cleaned reply text, empty text for ignore, or None when this is ordinary text."""
+    try:
+        action, message = parse_reply_decision(str(response_text or ""))
+    except ValueError:
+        return None
+    if action == "ignore":
+        return ""
+    return message
 
 
 def message_text_parts(user_message: Any) -> tuple[str, ...]:

@@ -122,7 +122,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_models_full_ids_aliases_and_effort_in_both_scopes(self):
         for chat_type in ("group", "dm"):
-            for alias, model in (("Muse", "meta/muse-spark-1.3-contributor"), ("MiMo", "xiaomi/mimo-v2.6-flash")):
+            for alias, model in (("DeepSeek", "deepseek/deepseek-v4.1-flash"),):
                 for raw in (f"/{alias}", f"<@bot>/{alias}", f"\u200b/{alias}", f"/model {model}", f"/配置 模型 {model}"):
                     with self.subTest(chat_type=chat_type, raw=raw):
                         result = await self.send(raw, chat_type + raw, chat_type=chat_type)

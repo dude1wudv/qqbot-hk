@@ -88,7 +88,7 @@ deepseek = post(
     {
         "model": "deepseek/deepseek-v4.1-flash",
         "messages": [{"role": "user", "content": "Reply only OK"}],
-        "reasoning_effort": "medium",
+        "reasoning_effort": "low",
         "stream": False,
         "max_tokens": 256,
     },
@@ -100,41 +100,7 @@ deepseek_text = (
 ).strip()
 if "OK" not in deepseek_text.upper():
     raise SystemExit("deepseek/deepseek-v4.1-flash: unexpected response")
-print("MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions EFFORT=medium RESULT=OK")
-
-gemini = post(
-    "/v1/chat/completions",
-    {
-        "model": "gemini-3.8-flash-high",
-        "messages": [{"role": "user", "content": "Reply only OK"}],
-        "reasoning_effort": "high",
-        "stream": False,
-        "max_tokens": 256,
-    },
-    key,
-)
-choices = gemini.get("choices") or []
-content = (((choices[0] if choices else {}).get("message") or {}).get("content") or "").strip()
-if "OK" not in content.upper():
-    raise SystemExit("gemini-3.8-flash-high: unexpected response")
-print("MODEL=gemini-3.8-flash-high EFFORT=high RESULT=OK")
-
-muse = post(
-    "/v1/chat/completions",
-    {
-        "model": "meta/muse-spark-1.3-contributor",
-        "messages": [{"role": "user", "content": "Reply only OK"}],
-        "reasoning_effort": "xhigh",
-        "stream": False,
-        "max_tokens": 1024,
-    },
-    dialogue_key,
-)
-muse_choices = muse.get("choices") or []
-muse_text = (((muse_choices[0] if muse_choices else {}).get("message") or {}).get("content") or "")
-if "OK" not in muse_text.upper():
-    raise SystemExit("meta/muse-spark-1.3-contributor: unexpected response")
-print("MODEL=meta/muse-spark-1.3-contributor API_MODE=chat_completions EFFORT=xhigh RESULT=OK")
+print("MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions EFFORT=low RESULT=OK")
 
 image_buffer = io.BytesIO()
 Image.new("RGB", (16, 16), (0, 120, 255)).save(image_buffer, format="PNG")
@@ -147,7 +113,7 @@ deepseek_vision = post(
             {"type": "text", "text": "Reply only IMAGE_OK if you can inspect this image."},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
         ]}],
-        "reasoning_effort": "medium",
+        "reasoning_effort": "low",
         "stream": False,
         "max_tokens": 128,
     },
@@ -223,33 +189,34 @@ config = yaml.safe_load(Path("/opt/data/config.yaml").read_text(encoding="utf-8"
 model_config = config.get("model")
 if not isinstance(model_config, Mapping):
     raise SystemExit("model config is missing")
-if model_config.get("provider") != "sub2api_dialogue":
-    raise SystemExit("primary model provider must be sub2api_dialogue")
-if model_config.get("default") != "meta/muse-spark-1.3-contributor":
-    raise SystemExit("primary model must be meta/muse-spark-1.3-contributor")
+if model_config.get("provider") != "sub2api_deepseek":
+    raise SystemExit("primary model provider must be sub2api_deepseek")
+if model_config.get("default") != "deepseek/deepseek-v4.1-flash":
+    raise SystemExit("primary model must be deepseek/deepseek-v4.1-flash")
 providers = config.get("providers") or {}
+if set(providers) != {"sub2api_deepseek"}:
+    raise SystemExit("exactly one provider, sub2api_deepseek, must be configured")
 deepseek_provider = providers.get("sub2api_deepseek") or {}
 if deepseek_provider.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
     raise SystemExit("DeepSeek provider key wiring is invalid")
 if deepseek_provider.get("api_mode") != "chat_completions":
     raise SystemExit("DeepSeek provider must use chat_completions")
+if "deepseek/deepseek-v4.1-flash" not in (deepseek_provider.get("models") or {}):
+    raise SystemExit("DeepSeek model registration is missing")
 agent_config = config.get("agent")
 if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
     raise SystemExit("image input must use native content parts")
 if agent_config.get("reasoning_effort") != "low":
     raise SystemExit("agent.reasoning_effort must be low")
 reasoning_overrides = agent_config.get("reasoning_overrides") or {}
-if reasoning_overrides.get("deepseek/deepseek-v4.1-flash") != "medium":
-    raise SystemExit("DeepSeek reasoning override must be medium")
-for model in ("meta/muse-spark-1.3-contributor", "xiaomi/mimo-v2.6-flash"):
-    if reasoning_overrides.get(model) != ("low" if model == "meta/muse-spark-1.3-contributor" else "xhigh"):
-        raise SystemExit("new model reasoning override is invalid")
-    if model not in (providers.get("sub2api_dialogue", {}).get("models") or {}):
-        raise SystemExit("new model provider registration missing")
-if providers.get("sub2api_dialogue", {}).get("key_env") != "SUB2API_DIALOGUE_API_KEY":
-    raise SystemExit("dialogue provider key wiring is invalid")
+if reasoning_overrides.get("deepseek/deepseek-v4.1-flash") != "low":
+    raise SystemExit("DeepSeek reasoning override must be low")
+if set(reasoning_overrides) != {"deepseek/deepseek-v4.1-flash"}:
+    raise SystemExit("reasoning overrides must only cover DeepSeek")
 if config.get("fallback_providers"):
     raise SystemExit("automatic fallback providers must be disabled")
+if (config.get("display") or {}).get("busy_ack_enabled") is not False:
+    raise SystemExit("display.busy_ack_enabled must be false")
 
 compression_config = config.get("compression")
 if not isinstance(compression_config, Mapping):
