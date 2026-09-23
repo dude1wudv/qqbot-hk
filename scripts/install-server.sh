@@ -27,9 +27,7 @@ for path in \
   "$project_dir/scripts/patch-hermes-qq-help.py" \
   "$project_dir/scripts/verify-hermes-qq-commands.py" \
   "$secrets_dir/qqbot.env" \
-  "$secrets_dir/sub2api-api-key" \
-  "$secrets_dir/sub2api-deepseek-api-key" \
-  "$secrets_dir/sub2api-dialogue-api-key"; do
+  "$secrets_dir/sub2api-deepseek-api-key"; do
   test -e "$path" || { echo "ERROR: required deployment input missing" >&2; exit 1; }
 done
 
@@ -62,13 +60,20 @@ PY
   chmod 0600 "$backup"
 fi
 stage_dir="$(mktemp -d "$data_dir/.smart-group-install.XXXXXX")"
-trap 'rm -rf "$stage_dir"' EXIT
+restart_stopped_service=false
+cleanup() {
+  result=$?
+  if test "$restart_stopped_service" = true && test "$(docker inspect -f '{{.State.Status}}' "$service" 2>/dev/null || true)" = exited; then
+    docker start "$service" >/dev/null || true
+  fi
+  rm -rf "$stage_dir"
+  exit "$result"
+}
+trap cleanup EXIT
 
 python3 - \
   "$secrets_dir/qqbot.env" \
-  "$secrets_dir/sub2api-api-key" \
   "$secrets_dir/sub2api-deepseek-api-key" \
-  "$secrets_dir/sub2api-dialogue-api-key" \
   "$project_dir/config/hermes-config.yaml" \
   "$stage_dir/.env" \
   "$stage_dir/config.yaml" \
@@ -79,7 +84,7 @@ import os
 import re
 import sys
 
-qq_source, key_source, deepseek_key_source, dialogue_key_source, config_source, env_target, config_target, runtime_env_source = map(Path, sys.argv[1:])
+qq_source, deepseek_key_source, config_source, env_target, config_target, runtime_env_source = map(Path, sys.argv[1:])
 qq_values = {}
 for raw in qq_source.read_text(encoding="utf-8").splitlines():
     line = raw.strip()
@@ -103,11 +108,9 @@ for item in qq_values["QQ_SCHEDULE_GROUPS"].split(","):
 if not groups:
     raise SystemExit("QQ_SCHEDULE_GROUPS is empty")
 
-sub2api_key = key_source.read_text(encoding="utf-8").strip()
 deepseek_key = deepseek_key_source.read_text(encoding="utf-8").strip()
-dialogue_key = dialogue_key_source.read_text(encoding="utf-8").strip()
-if not sub2api_key or not deepseek_key or not dialogue_key:
-    raise SystemExit("Sub2API key is empty")
+if not deepseek_key:
+    raise SystemExit("DeepSeek Sub2API key is empty")
 
 config = config_source.read_text(encoding="utf-8")
 # Group conversation access is declared in config, independently of the
@@ -132,9 +135,7 @@ env_target.write_text(
     f"QQ_APP_ID={qq_values['QQ_APP_ID']}\n"
     f"QQ_CLIENT_SECRET={qq_values['QQ_CLIENT_SECRET']}\n"
     f"QQ_SCHEDULE_GROUPS={','.join(groups)}\n"
-    f"SUB2API_API_KEY={sub2api_key}\n"
-    f"SUB2API_DEEPSEEK_API_KEY={deepseek_key}\n"
-    f"SUB2API_DIALOGUE_API_KEY={dialogue_key}\n",
+    f"SUB2API_DEEPSEEK_API_KEY={deepseek_key}\n",
     encoding="utf-8",
 )
 os.chmod(env_target, 0o600)
@@ -176,7 +177,61 @@ chmod 0600 "$data_dir/.env"
 
 docker network inspect sub2api_sub2api-network >/dev/null
 docker compose -f "$project_dir/docker-compose.yml" config --quiet
-docker compose -f "$project_dir/docker-compose.yml" up -d --build --force-recreate --no-deps "$service"
+docker compose -f "$project_dir/docker-compose.yml" build "$service"
+# A restart alone retains /model overrides and the prior transcript. Rotate
+# QQ routes with Hermes' own /new-equivalent API while the gateway is stopped.
+# Keep the old conversations and a consistent server-side DB snapshot.
+docker compose -f "$project_dir/docker-compose.yml" stop "$service"
+restart_stopped_service=true
+session_backup_dir="$deploy_dir/backups/hermes-sessions"
+install -d -o 10000 -g 10000 -m 0700 "$session_backup_dir"
+session_backup_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+python3 - "$data_dir/state.db" "$session_backup_dir/state.db.$session_backup_stamp" <<'PY'
+import os
+from pathlib import Path
+import sqlite3
+import sys
+
+source_path, target_path = map(Path, sys.argv[1:])
+if source_path.is_file():
+    source = sqlite3.connect(f"file:{source_path}?mode=ro", uri=True)
+    try:
+        if source.execute("PRAGMA integrity_check").fetchone()[0].lower() != "ok":
+            raise SystemExit("Hermes session database integrity check failed")
+        target = sqlite3.connect(target_path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
+    os.chmod(target_path, 0o600)
+PY
+if test -f "$data_dir/sessions/sessions.json"; then
+  install -o 10000 -g 10000 -m 0600 "$data_dir/sessions/sessions.json" "$session_backup_dir/sessions.json.$session_backup_stamp"
+fi
+image="$(docker compose -f "$project_dir/docker-compose.yml" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["hermes-qqbot"]["image"])')"
+docker run --rm --interactive --network none --user 10000:10000 \
+  --env HERMES_HOME=/opt/data --env-file "$data_dir/.env" \
+  --volume "$data_dir:/opt/data" --entrypoint python "$image" - <<'PY'
+from gateway.run import load_gateway_config_for_runner
+from gateway.session import SessionStore
+
+config = load_gateway_config_for_runner()
+store = SessionStore(config.sessions_dir, config)
+entries = [
+    entry for entry in store.list_sessions()
+    if entry.session_key.startswith("agent:main:qqbot:")
+    and getattr(entry.platform, "value", None) == "qqbot"
+]
+for entry in entries:
+    rotated = store.reset_session(entry.session_key)
+    if rotated is None or rotated.session_id == entry.session_id or rotated.model_override:
+        raise SystemExit("QQ session rotation failed")
+print(f"QQ_SESSIONS_ROTATED={len(entries)}")
+PY
+docker compose -f "$project_dir/docker-compose.yml" up -d --force-recreate --no-deps "$service"
+restart_stopped_service=false
 
 container_id="$(docker compose -f "$project_dir/docker-compose.yml" ps -q "$service")"
 test -n "$container_id"

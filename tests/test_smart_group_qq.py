@@ -211,6 +211,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler = build_handler(FakeContext(), self.store)
         cases = {
             "<@bot> /deepseek": "/model deepseek/deepseek-v4.1-flash --session",
+            "<@bot> /mimo": "/model xiaomi/mimo-v2.6-flash --session",
         }
         for index, (raw, expected) in enumerate(cases.items()):
             with self.subTest(raw=raw):
@@ -275,6 +276,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.gateway.adapters = {self.source_platform: self.adapter}
         cases = {
             "/deepseek": "/model deepseek/deepseek-v4.1-flash --session",
+            "/mimo": "/model xiaomi/mimo-v2.6-flash --session",
             "/low": "/reasoning low",
             "/medium": "/reasoning medium",
             "/high": "/reasoning high",

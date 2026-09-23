@@ -62,11 +62,9 @@ with open("/opt/data/.env", encoding="utf-8") as handle:
         if "=" in raw and not raw.lstrip().startswith("#"):
             name, value = raw.split("=", 1)
             env[name.strip()] = value.strip()
-key = os.environ.get("SUB2API_API_KEY") or env.get("SUB2API_API_KEY", "")
 deepseek_key = os.environ.get("SUB2API_DEEPSEEK_API_KEY") or env.get("SUB2API_DEEPSEEK_API_KEY", "")
-dialogue_key = os.environ.get("SUB2API_DIALOGUE_API_KEY") or env.get("SUB2API_DIALOGUE_API_KEY", "")
-if not key or not deepseek_key or not dialogue_key:
-    raise SystemExit("missing Sub2API key")
+if not deepseek_key:
+    raise SystemExit("missing DeepSeek Sub2API key")
 
 def post(path, body, api_key):
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -101,6 +99,25 @@ deepseek_text = (
 if "OK" not in deepseek_text.upper():
     raise SystemExit("deepseek/deepseek-v4.1-flash: unexpected response")
 print("MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions EFFORT=low RESULT=OK")
+
+mimo = post(
+    "/v1/chat/completions",
+    {
+        "model": "xiaomi/mimo-v2.6-flash",
+        "messages": [{"role": "user", "content": "Reply only OK"}],
+        "reasoning_effort": "low",
+        "stream": False,
+        "max_tokens": 128,
+    },
+    deepseek_key,
+)
+mimo_choices = mimo.get("choices") or []
+mimo_text = (
+    ((mimo_choices[0] if mimo_choices else {}).get("message") or {}).get("content") or ""
+).strip()
+if not mimo_text:
+    raise SystemExit("xiaomi/mimo-v2.6-flash: empty response")
+print("MODEL=xiaomi/mimo-v2.6-flash API_MODE=chat_completions EFFORT=low RESULT=OK")
 
 image_buffer = io.BytesIO()
 Image.new("RGB", (16, 16), (0, 120, 255)).save(image_buffer, format="PNG")
@@ -168,9 +185,11 @@ if not groups:
     raise SystemExit("QQ schedule target list is empty")
 if "QQ_GROUP_ALLOWED_USERS" in env:
     raise SystemExit("deprecated QQ_GROUP_ALLOWED_USERS must be absent")
-for name in ("SUB2API_API_KEY", "SUB2API_DEEPSEEK_API_KEY", "SUB2API_DIALOGUE_API_KEY"):
-    if not env.get(name):
-        raise SystemExit(f"required Sub2API secret missing: {name}")
+if not env.get("SUB2API_DEEPSEEK_API_KEY"):
+    raise SystemExit("required DeepSeek Sub2API secret missing")
+for name in ("SUB2API_API_KEY", "SUB2API_DIALOGUE_API_KEY"):
+    if name in env:
+        raise SystemExit(f"retired Sub2API secret remains in runtime environment: {name}")
 for name in (
     "QQ_STT_PREFER_BUILTIN", "QQ_STT_API_KEY", "QQ_STT_BASE_URL", "QQ_STT_MODEL",
     "VOICE_TOOLS_OPENAI_KEY",
@@ -201,8 +220,14 @@ if deepseek_provider.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
     raise SystemExit("DeepSeek provider key wiring is invalid")
 if deepseek_provider.get("api_mode") != "chat_completions":
     raise SystemExit("DeepSeek provider must use chat_completions")
-if "deepseek/deepseek-v4.1-flash" not in (deepseek_provider.get("models") or {}):
-    raise SystemExit("DeepSeek model registration is missing")
+if set(deepseek_provider.get("models") or {}) != {
+    "deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"
+}:
+    raise SystemExit("DeepSeek and MiMo model registrations are required on the screenshot key")
+commands = config.get("quick_commands") or {}
+if ((commands.get("mimo") or {}).get("target")
+        != "/model xiaomi/mimo-v2.6-flash --session"):
+    raise SystemExit("MiMo session switch command is missing")
 agent_config = config.get("agent")
 if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
     raise SystemExit("image input must use native content parts")
@@ -211,8 +236,10 @@ if agent_config.get("reasoning_effort") != "low":
 reasoning_overrides = agent_config.get("reasoning_overrides") or {}
 if reasoning_overrides.get("deepseek/deepseek-v4.1-flash") != "low":
     raise SystemExit("DeepSeek reasoning override must be low")
-if set(reasoning_overrides) != {"deepseek/deepseek-v4.1-flash"}:
-    raise SystemExit("reasoning overrides must only cover DeepSeek")
+if reasoning_overrides.get("xiaomi/mimo-v2.6-flash") != "low":
+    raise SystemExit("MiMo reasoning override must be low")
+if set(reasoning_overrides) != {"deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"}:
+    raise SystemExit("reasoning overrides must only cover DeepSeek and MiMo")
 if config.get("fallback_providers"):
     raise SystemExit("automatic fallback providers must be disabled")
 if (config.get("display") or {}).get("busy_ack_enabled") is not False:
@@ -249,6 +276,27 @@ print(
     "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=100000 "
     "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
 )
+session_db = sqlite3.connect("file:/opt/data/state.db?mode=ro", uri=True)
+try:
+    qq_routes = session_db.execute(
+        "SELECT entry_json FROM gateway_routing WHERE session_key LIKE 'agent:main:qqbot:%'"
+    ).fetchall()
+    for (raw,) in qq_routes:
+        override = (json.loads(raw).get("model_override") or {})
+        if override and (
+            override.get("provider") not in (None, "sub2api_deepseek")
+            or override.get("model") not in {"deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"}
+        ):
+            raise SystemExit("retired QQ model override remains after session rotation")
+    stale = session_db.execute(
+        "SELECT COUNT(*) FROM sessions WHERE source='qqbot' AND ended_at IS NULL "
+        "AND model IS NOT NULL AND model NOT IN ('deepseek/deepseek-v4.1-flash','xiaomi/mimo-v2.6-flash')"
+    ).fetchone()[0]
+    if stale:
+        raise SystemExit("retired QQ model sessions remain active after rotation")
+finally:
+    session_db.close()
+print(f"QQ_SESSION_ROUTES={len(qq_routes)} RETIRED_MODELS=absent")
 tools = (((config.get("platform_toolsets") or {}).get("qqbot") or []))
 if "terminal" not in tools or "file" not in tools:
     raise SystemExit("QQ terminal/file toolset is not enabled")

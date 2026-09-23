@@ -24,12 +24,15 @@ quick_commands:
   deepseek:
     type: alias
     target: /model deepseek/deepseek-v4.1-flash --session
+  mimo:
+    type: alias
+    target: /model xiaomi/mimo-v2.6-flash --session
 
 model:
   provider: sub2api_deepseek
   default: deepseek/deepseek-v4.1-flash
   api_mode: chat_completions
-  # Matches the single registered DeepSeek route. Not a claim about the upstream maximum.
+  # Default DeepSeek budget. MiMo has its own registered context length below.
   context_length: 1000000
   streaming: true
 
@@ -46,6 +49,8 @@ providers:
     models:
       deepseek/deepseek-v4.1-flash:
         context_length: 1000000
+      xiaomi/mimo-v2.6-flash:
+        context_length: 131072
 
 
 agent:
@@ -54,6 +59,7 @@ agent:
   image_input_mode: native
   reasoning_overrides:
     deepseek/deepseek-v4.1-flash: low
+    xiaomi/mimo-v2.6-flash: low
 
 auxiliary:
   compression:
