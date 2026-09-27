@@ -381,6 +381,7 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
     dispatch_message = getattr(adapter, "_on_message", None)
     record["_dispatch_payload"] = dict(data)
     record["_dispatch_message"] = dispatch_message
+    record["_load_attachments"] = getattr(adapter, "_process_attachments", None)
     if callable(should_reply) and callable(dispatch_message):
         try:
             if await should_reply(record):

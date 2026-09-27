@@ -4,7 +4,7 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.hermes-base-digest="sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1" \
       io.qqbot-hk.audio-patch="v2" \
       io.qqbot-hk.chat-reasoning-patch="v4" \
-      io.qqbot-hk.compression-recovery-patch="v1" \
+      io.qqbot-hk.qq-context-patch="v1" \
       io.qqbot-hk.qq-help-patch="v1" \
       io.qqbot-hk.qq-output-patch="v1"
 
@@ -17,9 +17,6 @@ COPY --chmod=0755 scripts/patch-hermes-chat-reasoning.py /tmp/patch-hermes-chat-
 RUN python /tmp/patch-hermes-chat-reasoning.py \
     && rm -f /tmp/patch-hermes-chat-reasoning.py
 
-COPY --chmod=0755 scripts/patch-hermes-compression-recovery.py /tmp/patch-hermes-compression-recovery.py
-RUN python /tmp/patch-hermes-compression-recovery.py \
-    && rm -f /tmp/patch-hermes-compression-recovery.py
 
 COPY --chmod=0755 scripts/patch-hermes-qq-help.py /tmp/patch-hermes-qq-help.py
 RUN python /tmp/patch-hermes-qq-help.py \
@@ -29,10 +26,16 @@ COPY --chmod=0755 scripts/patch-hermes-qq-output.py /tmp/patch-hermes-qq-output.
 RUN python /tmp/patch-hermes-qq-output.py \
     && rm -f /tmp/patch-hermes-qq-output.py
 
+COPY --chmod=0644 runtime/qqbot_context.py /opt/hermes/qqbot_context.py
+COPY --chmod=0644 plugins/smart_group_qq/media.py /opt/hermes/qqbot_hk_media.py
+COPY --chmod=0755 scripts/patch-hermes-qq-context.py /tmp/patch-hermes-qq-context.py
+RUN python /tmp/patch-hermes-qq-context.py \
+    && rm -f /tmp/patch-hermes-qq-context.py
+
 
 COPY --chmod=0755 scripts/verify-hermes-audio.py /opt/hermes/verify-hermes-audio.py
 COPY --chmod=0755 scripts/verify-hermes-chat-reasoning.py /opt/hermes/verify-hermes-chat-reasoning.py
-COPY --chmod=0755 scripts/verify-hermes-compression-recovery.py /opt/hermes/verify-hermes-compression-recovery.py
+COPY --chmod=0755 scripts/verify-hermes-qq-context.py /opt/hermes/verify-hermes-qq-context.py
 COPY --chmod=0755 scripts/verify-hermes-qq-commands.py /opt/hermes/verify-hermes-qq-commands.py
 COPY --chmod=0755 scripts/verify-hermes-qq-output.py /opt/hermes/verify-hermes-qq-output.py
 COPY --chmod=0644 plugins/smart_group_qq /opt/hermes/qqbot-hk/plugins/smart_group_qq
@@ -40,6 +43,6 @@ COPY --chmod=0644 config/hermes-config.yaml /opt/hermes/qqbot-hk/hermes-config.y
 
 RUN python /opt/hermes/verify-hermes-audio.py \
     && python /opt/hermes/verify-hermes-chat-reasoning.py \
-    && python /opt/hermes/verify-hermes-compression-recovery.py \
+    && python /opt/hermes/verify-hermes-qq-context.py \
     && python /opt/hermes/verify-hermes-qq-commands.py \
     && python /opt/hermes/verify-hermes-qq-output.py

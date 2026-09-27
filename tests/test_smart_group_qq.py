@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
+import tempfile
 import time
 import unittest
 from types import SimpleNamespace
@@ -555,6 +556,68 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0)
                 self.assertEqual(len(ctx.llm.calls), 1)
                 self.assertEqual(adapter.dispatched, [])
+
+
+    async def test_nonmention_image_only_message_reaches_participation_with_latest_five_images(self):
+        image_bytes = [
+            b"\x89PNG\r\n\x1a\n" + f"image-{index}".encode()
+            for index in range(6)
+        ]
+        with tempfile.TemporaryDirectory() as cache_root:
+            image_paths = []
+            for index, data in enumerate(image_bytes):
+                path = Path(cache_root) / f"image-{index}.png"
+                path.write_bytes(data)
+                image_paths.append(str(path))
+
+            async def process_attachments(attachments):
+                attachment = attachments[0]
+                path = Path(cache_root) / attachment["filename"]
+                return {
+                    "image_urls": [str(path)],
+                    "image_media_types": ["image/png"],
+                    "voice_transcripts": [],
+                    "attachment_info": "",
+                }
+
+            ctx = FakeContext({
+                "ambient": {"participation": {
+                    "enabled": True, "min_confidence": 0.70, "wake_words": [],
+                    "cooldown_seconds": 0, "debounce_seconds": 0, "max_wait_seconds": 0,
+                }},
+                "media_cache_roots": [cache_root],
+            })
+            ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
+            handler = build_handler(ctx, self.store)
+            adapter = ObserverAdapter()
+            adapter._process_attachments = process_attachments
+            payload = observer_payload("participation-image-only", text="", mentions=[])
+            payload["d"]["attachments"] = [
+                {"content_type": "image/png", "filename": f"image-{index}.png"}
+                for index in range(len(image_paths))
+            ]
+
+            await qq_observer._observe_message(adapter, payload, handler.observe_nonmention)
+            for _ in range(100):
+                if ctx.llm.calls and adapter.dispatched:
+                    break
+                await asyncio.sleep(0.01)
+
+            self.assertEqual(
+                len(ctx.llm.calls), 1,
+                [(row["event_type"], row["source"]) for row in
+                 self.store.db.execute("SELECT event_type,source FROM audit_events ORDER BY id")],
+            )
+            self.assertEqual(adapter.dispatched[0][0], "GROUP_AT_MESSAGE_CREATE")
+            self.assertEqual(
+                [item["filename"] for item in adapter.dispatched[0][1]["attachments"]],
+                [f"image-{index}.png" for index in range(1, 6)],
+            )
+            classifier_input = ctx.llm.calls[0]["input"]
+            image_chunks = [item["data"] for item in classifier_input if item.get("type") == "image"]
+            self.assertEqual(image_chunks, image_bytes[-5:])
+            self.assertTrue(all(isinstance(chunk, bytes) and chunk.startswith(b"\x89PNG") for chunk in image_chunks))
+
 
     async def test_high_confidence_participation_dispatches_native_group_path_once(self):
         ctx = FakeContext({

@@ -22,8 +22,10 @@ for path in \
   "$project_dir/scripts/verify-hermes-audio.py" \
   "$project_dir/scripts/patch-hermes-chat-reasoning.py" \
   "$project_dir/scripts/verify-hermes-chat-reasoning.py" \
-  "$project_dir/scripts/patch-hermes-compression-recovery.py" \
-  "$project_dir/scripts/verify-hermes-compression-recovery.py" \
+  "$project_dir/scripts/patch-hermes-qq-context.py" \
+  "$project_dir/scripts/verify-hermes-qq-context.py" \
+  "$project_dir/runtime/qqbot_context.py" \
+  "$project_dir/plugins/smart_group_qq/media.py" \
   "$project_dir/scripts/patch-hermes-qq-help.py" \
   "$project_dir/scripts/verify-hermes-qq-commands.py" \
   "$secrets_dir/qqbot.env" \
@@ -141,6 +143,9 @@ env_target.write_text(
 os.chmod(env_target, 0o600)
 PY
 
+docker network inspect sub2api_sub2api-network >/dev/null
+docker compose -f "$project_dir/docker-compose.yml" config --quiet
+docker compose -f "$project_dir/docker-compose.yml" build "$service"
 install -m 0644 "$project_dir/config/SOUL.md" "$stage_dir/SOUL.md"
 install -d -o 10000 -g 10000 -m 0755 "$data_dir/hooks/smart_group_qq"
 install -o 10000 -g 10000 -m 0644 "$project_dir/hooks/smart_group_qq/HOOK.yaml" "$data_dir/hooks/smart_group_qq/HOOK.yaml"
@@ -175,12 +180,8 @@ chown -R 10000:10000 "$data_dir/plugins/smart_group_qq" "$data_dir/plugin-data/s
 chmod 0700 "$data_dir"
 chmod 0600 "$data_dir/.env"
 
-docker network inspect sub2api_sub2api-network >/dev/null
-docker compose -f "$project_dir/docker-compose.yml" config --quiet
-docker compose -f "$project_dir/docker-compose.yml" build "$service"
-# A restart alone retains /model overrides and the prior transcript. Rotate
-# QQ routes with Hermes' own /new-equivalent API while the gateway is stopped.
-# Keep the old conversations and a consistent server-side DB snapshot.
+# Stop only the bot for a consistent rollback snapshot. Preserve active routes,
+# model overrides and history; the async policy performs lossless handoff later.
 docker compose -f "$project_dir/docker-compose.yml" stop "$service"
 restart_stopped_service=true
 session_backup_dir="$deploy_dir/backups/hermes-sessions"
@@ -210,26 +211,6 @@ PY
 if test -f "$data_dir/sessions/sessions.json"; then
   install -o 10000 -g 10000 -m 0600 "$data_dir/sessions/sessions.json" "$session_backup_dir/sessions.json.$session_backup_stamp"
 fi
-image="$(docker compose -f "$project_dir/docker-compose.yml" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["hermes-qqbot"]["image"])')"
-docker run --rm --interactive --network none --user 10000:10000 \
-  --env HERMES_HOME=/opt/data --env-file "$data_dir/.env" \
-  --volume "$data_dir:/opt/data" --entrypoint python "$image" - <<'PY'
-from gateway.run import load_gateway_config_for_runner
-from gateway.session import SessionStore
-
-config = load_gateway_config_for_runner()
-store = SessionStore(config.sessions_dir, config)
-entries = [
-    entry for entry in store.list_sessions()
-    if entry.session_key.startswith("agent:main:qqbot:")
-    and getattr(entry.platform, "value", None) == "qqbot"
-]
-for entry in entries:
-    rotated = store.reset_session(entry.session_key)
-    if rotated is None or rotated.session_id == entry.session_id or rotated.model_override:
-        raise SystemExit("QQ session rotation failed")
-print(f"QQ_SESSIONS_ROTATED={len(entries)}")
-PY
 docker compose -f "$project_dir/docker-compose.yml" up -d --force-recreate --no-deps "$service"
 restart_stopped_service=false
 

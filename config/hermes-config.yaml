@@ -38,7 +38,7 @@ model:
 
 compression:
   enabled: true
-  threshold_tokens: 100000
+  threshold_tokens: 80000
 
 providers:
   sub2api_deepseek:
@@ -82,9 +82,7 @@ platforms:
       # DM pairing remains independent; do not set QQ_ALLOW_ALL_USERS.
       group_allow_from: ["*"]
       group_allowed_chats: ["*"]
-      # Keep native auto-compression; if its durable anti-thrash breaker trips,
-      # rotate the affected QQ session before processing the next ordinary message.
-      auto_new_on_compression_ineffective: true
+      # QQ policy prepares summaries asynchronously and rotates at a safe turn boundary.
       voice_input_enabled: false
       voice_output_enabled: false
       markdown_support: false
@@ -175,7 +173,7 @@ plugins:
           claim_retention_days: 7
         ambient:
           enabled: true
-          analyze_images: false
+          analyze_images: true
           max_text_chars: 4000
           queue_max_size: 2000
           per_group_concurrency: 1

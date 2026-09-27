@@ -37,13 +37,13 @@ image_id="$(docker inspect -f '{{.Image}}' "$container_id")"
 base_digest_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.hermes-base-digest"}}' "$image_id")"
 audio_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.audio-patch"}}' "$image_id")"
 chat_reasoning_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.chat-reasoning-patch"}}' "$image_id")"
-compression_recovery_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.compression-recovery-patch"}}' "$image_id")"
+qq_context_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-context-patch"}}' "$image_id")"
 qq_help_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-help-patch"}}' "$image_id")"
 qq_output_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-output-patch"}}' "$image_id")"
 test "$base_digest_label" = "sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1"
 test "$audio_patch_label" = "v2"
 test "$chat_reasoning_patch_label" = "v4"
-test "$compression_recovery_patch_label" = "v1"
+test "$qq_context_patch_label" = "v1"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
 
@@ -149,7 +149,7 @@ docker exec hermes-qqbot hermes config check >/dev/null
 docker exec hermes-qqbot hermes plugins doctor /opt/data/plugins/smart_group_qq --ci >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-audio.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/dev/null
-docker exec hermes-qqbot python /opt/hermes/verify-hermes-compression-recovery.py >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-context.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-commands.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-output.py >/dev/null
 docker exec -i hermes-qqbot python - <<'PY'
@@ -252,9 +252,9 @@ if compression_config.get("enabled") is not True:
     raise SystemExit("compression.enabled must be true")
 if (
     type(compression_config.get("threshold_tokens")) is not int
-    or compression_config.get("threshold_tokens") != 100000
+    or compression_config.get("threshold_tokens") != 80000
 ):
-    raise SystemExit("compression.threshold_tokens must be exactly 100000")
+    raise SystemExit("compression.threshold_tokens must be exactly 80000")
 
 auxiliary = config.get("auxiliary")
 if not isinstance(auxiliary, Mapping):
@@ -273,7 +273,7 @@ if compression_route.get("reasoning_effort") != "low":
 if auxiliary.get("vision"):
     raise SystemExit("auxiliary vision fallback must be disabled")
 print(
-    "COMPRESSION_CONFIG=enabled THRESHOLD_TOKENS=100000 "
+    "COMPRESSION_CONFIG=async THRESHOLD_TOKENS=80000 RECENT_MESSAGES=10 MAX_IMAGES=5 "
     "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
 )
 session_db = sqlite3.connect("file:/opt/data/state.db?mode=ro", uri=True)
@@ -311,8 +311,6 @@ if qq_extra.get("group_allow_from") != ["*"]:
     raise SystemExit("QQ adapter group_allow_from must be exactly ['*']")
 if qq_extra.get("group_allowed_chats") != ["*"]:
     raise SystemExit("gateway group_allowed_chats must be exactly ['*']")
-if qq_extra.get("auto_new_on_compression_ineffective") is not True:
-    raise SystemExit("QQ compression breaker auto-new recovery must be enabled")
 if qq_extra.get("voice_input_enabled") is not False:
     raise SystemExit("QQ voice input must be disabled")
 if qq_extra.get("voice_output_enabled") is not False:
@@ -359,8 +357,8 @@ if not isinstance(ambient_config.get("enabled"), bool):
     raise SystemExit("smart_group_qq ambient enabled flag is invalid")
 if not isinstance(ambient_config.get("analyze_images"), bool):
     raise SystemExit("smart_group_qq ambient analyze_images flag is invalid")
-if ambient_config.get("analyze_images") is not False:
-    raise SystemExit("smart_group_qq ambient.analyze_images must be false")
+if ambient_config.get("analyze_images") is not True:
+    raise SystemExit("smart_group_qq ambient.analyze_images must be true")
 for name in (
     "max_text_chars", "queue_max_size", "per_group_concurrency",
     "flush_interval_seconds", "context_window_messages", "context_window_seconds",
@@ -585,7 +583,7 @@ echo "CONTAINER_HEALTH=$health"
 echo "HERMES_BASE_DIGEST=verified"
 echo "HERMES_AUDIO_PATCH=verified"
 echo "HERMES_CHAT_REASONING_PATCH=verified"
-echo "HERMES_COMPRESSION_RECOVERY_PATCH=verified"
+echo "HERMES_QQ_CONTEXT_PATCH=verified"
 echo "HERMES_QQ_HELP_PATCH=verified"
 echo "HERMES_QQ_OUTPUT_PATCH=verified"
 echo "QQ_NATIVE_COMMANDS=verified"
