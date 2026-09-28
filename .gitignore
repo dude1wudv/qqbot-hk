@@ -13,6 +13,3 @@ logs/
 Thumbs.db
 __pycache__/
 *.pyc
-
-# Independently managed bot source placed alongside this deployment repo.
-Smart_Group_Bot/
