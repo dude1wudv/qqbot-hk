@@ -5,6 +5,12 @@ from types import SimpleNamespace
 from pathlib import Path
 import sys
 
+def _reply_envelope_with_unescaped_controls(message):
+    encoded = json.dumps(message, ensure_ascii=False)
+    for escaped, actual in (("\\r", "\r"), ("\\n", "\n"), ("\\t", "\t")):
+        encoded = encoded.replace(escaped, actual)
+    return '{"action":"reply","message":' + encoded + '}'
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 
@@ -36,6 +42,36 @@ class ResponseTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     parse_reply_decision(value)
+    def test_parse_extracts_json_from_common_model_wrappers(self):
+        cases = (
+            ('Here is the final answer:\n{"action":"reply","message":"答案"}', ("reply", "答案")),
+            ('```json\n{"action":"reply","message":"答案"}\n```\nDone.', ("reply", "答案")),
+            ('{"action":"ignore","message":null}\n(Do not send)', ("ignore", None)),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                self.assertEqual(parse_reply_decision(value), expected)
+
+
+    def test_parse_accepts_unescaped_control_characters_in_reply_messages(self):
+        message_cases = (
+            "第一行\n第二行",
+            "第一行\r\n第二行",
+            '第一行\t包含 "引号" 和 \\反斜杠',
+        )
+        for message in message_cases:
+            with self.subTest(message=message):
+                raw = _reply_envelope_with_unescaped_controls(message)
+                expected = ("reply", message)
+                self.assertEqual(parse_reply_decision(raw), expected)
+                self.assertEqual(
+                    parse_reply_decision("模型说明：\n" + raw + "\n以上是结果。"),
+                    expected,
+                )
+
+        escaped_message = '第一行\n包含 "引号" 和 \\反斜杠'
+        escaped = json.dumps({"action": "reply", "message": escaped_message}, ensure_ascii=False)
+        self.assertEqual(parse_reply_decision(escaped), ("reply", escaped_message))
 
     def test_marker_extraction_supports_text_and_multimodal_parts_only(self):
         marker = "[群对话标记:" + "a" * 32 + "]"
@@ -140,6 +176,39 @@ class ResponseTests(unittest.TestCase):
                         self.assertEqual(registry.size, 0)
                         self.assertEqual(audits, [])
 
+    def test_registry_accepts_unescaped_control_characters_and_delivers_once(self):
+        message = '第一行\n第二行\r\n第三行\t含有 "引号" 和 \\反斜杠'
+        raw = _reply_envelope_with_unescaped_controls(message)
+        for index, direct in enumerate((False, True)):
+            with self.subTest(direct=direct):
+                registry, audits, delivered = self._registry()
+                record = self._record(ref=("2" if index == 0 else "3") * 32, direct=direct)
+                self.assertTrue(registry.register(record))
+                marker = "[群对话标记:" + record.request_ref + "]"
+                self.assertEqual(registry.transform(raw, marker), message)
+                self.assertEqual(record.pending_message, message)
+                self.assertIs(registry.pending_for_send("group-a", "message-a"), record)
+                self.assertTrue(registry.send_allowed(record))
+                self.assertFalse(any(item[0][0] in ("output_invalid", "output_fallback") for item in audits))
+
+                registry.finish_send(record, SimpleNamespace(success=True))
+                registry.finish_send(record, SimpleNamespace(success=True))
+                self.assertEqual(registry.size, 0)
+                self.assertEqual(len(delivered), 1)
+                self.assertIs(delivered[0][0], record)
+                self.assertEqual(delivered[0][0].pending_message, message)
+
+    def test_silent_marker_is_not_plain_text_fallback(self):
+        registry, audits, _ = self._registry()
+        record = self._record(ref="4" * 32)
+        self.assertTrue(registry.register(record))
+        output = registry.transform(SILENT_MARKER, "[群对话标记:" + record.request_ref + "]")
+        self.assertEqual(output, SILENT_MARKER)
+        self.assertEqual(registry.size, 0)
+        self.assertIsNone(record.pending_message)
+        self.assertFalse(any(item[0][0] == "output_fallback" for item in audits))
+
+
     def test_registry_is_fail_closed_for_ignore_invalid_epoch_cancel_and_expiry(self):
         registry, audits, _ = self._registry()
         record = self._record()
@@ -149,11 +218,24 @@ class ResponseTests(unittest.TestCase):
         self.assertEqual(registry.size, 0)
         self.assertEqual(audits[-1][0][0], "output_ignore")
 
-        invalid = self._record(ref="b" * 32)
-        registry.register(invalid)
-        invalid_marker = "[群对话标记:" + invalid.request_ref + "]"
-        self.assertEqual(registry.transform("{bad", invalid_marker), SILENT_MARKER)
-        self.assertEqual(audits[-1][0][0], "output_invalid")
+        malformed_outputs = (
+            "{bad",
+            '{"action":"reply","message":"truncated',
+            '{"action":"reply","message: "missing quote"}',
+            '{"action":"reply","message":"ok","extra":1}',
+        )
+        for index, malformed in enumerate(malformed_outputs):
+            invalid = self._record(ref=format(index + 5, "032x"))
+            registry.register(invalid)
+            invalid_marker = "[群对话标记:" + invalid.request_ref + "]"
+            self.assertEqual(registry.transform(malformed, invalid_marker), SILENT_MARKER)
+            self.assertEqual(audits[-1][0][0], "output_invalid")
+        plain = self._record(ref="1" * 32)
+        registry.register(plain)
+        self.assertEqual(registry.transform("这是一条正常的中文回复。", "[群对话标记:" + plain.request_ref + "]"), "这是一条正常的中文回复。")
+        self.assertEqual(plain.pending_message, "这是一条正常的中文回复。")
+        self.assertEqual(audits[-1][0][0], "output_fallback")
+
 
         cancelled = self._record(ref="c" * 32)
         registry.register(cancelled)

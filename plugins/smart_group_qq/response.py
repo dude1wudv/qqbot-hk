@@ -17,21 +17,33 @@ _FENCE = re.compile(r"^```(?:json|python|py)?\s*(.*?)\s*```$", re.IGNORECASE | r
 
 
 def _reply_object(response_text: str) -> dict[str, Any]:
-    """Accept strict JSON and the Python-literal form models emit after an interrupt."""
+    """Extract the reply object from common model wrappers without loosening its schema."""
     candidate = str(response_text or "").strip()
     fenced = _FENCE.fullmatch(candidate)
     if fenced:
         candidate = fenced.group(1).strip()
     errors: list[Exception] = []
-    for loader in (json.loads, ast.literal_eval):
-        try:
-            value = loader(candidate)
-        except (TypeError, ValueError, SyntaxError, json.JSONDecodeError, MemoryError) as exc:
-            errors.append(exc)
-            continue
-        if isinstance(value, dict):
-            return value
-        errors.append(ValueError("not_object"))
+    candidates = [candidate]
+    # Models can emit literal newlines/tabs inside message strings; keep schema validation strict.
+    decoder = json.JSONDecoder(strict=False)
+    for index, char in enumerate(candidate):
+        if char == "{":
+            try:
+                _, end = decoder.raw_decode(candidate[index:])
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            candidates.append(candidate[index:index + end])
+            break
+    for value_text in candidates:
+        for loader in (decoder.decode, ast.literal_eval):
+            try:
+                value = loader(value_text)
+            except (TypeError, ValueError, SyntaxError, json.JSONDecodeError, MemoryError) as exc:
+                errors.append(exc)
+                continue
+            if isinstance(value, dict):
+                return value
+            errors.append(ValueError("not_object"))
     raise ValueError("invalid_json") from (errors[-1] if errors else None)
 
 
@@ -65,6 +77,14 @@ def render_reply_envelope(response_text: Any) -> str | None:
     if action == "ignore":
         return ""
     return message
+
+
+def _plain_text_fallback(response_text: Any) -> str | None:
+    """Keep ordinary model prose deliverable while rejecting broken JSON envelopes."""
+    text = str(response_text or "").strip()
+    if not text or text == SILENT_MARKER or "{" in text[:80]:
+        return None
+    return text
 
 
 def message_text_parts(user_message: Any) -> tuple[str, ...]:
@@ -209,9 +229,16 @@ class ReplyRegistry:
                     record.pending_message = INVALID_REPLY_MESSAGE
                     record.record_on_success = False
                     return INVALID_REPLY_MESSAGE
-                record.consumed = True
-                self._records.pop(record.request_ref, None)
-                return SILENT_MARKER
+                fallback = _plain_text_fallback(response_text)
+                if fallback is None:
+                    record.consumed = True
+                    self._records.pop(record.request_ref, None)
+                    return SILENT_MARKER
+                self._audit(
+                    "output_fallback", chat_id=record.group_id, message_id=record.message_id,
+                    source="plain_text",
+                )
+                action, message = "reply", fallback
             if action == "ignore":
                 self._audit("output_ignore", chat_id=record.group_id, message_id=record.message_id, source=record.source_kind)
                 record.consumed = True
