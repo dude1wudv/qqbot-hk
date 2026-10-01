@@ -11,7 +11,7 @@ import sys
 
 
 EXPECTED_ORIGINAL_SHA256 = "63fb637d702c77f924f599df5624be7ff3813b4b2d8d60583330b9f10614d01a"
-PATCH_MARKER = '# QQBOT_HK_CHAT_REASONING_PATCH = "v4"'
+PATCH_MARKER = '# QQBOT_HK_CHAT_REASONING_PATCH = "v5"'
 SUB2API_BASE_URL = "http://sub2api:8080/v1"
 
 
@@ -27,26 +27,31 @@ PATCHES = (
         "DeepSeek effort imports",
     ),
     (
-        "        thinking_off = isinstance(reasoning_config, dict) and reasoning_config.get(\"enabled\") is False\n"
-        "        _e = requested_effort(reasoning_config)\n",
+        "    _add_prompt_cache_key(\n",
+        f"    {PATCH_MARKER}\n"
+        "    model = str(api_kwargs.get(\"model\") or \"\").lower()\n"
+        f"    is_sub2api = str(params.get(\"base_url\") or \"\").strip().rstrip(\"/\") == \"{SUB2API_BASE_URL}\"\n"
+        "    is_sub2api_deepseek = is_sub2api and \"deepseek-v4\" in model\n"
+        "    is_sub2api_mimo = is_sub2api and model == \"xiaomi/mimo-v2.6-flash\"\n"
+        "    if is_sub2api_deepseek or is_sub2api_mimo:\n"
+        "        reasoning_config = params.get(\"reasoning_config\")\n"
         "        thinking_off = isinstance(reasoning_config, dict) and reasoning_config.get(\"enabled\") is False\n"
         "        _e = requested_effort(reasoning_config)\n"
-        f"        {PATCH_MARKER}\n"
-        f"        is_sub2api = str(params.get(\"base_url\") or \"\").strip().rstrip(\"/\") == \"{SUB2API_BASE_URL}\"\n"
-        "        is_sub2api_deepseek = is_sub2api and \"deepseek-v4\" in (model or \"\").lower()\n"
-        "        is_sub2api_mimo = is_sub2api and (model or \"\").lower() == \"xiaomi/mimo-v2.6-flash\"\n"
-        "        if is_sub2api_deepseek and not thinking_off:\n"
+        "        if thinking_off:\n"
+        "            api_kwargs.pop(\"reasoning_effort\", None)\n"
+        "        elif is_sub2api_deepseek:\n"
         "            api_kwargs[\"reasoning_effort\"] = clamp_effort(\n"
         "                _e or \"medium\", DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES\n"
         "            )\n"
-        "        elif is_sub2api_mimo and not thinking_off:\n"
-        "            api_kwargs[\"reasoning_effort\"] = _e or \"medium\"\n",
-        "Sub2API top-level reasoning effort",
-    ),
-    (
-        "        if supports_reasoning and not is_lmstudio:\n",
-        "        if supports_reasoning and not is_lmstudio and not (is_sub2api_deepseek or is_sub2api_mimo):\n",
-        "generic reasoning-body exclusion",
+        "        else:\n"
+        "            api_kwargs[\"reasoning_effort\"] = _e or \"medium\"\n"
+        "        extra_body = api_kwargs.get(\"extra_body\")\n"
+        "        if isinstance(extra_body, dict):\n"
+        "            extra_body.pop(\"reasoning\", None)\n"
+        "            if not extra_body:\n"
+        "                api_kwargs.pop(\"extra_body\", None)\n"
+        "    _add_prompt_cache_key(\n",
+        "Sub2API shared final kwargs reasoning policy",
     ),
 )
 
@@ -63,7 +68,7 @@ def verify_patched_source(source: str) -> None:
         "is_sub2api_deepseek =": 1,
         "is_sub2api_mimo =": 1,
         'api_kwargs["reasoning_effort"] = _e or "medium"': 1,
-        "and not (is_sub2api_deepseek or is_sub2api_mimo)": 1,
+        'extra_body.pop("reasoning", None)': 1,
     }
     for sentinel, expected_count in required.items():
         actual = source.count(sentinel)

@@ -21,10 +21,13 @@ def fixture_source() -> str:
         "    KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, OPENAI_COMPAT_WIRE_EFFORTS, TOKENHUB_EFFORTS, clamp_effort,\n"
         ")\n"
         "def build(reasoning_config, params, api_kwargs, model, supports_reasoning, is_lmstudio):\n"
-        "        thinking_off = isinstance(reasoning_config, dict) and reasoning_config.get(\"enabled\") is False\n"
-        "        _e = requested_effort(reasoning_config)\n"
-        "        if supports_reasoning and not is_lmstudio:\n"
-        "            api_kwargs['generic_branch'] = True\n"
+        "    params['reasoning_config'] = reasoning_config\n"
+        "    api_kwargs['model'] = model\n"
+        "    if supports_reasoning and not is_lmstudio:\n"
+        "        api_kwargs['extra_body'] = {'reasoning': {'effort': 'generic'}}\n"
+        "    _add_prompt_cache_key(\n"
+        "        api_kwargs\n"
+        "    )\n"
     )
 
 
@@ -34,16 +37,13 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
         digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
         patched = PATCH.patch_source(source, digest)
         self.assertIn(PATCH.PATCH_MARKER, patched)
-        self.assertEqual(PATCH.PATCH_MARKER, '# QQBOT_HK_CHAT_REASONING_PATCH = "v4"')
-        self.assertIn('api_kwargs["reasoning_effort"] = clamp_effort(', patched)
+        self.assertEqual(PATCH.PATCH_MARKER, '# QQBOT_HK_CHAT_REASONING_PATCH = "v5"')
+        self.assertIn("DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES", patched)
         self.assertEqual(patched.count("is_sub2api_deepseek ="), 1)
         self.assertEqual(patched.count("is_sub2api_mimo ="), 1)
-        self.assertEqual(
-            patched.count("if supports_reasoning and not is_lmstudio and not (is_sub2api_deepseek or is_sub2api_mimo):"),
-            1,
-        )
+        self.assertEqual(patched.count("if is_sub2api_deepseek or is_sub2api_mimo:"), 1)
         self.assertEqual(patched, PATCH.patch_source(patched, "wrong-on-purpose"))
-
+        compile(patched, "fixture_chat.py", "exec")
     def test_executed_patch_preserves_deepseek_and_mimo_effort_and_route_boundaries(self):
         effort = ModuleType("agent.reasoning_effort")
         for name in ("KIMI_K3_EFFORTS", "OPENAI_COMPAT_WIRE_EFFORTS", "TOKENHUB_EFFORTS"):
@@ -53,7 +53,7 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
         effort.KIMI_K3_OVERRIDES = {}
         effort.clamp_effort = Mock(side_effect=lambda value, allowed, overrides: overrides.get(value, value))
         requested = Mock(side_effect=lambda config: config.get("effort"))
-        namespace = {"requested_effort": requested}
+        namespace = {"requested_effort": requested, "_add_prompt_cache_key": lambda _kwargs: None}
         source = fixture_source()
         patched = PATCH.patch_source(source, hashlib.sha256(source.encode()).hexdigest())
         with patch.dict(sys.modules, {"agent": ModuleType("agent"), "agent.reasoning_effort": effort}):
@@ -70,7 +70,7 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
                             config, {"base_url": PATCH.SUB2API_BASE_URL + "/"}, kwargs, model, supports, False
                         )
                         requested.assert_called_with(config)
-                        expected = {"untouched": "Value"}
+                        expected = {"untouched": "Value", "model": model}
                         if enabled:
                             expected["reasoning_effort"] = "max"
                         self.assertEqual(kwargs, expected)
@@ -91,7 +91,7 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
                     namespace["build"](
                         config, {"base_url": PATCH.SUB2API_BASE_URL + "/"}, kwargs, mimo_model, supports, False
                     )
-                    expected = {"untouched": "Value"}
+                    expected = {"untouched": "Value", "model": mimo_model}
                     if enabled:
                         expected["reasoning_effort"] = "xhigh"
                     self.assertEqual(kwargs, expected)
@@ -110,9 +110,9 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
                     namespace["build"](
                         {"enabled": True, "effort": "xhigh"}, {"base_url": host}, kwargs, model, supports, studio
                     )
-                    expected = {"reasoning_effort": "existing"}
+                    expected = {"reasoning_effort": "existing", "model": model}
                     if supports and not studio:
-                        expected["generic_branch"] = True
+                        expected["extra_body"] = {"reasoning": {"effort": "generic"}}
                     self.assertEqual(kwargs, expected)
                     effort.clamp_effort.assert_not_called()
 
@@ -124,7 +124,7 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
     def test_missing_sentinel_fails_closed(self):
         source = fixture_source().replace(PATCH.PATCHES[1][0], "", 1)
         digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-        with self.assertRaisesRegex(PATCH.PatchError, "Sub2API top-level reasoning effort"):
+        with self.assertRaisesRegex(PATCH.PatchError, "shared final kwargs reasoning policy"):
             PATCH.patch_source(source, digest)
 
     def test_patch_file_preserves_an_already_patched_file(self):
