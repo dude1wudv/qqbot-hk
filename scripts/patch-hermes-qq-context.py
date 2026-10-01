@@ -11,7 +11,7 @@ MARKER = '# QQBOT_HK_CONTEXT_PATCH = "v1"'
 
 PATCHES = {
     "gateway/run_turn.py": (
-        "5ad6fa0f615613f7380c6454117f0de83f9156a6ddbbbf7132607a8825a8abe6",
+        "2a28ec43fcf6260f728ed752c0024a5914f2cf1230ac21766ce4e6c4c9cc38a9",
         [(
             "            history = await self._hmwa_run_session_hygiene(\n                event, source, session_entry, session_key, history, _quick_key, run_generation,\n            )",
             "            from qqbot_context import context_boundary, is_qq\n            if is_qq(source):\n                history = await context_boundary(self, source, session_entry, history, _quick_key, run_generation)\n            else:\n                history = await self._hmwa_run_session_hygiene(\n                    event, source, session_entry, session_key, history, _quick_key, run_generation,\n                )",
@@ -21,21 +21,21 @@ PATCHES = {
         )],
     ),
     "gateway/run_turn_runner.py": (
-        "92dbd34879014af4308cc8142a12a57cc61642a2650739beff28e9228502b53c",
+        "e6ee78adeb4d4999780459472debdba763e45f4924bb09842baa0b5c0597ff14",
         [(
             "        self._wire_turn_agent_callbacks(agent, turn_route, reasoning_config, stream_delta_cb, interim_cb, want_interim)\n",
-            "        if platform_key == 'qqbot':\n            # QQ owns async compaction; no native synchronous preflight/idle compression.\n            agent.compression_enabled = False\n        self._wire_turn_agent_callbacks(agent, turn_route, reasoning_config, stream_delta_cb, interim_cb, want_interim)\n",
+            "        if platform_key == 'qqbot':\n            # QQ owns async compaction; disable native preflight, idle and micro compaction.\n            agent.compression_enabled = False\n            _qq_compressor = getattr(agent, 'context_compressor', None)\n            if _qq_compressor is not None:\n                _qq_compressor._micro_compact_enabled = False\n        self._wire_turn_agent_callbacks(agent, turn_route, reasoning_config, stream_delta_cb, interim_cb, want_interim)\n",
         )],
     ),
     "agent/conversation_loop.py": (
-        "2086d4d084a7cba728a5862f2f27d172860908af967e2b83a43d22fe757548c2",
+        "c93ee86e1da583abc7cc57417380cd71241ae028c04a4cb8456580b52ffbf3d8",
         [(
             "            _run_phase(build_api_request, agent, s)\n",
             "            if getattr(agent, 'platform', None) == 'qqbot':\n                from qqbot_hk_media import trim_images\n                trim_images(s.messages)\n                trim_images(s.api_messages)\n            _run_phase(build_api_request, agent, s)\n",
         )],
     ),
     "hermes_state_compression.py": (
-        "539f164c81cca0ae095b6b0c32f498ee720fc969cdd2eb8d03b948818edd2169",
+        "c920bb587aa3e96778e71bad2082831b37f76f73ddc76272e4cc79c1fd7571e8",
         [(
             "        watermark: Optional[int] = None, watermark_ceiling: Optional[int] = None) -> None:\n",
             "        watermark: Optional[int] = None, watermark_ceiling: Optional[int] = None,\n        expected_parent_watermark: Optional[int] = None) -> None:\n",
@@ -45,7 +45,7 @@ PATCHES = {
         )],
     ),
     "gateway/platforms/qqbot/adapter.py": (
-        "6f5238779829e7275261848541c27a98cc28b9b4361a84ef60f20a53488ba29d",
+        "f8f7b73d714efc4f0295fc8c1c92e9df205375c65bb63a804be4a0f2e0089e3a",
         [(
             "        att = await self._process_attachments(attachments)\n",
             "        from qqbot_hk_media import limit_payload_images\n        d = limit_payload_images({**d, 'attachments': attachments})\n        att = await self._process_attachments(d['attachments'])\n",

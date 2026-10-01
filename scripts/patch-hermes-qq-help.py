@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 
 
-EXPECTED_ORIGINAL_SHA256 = "cb7a1b99575fb17913a27a3f97039aa98700acad88dba5f62bed314146ae64bd"
+EXPECTED_ORIGINAL_SHA256 = "d50f7b34aef17ba9c9b80da39e51060f1d140dd829a1b526b539496473b3ea7e"
 PATCH_MARKER = '# QQBOT_HK_HELP_PATCH = "v1"'
 
 
@@ -20,7 +20,8 @@ class PatchError(RuntimeError):
 
 OLD = '''    async def _handle_help_command(self, event: MessageEvent) -> str:
         """Handle /help command - list available commands."""
-        return self._telegramized_command_reply(event, _execute("help").text)
+        return self._telegramized_command_reply(
+            event, _execute("help", options=self._catalog_options(event)).text)
 '''
 NEW = f'''    async def _handle_help_command(self, event: MessageEvent) -> str:
         """Handle /help command - list available commands."""
@@ -35,7 +36,8 @@ NEW = f'''    async def _handle_help_command(self, event: MessageEvent) -> str:
                 )
             except Exception:
                 logger.exception("QQ custom help menu unavailable")
-        return self._telegramized_command_reply(event, _execute("help").text)
+        return self._telegramized_command_reply(
+            event, _execute("help", options=self._catalog_options(event)).text)
 '''
 
 

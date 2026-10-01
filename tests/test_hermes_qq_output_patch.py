@@ -15,9 +15,10 @@ class HermesQQOutputPatchTests(unittest.TestCase):
         self.assertEqual(
             patcher.TARGETS,
             {
-                "/opt/hermes/agent/turn_finalizer.py": "3e9658908b7421d3ee2da6516f2ac511541f7e134fcacaace8c807c996747fb1",
-                "/opt/hermes/gateway/run_turn_runner.py": "450318a4123b71fb79ac42b10c0558364341ff26a36f98f0f8c39fe76866bf90",
-                "/opt/hermes/gateway/run_turn.py": "d8456aa1246fab33dbfa86e60f46a6d1992731dbda6e7be7e223c3dda5c086d0",
+                "/opt/hermes/agent/turn_finalizer.py": "77ca6c9e92cb7e887fd1d0d950da417e5540a865a6866af9ad0c23b784e7f6bf",
+                "/opt/hermes/gateway/run_turn_runner.py": "216bdca083b7d2bfae481d07bd0791a76834674b3614fd4ee0aafac5c58f30db",
+                "/opt/hermes/gateway/run_turn.py": "5bdee5c82c00e02f664516f9da0af99674e23493ec2a30eff06cb03afc6718a0",
+                "/opt/hermes/agent/turn_context.py": "85f857dc3c317366d918516bc8b37a022f1020b34da0c3966a31bd289b2942e1",
             },
         )
 
@@ -36,7 +37,8 @@ class HermesQQOutputPatchTests(unittest.TestCase):
             '        user_message=original_user_message,\n'
             'source.platform == Platform.QQBOT and is_intentional_silence_response(response)\n'
             'if source.platform == Platform.QQBOT:\n                return None\n'
-            'if _qq_silence or self._is_intentional_silence"""\n'
+            'if _qq_silence or self._is_intentional_silence\n'
+            'turn_ctx.source.platform == Platform.QQBOT or is_machinery_display_kind(turn_ctx.persist_user_display_kind)"""\n'
         )
         self.assertIs(patcher.patch_source(Path("/opt/hermes/gateway/run_turn.py"), source, "wrong"), source)
     def test_each_patch_declares_exactly_one_marker_in_replacement(self):

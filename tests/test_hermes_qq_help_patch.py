@@ -17,7 +17,8 @@ def fixture_source() -> str:
         "class Gateway:\n"
         "    async def _handle_help_command(self, event: MessageEvent) -> str:\n"
         "        \"\"\"Handle /help command - list available commands.\"\"\"\n"
-        "        return self._telegramized_command_reply(event, _execute(\"help\").text)\n"
+        "        return self._telegramized_command_reply(\n"
+        "            event, _execute(\"help\", options=self._catalog_options(event)).text)\n"
     )
 
 

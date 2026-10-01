@@ -126,7 +126,7 @@ async def verify_real_ingress(config) -> None:
         sends.append((chat_id, content, reply_to))
         return SendResult(success=True, message_id="offline-reply")
 
-    def invoke_hook(name, **kwargs):
+    async def invoke_hook(name, **kwargs):
         require(name == "pre_gateway_dispatch", f"Unexpected lifecycle hook: {name}")
         hooks.append(kwargs["event"].message_id)
         return [handler(**kwargs)]
@@ -134,7 +134,7 @@ async def verify_real_ingress(config) -> None:
     async def inbound(item):
         require(isinstance(item, MessageEvent), "QQ ingest did not build a real MessageEvent")
         prehook_texts.append(item.text)
-        result = runner._hm_pre_gateway_dispatch_hook(item, item.source)
+        result = await runner._hm_pre_gateway_dispatch_hook(item, item.source)
         if result is not None:
             require(runner._is_user_authorized_for_source(result.source), "Unauthorized native entry")
             resolved = await runner._hm_resolve_command(
@@ -166,7 +166,7 @@ async def verify_real_ingress(config) -> None:
         await asyncio.sleep(0)
 
     try:
-        with patch("hermes_cli.lifecycle.invoke_hook", side_effect=invoke_hook), \
+        with patch("hermes_cli.lifecycle.ainvoke_hook", side_effect=invoke_hook), \
                 patch.object(adapter, "_is_group_allowed", return_value=True), \
                 patch("socket.socket.connect", side_effect=AssertionError("Network forbidden")), \
                 patch("socket.getaddrinfo", side_effect=AssertionError("DNS forbidden")):

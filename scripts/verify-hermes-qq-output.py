@@ -29,7 +29,7 @@ class _DeliveryHarness(GatewayTurnMixin):
         self.queued_calls: list[tuple] = []
         self.voice_calls: list[tuple] = []
 
-    def _adapter_for_source(self, _source):
+    def _delivery_adapter_for(self, _source):
         return SimpleNamespace(_streaming_tts_turn_completed=lambda *_a, **_k: False)
 
     def _should_send_voice_reply(self, *_args, **_kwargs):
@@ -82,6 +82,8 @@ async def verify_queued_followup_boundary() -> None:
         event_message_id="event-1",
         inbound_message_id="inbound-1",
         _status_thread_metadata={},
+        mute_notification_reply=False,
+        persist_user_display_kind="user",
     )
     silent = {"final_response": "[SILENT]", "failed": True}
     await harness._run_agent_deliver_first_response(turn_ctx, None, silent, silent, None)

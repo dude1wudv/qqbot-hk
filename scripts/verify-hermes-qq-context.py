@@ -20,7 +20,7 @@ def require(condition: bool, message: str) -> None:
 def check_patched_source(root: Path) -> None:
     seams = {
         "gateway/run_turn.py": ("context_boundary", "after_turn"),
-        "gateway/run_turn_runner.py": ("agent.compression_enabled = False",),
+        "gateway/run_turn_runner.py": ("agent.compression_enabled = False", "_micro_compact_enabled = False"),
         "agent/conversation_loop.py": ("trim_images(s.messages)", "trim_images(s.api_messages)"),
         "gateway/platforms/qqbot/adapter.py": ("limit_attachments(attachments)", "image_urls[-5:]"),
         "hermes_state_compression.py": ("expected_parent_watermark", "QQ compression parent changed"),

@@ -1,7 +1,7 @@
-FROM nousresearch/hermes-agent@sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1
+FROM nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
 
 LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
-      io.qqbot-hk.hermes-base-digest="sha256:9469b3e78b9545b6d576eb8887a95352e9a0ea83730eaf31431cf862ca1010e1" \
+      io.qqbot-hk.hermes-base-digest="sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7" \
       io.qqbot-hk.audio-patch="v2" \
       io.qqbot-hk.chat-reasoning-patch="v4" \
       io.qqbot-hk.qq-context-patch="v1" \

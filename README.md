@@ -15,7 +15,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 
 ## 运行边界
 
-部署使用以 Hermes Agent v0.21.2（`v2026.9.11`）固定摘要为基础的项目派生镜像。新版已原生在 gateway 启动阶段发现插件，项目只保留经 SHA/哨兵 fail-closed 的 QQ 语音、Sub2API Chat 推理字段、QQ 帮助菜单和群聊最终输出补丁；镜像构建会运行对应行为 smoke，不复制整个 adapter。容器不开放宿主机端口、不挂载 Docker socket，只加入 `sub2api_sub2api-network`。
+部署使用以 Hermes Agent v0.21.5（`v2026.9.24`）固定摘要为基础的项目派生镜像。新版已原生在 gateway 启动阶段发现插件，项目只保留经 SHA/哨兵 fail-closed 的 QQ 语音、Sub2API Chat 推理字段、QQ 帮助菜单和群聊最终输出补丁；镜像构建会运行对应行为 smoke，不复制整个 adapter。容器不开放宿主机端口、不挂载 Docker socket，只加入 `sub2api_sub2api-network`。
 
 - 私聊：使用 Hermes `dm_policy: pairing`。截至 `2026-09-05T08:00:00Z` 的临时登记窗口内，QQ 私聊发送者会在中央鉴权前自动写入 pairing 批准名单并继续处理；窗口结束后，新的未批准用户恢复标准配对码流程。QQ 开放平台仍必须先实际投递该用户消息。
 - 群聊回复：允许已由 QQ 适配器和中央网关授权群的官方 `@机器人 + 问题`，也会在平台投递普通群消息时按规则参与求助、分享、观点和吐槽。普通消息先免费过滤，再按同成员聚合，由模型判断是否有自然接话的价值；明确 @ 他人、管理命令和纯表情/收尾不进入主 Agent。

@@ -1,6 +1,6 @@
 services:
   hermes-qqbot:
-    image: ${QQBOT_IMAGE:-qqbot-hk/hermes-agent:v0.21.2-context-v1}
+    image: ${QQBOT_IMAGE:-qqbot-hk/hermes-agent:v0.21.5-context-v1}
     build:
       context: .
       dockerfile: Dockerfile
