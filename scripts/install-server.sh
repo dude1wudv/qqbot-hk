@@ -35,6 +35,14 @@ done
 
 install -d -o 10000 -g 10000 -m 0700 "$data_dir"
 install -d -o 10000 -g 10000 -m 0755 "$data_dir/plugins" "$data_dir/scripts" "$data_dir/plugin-data"
+# The Docker CLI shim drops to UID 10000 and sets HOME=/opt/data.
+# Keep the standard CLI entry in that persistent home, not the image's /root.
+install -d -o 10000 -g 10000 -m 0755 "$data_dir/.local" "$data_dir/.local/bin"
+command_link="$data_dir/.local/bin/hermes"
+if ! test -e "$command_link" && ! test -L "$command_link"; then
+  ln -s /opt/hermes/.venv/bin/hermes "$command_link"
+  chown -h 10000:10000 "$command_link"
+fi
 install -d -o 10000 -g 10000 -m 0700 "$data_dir/plugin-data/smart_group_qq"
 database="$data_dir/plugin-data/smart_group_qq/data.db"
 if test -f "$database"; then

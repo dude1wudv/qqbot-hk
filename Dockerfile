@@ -8,11 +8,6 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.qq-help-patch="v1" \
       io.qqbot-hk.qq-output-patch="v1"
 
-# Hermes doctor checks the standard user-local CLI entry even inside Docker.
-RUN mkdir -p /root/.local/bin \
-    && ln -s /opt/hermes/bin/hermes /root/.local/bin/hermes \
-    && test -x /root/.local/bin/hermes
-
 
 COPY --chmod=0755 scripts/patch-hermes-audio.py /tmp/patch-hermes-audio.py
 RUN python /tmp/patch-hermes-audio.py \
