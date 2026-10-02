@@ -112,12 +112,14 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.gateway = SimpleNamespace(
             adapters={"qqbot": self.adapter},
             _session_key_for_source=lambda source: "qqbot:group:" + source.chat_id,
+            _is_user_authorized_for_source=lambda source: True,
+            _check_slash_access=lambda source, name: None,
         )
         self.handler = build_handler(FakeContext(), self.store)
         self.char = ResidentCharacter(self.store)
 
     async def send(self, text, mid, member="member-a", **kwargs):
-        result = self.handler(event(text, mid, member=member, **kwargs), self.gateway)
+        result = await self.handler(event(text, mid, member=member, **kwargs), self.gateway)
         await asyncio.sleep(0)
         return result
 
@@ -158,6 +160,70 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.adapter.sent, [])
         self.assertNotEqual(self.char.state("group-a")["pet"]["name"], "土豆")
 
+    async def test_missing_authorization_api_cannot_run_local_or_private_commands(self):
+        handler = build_handler(
+            FakeContext({"knowledge": {"allow_group_members_manage": True}}),
+            self.store,
+        )
+        gateway = SimpleNamespace(
+            adapters={"qqbot": self.adapter},
+            _check_slash_access=lambda source, name: None,
+        )
+        for index, command in enumerate((
+            "/kb add private-doc | 私密知识",
+            "/记住我：职责=私人职责",
+            "把宠物改名为未授权名字",
+        )):
+            result = await handler(
+                event(command, f"missing-auth-{index}"), gateway
+            )
+            self.assertEqual(result["action"], "allow")
+        self.assertEqual(handler.knowledge.list_documents("group-a"), [])
+        self.assertEqual(self.store.list_member_memory_facts("group-a", "member-a"), [])
+        self.assertNotEqual(self.char.state("group-a")["pet"]["name"], "未授权名字")
+        self.assertEqual(self.adapter.sent, [])
+
+    async def test_missing_slash_permission_api_blocks_knowledge_and_privacy_mutations(self):
+        handler = build_handler(
+            FakeContext({"knowledge": {"allow_group_members_manage": True}}),
+            self.store,
+        )
+        gateway = SimpleNamespace(
+            adapters={"qqbot": self.adapter},
+            _is_user_authorized_for_source=lambda source: True,
+        )
+        for index, command in enumerate((
+            "/kb add private-doc | 私密知识",
+            "/记住我：职责=私人职责",
+            "把宠物改名为无权限名字",
+        )):
+            result = await handler(
+                event(command, f"missing-slash-access-{index}"), gateway
+            )
+            self.assertEqual(result["action"], "skip")
+            await asyncio.sleep(0)
+        self.assertEqual(handler.knowledge.list_documents("group-a"), [])
+        self.assertEqual(self.store.list_member_memory_facts("group-a", "member-a"), [])
+        self.assertNotEqual(self.char.state("group-a")["pet"]["name"], "无权限名字")
+        self.assertEqual(len(self.adapter.sent), 3)
+        self.assertTrue(all("权限" in body for _, body, _ in self.adapter.sent))
+
+    async def test_real_permission_refusal_has_no_knowledge_or_privacy_side_effects(self):
+        handler = build_handler(
+            FakeContext({"knowledge": {"allow_group_members_manage": True}}),
+            self.store,
+        )
+        self.gateway._check_slash_access = lambda source, name: "没有权限"
+        for index, command in enumerate((
+            "/kb add private-doc | 私密知识",
+            "/记住我：职责=私人职责",
+            "把宠物改名为拒绝后的名字",
+        )):
+            await handler(event(command, f"denied-side-effect-{index}"), self.gateway)
+        self.assertEqual(handler.knowledge.list_documents("group-a"), [])
+        self.assertEqual(self.store.list_member_memory_facts("group-a", "member-a"), [])
+        self.assertNotEqual(self.char.state("group-a")["pet"]["name"], "拒绝后的名字")
+
     async def test_slash_permission_applies_to_natural_commands(self):
         self.gateway._check_slash_access = lambda source, name: "没有权限"
         result = await self.send("把宠物改名为土豆", "denied-slash")
@@ -189,7 +255,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_nonaddressed_message_cannot_execute(self):
         incoming = event("把宠物改名为土豆", "ambient")
         incoming.raw_message = {"_smart_group_qq_nonmention": True}
-        self.handler(incoming, self.gateway)
+        await self.handler(incoming, self.gateway)
         await asyncio.sleep(0)
         self.assertNotEqual(self.char.state("group-a")["pet"]["name"], "土豆")
 

@@ -104,13 +104,16 @@ display:
       busy_ack_detail: false
 
 platform_toolsets:
-  qqbot:
+  qqbot: &qq_toolsets
     - web
     - vision
     - skills
     - terminal
     - file
     - todo
+  # This deployment exposes the same supported tools to its CLI diagnostics.
+  # Do not imply that unrelated TTS/image-generation credentials are required.
+  cli: *qq_toolsets
 
 plugins:
   enabled:

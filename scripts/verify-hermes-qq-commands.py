@@ -110,6 +110,7 @@ async def verify_real_ingress(config) -> None:
     store = Store(":memory:")
     handler = build_handler(Context(), store)
     runner = InboundHarness(config)
+    runner._check_slash_access = lambda source, name: None
     runner._is_user_authorized_for_source = lambda source: True
     # Non-secret sentinels prevent constructor fallback to ambient credentials.
     adapter = QQAdapter(PlatformConfig(extra={
@@ -129,7 +130,7 @@ async def verify_real_ingress(config) -> None:
     async def invoke_hook(name, **kwargs):
         require(name == "pre_gateway_dispatch", f"Unexpected lifecycle hook: {name}")
         hooks.append(kwargs["event"].message_id)
-        return [handler(**kwargs)]
+        return [await handler(**kwargs)]
 
     async def inbound(item):
         require(isinstance(item, MessageEvent), "QQ ingest did not build a real MessageEvent")

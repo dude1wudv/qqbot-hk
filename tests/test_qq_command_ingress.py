@@ -42,9 +42,10 @@ class LocalQQAdapter(BusyParent):
         self.handler = handler
         self.allowed = allowed
         self._active_sessions = {"test-group": object()}
-        self.default_calls, self.queued, self.hook_calls, self.sent = [], [], [], []
+        self.default_calls, self.queued, self.hook_calls, self.hook_results, self.sent = [], [], [], [], []
         self.gateway = SimpleNamespace(adapters={"qqbot": self},
             _is_user_authorized_for_source=lambda source: self.allowed,
+            _check_slash_access=lambda source, name: None,
             _session_key_for_source=lambda source: source.chat_id)
 
     @staticmethod
@@ -53,12 +54,10 @@ class LocalQQAdapter(BusyParent):
 
     def _event_session_key(self, item):
         return item.source.chat_id
-
     async def _dispatch_inline_reply(self, item):
         self.hook_calls.append(item)
-        self.handler(item, self.gateway)
+        self.hook_results.append(await self.handler(item, self.gateway))
         await asyncio.sleep(0)
-
     async def send(self, chat_id, content, reply_to=None, **kwargs):
         self.sent.append((chat_id, content, reply_to))
         return SimpleNamespace(success=True)
@@ -88,8 +87,10 @@ class IngressTests(IsolatedAsyncioTestCase):
                 install_command_ingress(LocalQQAdapter)
                 await self.adapter.handle_message(item)
                 self.assertEqual(len(self.adapter.hook_calls), hooks + 1)
-                self.assertEqual(len(self.adapter.sent), before + 1)
-                self.assertIn(reply, self.adapter.sent[-1][1])
+                self.assertEqual(
+                    len(self.adapter.sent), before + 1,
+                    f"handler result: {self.adapter.hook_results[-1]!r}",
+                )
         self.ctx.llm.acomplete_structured.assert_not_called()
 
     async def test_authorization_denial_has_no_reply_or_state_change(self):

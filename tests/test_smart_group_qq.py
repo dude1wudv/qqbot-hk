@@ -6,7 +6,7 @@ import tempfile
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
@@ -94,7 +94,14 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store = Store(":memory:")
         self.adapter = FakeAdapter()
-        self.gateway = SimpleNamespace(adapters={}, _session_key_for_source=lambda source: "qqbot:group:" + source.chat_id)
+        self.native_reset = AsyncMock()
+        self.gateway = SimpleNamespace(
+            adapters={},
+            _session_key_for_source=lambda source: "qqbot:group:" + source.chat_id,
+            _is_user_authorized_for_source=lambda source: True,
+            _check_slash_access=lambda source, name: None,
+            _handle_reset_command=self.native_reset,
+        )
         self.source_platform = "qqbot"
 
     def tearDown(self):
@@ -109,7 +116,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler = build_handler(FakeContext(), self.store)
         for index, raw in enumerate(("/", "／", "<@bot> /")):
             with self.subTest(raw=raw):
-                result = handler(self.make_event(raw, f"bare-{index}"), self.gateway)
+                result = await handler(self.make_event(raw, f"bare-{index}"), self.gateway)
                 self.assertEqual(result["action"], "skip")
                 await asyncio.sleep(0)
                 self.assertIn("【小栖 · 常驻 AI 角色】", self.adapter.sent[-1][1])
@@ -126,7 +133,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 handler.character.set_group_mode("group-a", "only" if command == "/all" else "all")
                 before = handler.character.group_mode("group-a")
                 sent = len(self.adapter.sent)
-                result = handler(self.make_event("<@bot>" + command, f"local-{denied}-{index}"), self.gateway)
+                result = await handler(self.make_event("<@bot>" + command, f"local-{denied}-{index}"), self.gateway)
                 await asyncio.sleep(0)
                 self.assertEqual(result["action"], "allow" if denied else "skip")
                 self.assertEqual(len(self.adapter.sent), sent if denied else sent + 1)
@@ -142,7 +149,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             sent = len(self.adapter.sent)
             incoming = self.make_event(command, f"synthetic-local-{index}")
             incoming.raw_message = {"_smart_group_qq_nonmention": True}
-            result = handler(incoming, self.gateway)
+            result = await handler(incoming, self.gateway)
             await asyncio.sleep(0)
             self.assertEqual(result["action"], "skip")
             self.assertEqual(len(self.adapter.sent), sent)
@@ -154,10 +161,10 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler = build_handler(FakeContext(), self.store)
         self.gateway.adapters = {self.source_platform: self.adapter}
         dm = event("hello", platform="qqbot", chat_type="dm")
-        self.assertEqual(handler(dm, self.gateway)["action"], "rewrite")
+        self.assertEqual((await handler(dm, self.gateway))["action"], "rewrite")
         self.assertTrue(self.adapter._smart_group_qq_formatting)
         self.assertEqual(self.adapter.format_message("**你好**"), "你好")
-        result = handler(self.make_event("<@bot> hello"), self.gateway)
+        result = await handler(self.make_event("<@bot> hello"), self.gateway)
         self.assertEqual(result["action"], "rewrite")
         self.assertRegex(result["text"], r"\[群记忆键:[0-9a-f]{12}\]\n")
         self.assertRegex(result["text"], r"\[群成员:m-[0-9a-f]{20}\]: hello\n\n\[群聊最终输出协议\]")
@@ -167,18 +174,18 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler = build_handler(FakeContext(), self.store)
         voice = self.make_event("[Voice] 项目口令是北斗", "voice-1")
         voice.message_type = "voice"
-        result = handler(voice, self.gateway)
+        result = await handler(voice, self.gateway)
         self.assertEqual(result["action"], "rewrite")
         self.assertRegex(result["text"], r"\[群成员:m-[0-9a-f]{20}\]: \[Voice\] 项目口令是北斗")
 
         other = self.make_event("这个群知道什么？", "other-1")
         other.source.chat_id = "group-b"
-        other_result = handler(other, self.gateway)
+        other_result = await handler(other, self.gateway)
         self.assertNotIn("项目口令是北斗", other_result["text"])
 
         dm = event("[Voice] 私聊内容", platform="qqbot", chat_type="dm")
         dm.message_type = "voice"
-        self.assertEqual(handler(dm, self.gateway)["action"], "rewrite")
+        self.assertEqual((await handler(dm, self.gateway))["action"], "rewrite")
 
     async def test_static_precedes_keyword_and_is_idempotent(self):
         settings = {
@@ -187,8 +194,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         }
         handler = build_handler(FakeContext(settings), self.store)
         item = self.make_event("bad")
-        self.assertEqual(handler(item, self.gateway)["action"], "skip")
-        self.assertEqual(handler(item, self.gateway)["reason"], "duplicate")
+        self.assertEqual((await handler(item, self.gateway))["action"], "skip")
+        duplicate = await handler(item, self.gateway)
+        self.assertEqual(duplicate["reason"], "duplicate")
         await asyncio.sleep(0)
         self.assertEqual(self.adapter.sent, [("group-a", "blocked", "msg-1")])
 
@@ -198,8 +206,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         expected = "【本周值日表｜2026年9月13日—9月19日】\n孙：轮休"
 
         with patch("smart_group_qq.duty_roster_text", return_value=expected) as render:
-            first = handler(item, self.gateway)
-            second = handler(item, self.gateway)
+            first = await handler(item, self.gateway)
+            second = await handler(item, self.gateway)
             await asyncio.sleep(0)
 
         self.assertEqual(first["action"], "skip")
@@ -217,7 +225,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         for index, (raw, expected) in enumerate(cases.items()):
             with self.subTest(raw=raw):
                 self.assertEqual(
-                    handler(self.make_event(raw, f"model-{index}"), self.gateway),
+                    await handler(self.make_event(raw, f"model-{index}"), self.gateway),
                     {"action": "rewrite", "text": expected},
                 )
         self.assertEqual(self.store.get_history("group-a"), [])
@@ -227,7 +235,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler = build_handler(FakeContext(), self.store)
         for effort in ("low", "medium", "high", "xhigh", "max"):
             with self.subTest(effort=effort):
-                result = handler(
+                result = await handler(
                     self.make_event(f"<@bot> /{effort}", f"reasoning-{effort}"),
                     self.gateway,
                 )
@@ -255,7 +263,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         }
         for index, (raw, expected) in enumerate(cases.items()):
             with self.subTest(raw=raw):
-                result = handler(self.make_event(raw, f"native-compress-{index}"), self.gateway)
+                result = await handler(self.make_event(raw, f"native-compress-{index}"), self.gateway)
                 self.assertEqual(result, {"action": "rewrite", "text": expected})
                 self.assertNotIn("本群私有上下文", result["text"])
                 self.assertNotIn("群记忆键", result["text"])
@@ -266,7 +274,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler = build_handler(FakeContext(), self.store)
         for index, raw in enumerate(("<@bot> /update", "<@bot> /platform pause", "<@bot> /reload-mcp")):
             with self.subTest(raw=raw):
-                result = handler(self.make_event(raw, f"unknown-native-{index}"), self.gateway)
+                result = await handler(self.make_event(raw, f"unknown-native-{index}"), self.gateway)
                 self.assertEqual(result["action"], "skip")
                 await asyncio.sleep(0)
         self.assertEqual(len(self.adapter.sent), 3)
@@ -277,13 +285,13 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         for index, command in enumerate(("/approve", "/approve all", "/cancel", "/deny")):
             with self.subTest(command=command):
                 before = len(self.adapter.sent)
-                result = handler(self.make_event("<@bot> " + command, f"group-tool-{index}"), self.gateway)
+                result = await handler(self.make_event("<@bot> " + command, f"group-tool-{index}"), self.gateway)
                 self.assertEqual(result, {"action": "skip", "reason": "command_or_policy_handled"})
                 await asyncio.sleep(0)
                 self.assertEqual(len(self.adapter.sent), before + 1)
                 self.assertIn("/help", self.adapter.sent[-1][1])
                 for chat_type in ("dm", "private"):
-                    result = handler(event(
+                    result = await handler(event(
                         command, f"{chat_type}-tool-{index}",
                         chat_type=chat_type, group="dm-a",
                     ), self.gateway)
@@ -305,7 +313,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         }
         for index, (command, rewritten) in enumerate(cases.items()):
             with self.subTest(command=command):
-                result = handler(event(
+                result = await handler(event(
                     command,
                     f"dm-alias-{index}",
                     platform="qqbot",
@@ -320,7 +328,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.gateway.adapters = {self.source_platform: self.adapter}
         for index, command in enumerate(("/help", "/status", "/rules", "/kb", "/我的记忆")):
             with self.subTest(command=command):
-                result = handler(event(
+                result = await handler(event(
                     command,
                     f"dm-command-{index}",
                     platform="qqbot",
@@ -328,7 +336,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                     group="dm-a",
                 ), self.gateway)
                 self.assertEqual(result, {"action": "skip", "reason": "command_or_policy_handled"})
-        roster = handler(event(
+        roster = await handler(event(
             "/值日表",
             "dm-roster",
             platform="qqbot",
@@ -336,14 +344,14 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             group="dm-a",
         ), self.gateway)
         self.assertEqual(roster, {"action": "skip", "reason": "command_or_policy_handled"})
-        self.assertEqual(handler(event(
+        self.assertEqual(await handler(event(
             "/commands",
             "dm-native",
             platform="qqbot",
             chat_type="dm",
             group="dm-a",
         ), self.gateway), {"action": "rewrite", "text": "/commands"})
-        self.assertEqual(handler(event(
+        self.assertEqual(await handler(event(
             "/update",
             "dm-unknown-native",
             platform="qqbot",
@@ -359,11 +367,11 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.adapter.success = False
         settings = {"keyword_replies": [{"id": "hello", "match": "exact", "pattern": "hi", "reply": "hello"}]}
         handler = build_handler(FakeContext(settings), self.store)
-        first = handler(self.make_event("hi"), self.gateway)
+        first = await handler(self.make_event("hi"), self.gateway)
         self.assertEqual(first["action"], "skip")
         await asyncio.sleep(0.01)
         self.adapter.success = True
-        second = handler(self.make_event("hi"), self.gateway)
+        second = await handler(self.make_event("hi"), self.gateway)
         self.assertEqual(second["action"], "skip")
         await asyncio.sleep(0.01)
         self.assertEqual(len(self.adapter.sent), 2)
@@ -371,7 +379,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_audit_does_not_store_message_or_reply_body(self):
         settings = {"keyword_replies": [{"id": "secret-rule", "match": "contains", "pattern": "needle-secret", "reply": "reply-secret"}]}
         handler = build_handler(FakeContext(settings), self.store)
-        handler(self.make_event("needle-secret"), self.gateway)
+        await handler(self.make_event("needle-secret"), self.gateway)
         await asyncio.sleep(0)
         dump = "\n".join(str(tuple(row)) for row in self.store.db.execute("select * from audit_events"))
         self.assertNotIn("needle-secret", dump)
@@ -379,16 +387,16 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_knowledge_add_and_rag_injection_are_group_scoped(self):
         handler = build_handler(FakeContext({"knowledge": {"allow_group_members_manage": True}}), self.store)
-        added = handler(self.make_event("/kb add 发布手册 | 蓝色环境在周五发布", "kb-1"), self.gateway)
+        added = await handler(self.make_event("/kb add 发布手册 | 蓝色环境在周五发布", "kb-1"), self.gateway)
         self.assertEqual(added["action"], "skip")
         await asyncio.sleep(0)
-        query = handler(self.make_event("周五发布哪个环境？", "ask-1"), self.gateway)
+        query = await handler(self.make_event("周五发布哪个环境？", "ask-1"), self.gateway)
         self.assertIn("知识库:发布手册#", query["text"])
         self.assertIn("蓝色环境在周五发布", query["text"])
 
         other = self.make_event("周五发布哪个环境？", "ask-2")
         other.source.chat_id = "group-b"
-        result = handler(other, self.gateway)
+        result = await handler(other, self.gateway)
         self.assertNotIn("发布手册", result["text"])
 
     async def test_static_moderation_precedes_knowledge_commands(self):
@@ -399,7 +407,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             }]},
         }
         handler = build_handler(FakeContext(settings), self.store)
-        result = handler(self.make_event("/kb add 密钥 | sk-secret-value", "kb-secret"), self.gateway)
+        result = await handler(self.make_event("/kb add 密钥 | sk-secret-value", "kb-secret"), self.gateway)
         self.assertEqual(result["action"], "skip")
         await asyncio.sleep(0)
         self.assertEqual(handler.knowledge.list_documents("group-a"), [])
@@ -411,7 +419,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             "text": "项目代号是北斗", "timestamp": None, "image_paths": [],
         })
         self.assertEqual(self.adapter.sent, [])
-        result = handler(self.make_event("项目代号是什么？", "ask-ambient"), self.gateway)
+        result = await handler(self.make_event("项目代号是什么？", "ask-ambient"), self.gateway)
         self.assertIn("项目代号是北斗", result["text"])
         row = self.store.get_history("group-a", 2)[0]
         self.assertEqual(row["source_kind"], "ambient")
@@ -419,13 +427,13 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_and_all_toggle_group_ambient_mode(self):
         handler = build_handler(FakeContext(), self.store)
 
-        only = handler(self.make_event("<@bot> /only", "mode-only"), self.gateway)
+        only = await handler(self.make_event("<@bot> /only", "mode-only"), self.gateway)
         self.assertEqual(only["action"], "skip")
         await asyncio.sleep(0)
         self.assertEqual(handler.character.group_mode("group-a"), "only")
         self.assertIn("仅 @ 模式", self.adapter.sent[-1][1])
 
-        restored = handler(self.make_event("<@bot> /all", "mode-all"), self.gateway)
+        restored = await handler(self.make_event("<@bot> /all", "mode-all"), self.gateway)
         self.assertEqual(restored["action"], "skip")
         await asyncio.sleep(0)
         self.assertEqual(handler.character.group_mode("group-a"), "all")
@@ -454,7 +462,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "group_id": "group-a", "member_id": "member-b", "message_id": f"ambient-{index}",
                 "text": f"旁听消息{index}", "timestamp": None, "image_paths": [],
             })
-        result = handler(self.make_event("刚才说了什么？", "ask-recent"), self.gateway)
+        result = await handler(self.make_event("刚才说了什么？", "ask-recent"), self.gateway)
         self.assertNotIn("旁听消息2", result["text"])
         self.assertIn("旁听消息3", result["text"])
         self.assertIn("旁听消息5", result["text"])
@@ -474,7 +482,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         handler = build_handler(FakeContext(), self.store)
         question = "当前问题开始" + "问" * (6000 - len("当前问题开始"))
         overflow = "问题超限部分不应进入提示词"
-        result = handler(
+        result = await handler(
             self.make_event("<@bot> " + question + overflow, "first-at"),
             self.gateway,
         )
@@ -497,20 +505,19 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_member_memory_commands_and_prompt_injection(self):
         handler = build_handler(FakeContext({"member_memory": {"auto_extract": False}}), self.store)
-        saved = handler(self.make_event("/记住我：职责=后端发布", "profile-save"), self.gateway)
+        saved = await handler(self.make_event("/记住我：职责=后端发布", "profile-save"), self.gateway)
         self.assertEqual(saved["action"], "skip")
         await asyncio.sleep(0)
-        query = handler(self.make_event("我负责什么？", "profile-query"), self.gateway)
+        query = await handler(self.make_event("我负责什么？", "profile-query"), self.gateway)
         self.assertIn("当前成员的本群专属记忆", query["text"])
         self.assertIn("后端发布", query["text"])
-        session_store = SimpleNamespace(calls=[], reset_session=lambda *args, **kwargs: session_store.calls.append((args, kwargs)))
-        forgotten = handler(
-            self.make_event("/忘记我", "profile-forget"), self.gateway, session_store=session_store,
+        forgotten = await handler(
+            self.make_event("/忘记我", "profile-forget"), self.gateway,
         )
         self.assertEqual(forgotten["action"], "skip")
         await asyncio.sleep(0)
-        self.assertEqual(len(session_store.calls), 1)
-        after = handler(self.make_event("还记得吗？", "profile-after"), self.gateway)
+        self.native_reset.assert_awaited_once()
+        after = await handler(self.make_event("还记得吗？", "profile-after"), self.gateway)
         self.assertNotIn("后端发布", after["text"])
 
     async def test_participation_disabled_keeps_ambient_history_without_reply(self):
@@ -927,7 +934,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_private_message_receives_only_private_character_context(self):
         handler = build_handler(FakeContext(), self.store)
-        result = handler(
+        result = await handler(
             event("你好", message_id="dm-1", chat_type="dm", group="user-a"),
             self.gateway,
         )
@@ -1000,7 +1007,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         ))
         await asyncio.wait_for(started.wait(), timeout=1)
 
-        invalidation = handler(
+        invalidation = await handler(
             self.make_event(invalidation_text, "invalidate-participation"),
             self.gateway,
         )
@@ -1018,7 +1025,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_post_llm_does_not_record_before_successful_send(self):
         handler = build_handler(FakeContext(), self.store)
-        result = handler(self.make_event("你好", "ask-post"), self.gateway)
+        result = await handler(self.make_event("你好", "ask-post"), self.gateway)
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=result["text"],
             assistant_response="你好，群友。", model="deepseek/deepseek-v4.1-flash",
@@ -1062,8 +1069,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         member_a.source.user_id = "member-a"
         member_b = self.make_event("我负责成员B的原句", "member-b-message")
         member_b.source.user_id = "member-b"
-        handler(member_a, self.gateway)
-        handler(member_b, self.gateway)
+        await handler(member_a, self.gateway)
+        await handler(member_b, self.gateway)
         await started.wait()
         resume.set()
         await asyncio.sleep(0)
@@ -1084,14 +1091,14 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reset_does_not_resurrect_stale_or_post_hook_assistant_output(self):
         handler = build_handler(FakeContext(), self.store)
-        old = handler(self.make_event("旧问题", "old-question"), self.gateway)
+        old = await handler(self.make_event("旧问题", "old-question"), self.gateway)
         handler.memory.reset("group-a")
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=old["text"],
             assistant_response="旧助手回答", model="deepseek/deepseek-v4.1-flash",
             platform=SimpleNamespace(value="qqbot"),
         )
-        new = handler(self.make_event("新问题", "new-question"), self.gateway)
+        new = await handler(self.make_event("新问题", "new-question"), self.gateway)
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=new["text"],
             assistant_response="新助手回答", model="deepseek/deepseek-v4.1-flash",
@@ -1104,7 +1111,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_post_llm_ignores_wrapped_input_until_delivery_callback(self):
         handler = build_handler(FakeContext(), self.store)
-        old = handler(self.make_event("前文问题", "wrapped-old"), self.gateway)
+        old = await handler(self.make_event("前文问题", "wrapped-old"), self.gateway)
         wrapped = "[群友]\n[Replying to: 前文]\n" + old["text"] + "\n[图片内容]示意图"
         handler.post_llm_call(
             session_id="qqbot:group:group-a", user_message=wrapped,
@@ -1131,23 +1138,20 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stop_memory_resets_group_session_recall_boundary(self):
         handler = build_handler(FakeContext({"member_memory": {"auto_extract": False}}), self.store)
-        saved = handler(self.make_event("/记住我：职责=后端发布", "remember"), self.gateway)
+        saved = await handler(self.make_event("/记住我：职责=后端发布", "remember"), self.gateway)
         self.assertEqual(saved["action"], "skip")
         await asyncio.sleep(0)
-        before = handler(self.make_event("我负责什么？", "before-stop"), self.gateway)
+        before = await handler(self.make_event("我负责什么？", "before-stop"), self.gateway)
         self.assertIn("后端发布", before["text"])
 
-        session_store = SimpleNamespace(
-            calls=[],
-            reset_session=lambda *args, **kwargs: session_store.calls.append((args, kwargs)),
-        )
-        stopped = handler(
+        stopped = await handler(
             self.make_event("/停止记忆", "stop-memory"), self.gateway,
-            session_store=session_store,
         )
         self.assertEqual(stopped["action"], "skip")
         await asyncio.sleep(0)
-        after = handler(self.make_event("我负责什么？", "after-stop"), self.gateway)
+        self.native_reset.assert_awaited_once()
+        await asyncio.sleep(0)
+        after = await handler(self.make_event("我负责什么？", "after-stop"), self.gateway)
         self.assertNotIn("后端发布", after["text"])
 
 

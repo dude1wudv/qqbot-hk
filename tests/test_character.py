@@ -369,14 +369,19 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         adapter = Adapter()
         handler = build_handler(Context(), self.store)
-        gateway = SimpleNamespace(adapters={"qqbot": adapter})
+        gateway = SimpleNamespace(
+            adapters={"qqbot": adapter},
+            _is_user_authorized_for_source=lambda source: True,
+            _handle_reset_command=AsyncMock(),
+            _check_slash_access=lambda source, name: None,
+        )
         source = SimpleNamespace(
             platform="qqbot", chat_type="dm", chat_id="u", user_id="u"
         )
         event = SimpleNamespace(
             source=source, text="昨天的小游戏做完了", message_id="dm-question"
         )
-        rewritten = handler(event, gateway)
+        rewritten = await handler(event, gateway)
         answer = handler.transform_llm_output(
             response_text="太好了，想试试新玩法吗？",
             user_message=rewritten["text"],
@@ -387,8 +392,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("昨天的小游戏", handler.character.context("dm:u", "u"))
         self.assertNotIn("昨天的小游戏", handler.character.context("g", "u"))
         event.message_id = "pending-private"
-        pending = handler(event, gateway)
-        handler(
+        pending = await handler(event, gateway)
+        await handler(
             SimpleNamespace(source=source, text="/忘记我", message_id="forget-private"),
             gateway,
         )
@@ -416,7 +421,11 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             text="<@bot> 安静一会儿",
             message_id="control",
         )
-        result = handler(event, SimpleNamespace(adapters={"qqbot": adapter}))
+        result = await handler(event, SimpleNamespace(
+            adapters={"qqbot": adapter},
+            _is_user_authorized_for_source=lambda source: True,
+            _check_slash_access=lambda source, name: None,
+        ))
         self.assertEqual(result["action"], "skip")
         await asyncio.sleep(0)
         self.assertTrue(handler.character.paused("g"))

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from contextvars import ContextVar
 import hashlib
 import inspect
@@ -315,16 +316,12 @@ def _schedule_generated_reply(
     return True
 
 
-def _reset_gateway_session(gateway: Any, session_store: Any, source: Any) -> None:
-    if session_store is None:
-        return
-    key_factory = getattr(gateway, "_session_key_for_source", None)
-    reset = getattr(session_store, "reset_session", None)
-    if not callable(key_factory) or not callable(reset):
-        return
-    result = reset(key_factory(source), display_name=getattr(source, "chat_name", None))
-    if inspect.isawaitable(result):
-        asyncio.create_task(result)
+async def _reset_gateway_session(gateway: Any, event: Any) -> None:
+    # The native boundary retires the old generation, cleans up running agents,
+    # clears conversation state and fires hooks before changing the durable route.
+    reset_event = copy.copy(event)
+    reset_event.text = "/reset"
+    await gateway._handle_reset_command(reset_event)
 
 
 def _memory_marker(group_id: str) -> str:
@@ -746,19 +743,20 @@ def build_handler(ctx: Any, store: Store):
         suffix = f"；另有 {len(errors)} 个附件未导入" if errors else ""
         return "已加入本群知识库：" + names + suffix
 
-    def handle(event: Any = None, gateway: Any = None, session_store: Any = None, **_: Any):
+    async def handle(event: Any = None, gateway: Any = None, **_: Any):
         source = getattr(event, "source", None)
         if source is None or _platform_name(source) != "qqbot":
             return {"action": "allow"}
         # Hermes invokes this hook BEFORE its central authorization gate. Local
         # commands must not mutate state or send a reply on behalf of a denied sender.
         authorized = getattr(gateway, "_is_user_authorized_for_source", None)
-        if callable(authorized):
-            try:
-                if not authorized(source):
-                    return {"action": "allow"}  # Let Hermes run pairing/rejection.
-            except Exception:
-                return {"action": "allow"}
+        if not callable(authorized):
+            return {"action": "allow"}
+        try:
+            if not authorized(source):
+                return {"action": "allow"}  # Let Hermes run pairing/rejection.
+        except Exception:
+            return {"action": "allow"}
         adapter = _adapter(gateway, source)
         _configure_adapter(adapter, response_registry)
         chat_type = str(getattr(source, "chat_type", "") or "").lower()
@@ -834,10 +832,14 @@ def build_handler(ctx: Any, store: Store):
         static_decision = policy.static(original_text)
         access_denial = None
         check_access = getattr(gateway, "_check_slash_access", None)
-        if interaction and direct_control and callable(check_access):
+        if direct_control and (interaction or text.startswith("/")):
             command_name = text.lstrip("/").split(maxsplit=1)[0] if text else "角色"
             try:
-                access_denial = check_access(source, command_name)
+                access_denial = (
+                    check_access(source, command_name)
+                    if callable(check_access)
+                    else "暂时无法确认命令权限，请稍后重试。"
+                )
             except Exception:
                 access_denial = "暂时无法确认命令权限，请稍后重试。"
         local_command = (character_command or profile_command or parse_command(text)
@@ -904,7 +906,7 @@ def build_handler(ctx: Any, store: Store):
                             store.set_member_consent(character_scope, member_id, "opted_in")
                         if profile_command.action == "correct":
                             _invalidate_group_runtime(group_id)
-                            _reset_gateway_session(gateway, session_store, source)
+                            await _reset_gateway_session(gateway, event)
                         reply = "已保存到你的本群专属记忆。"
                 elif profile_command.action == "forget":
                     profiles.forget(group_id, member_id)
@@ -912,7 +914,7 @@ def build_handler(ctx: Any, store: Store):
                         store.forget_group_member(character_scope, member_id)
                         _invalidate_group_runtime(character_scope)
                     _invalidate_group_runtime(group_id)
-                    _reset_gateway_session(gateway, session_store, source)
+                    await _reset_gateway_session(gateway, event)
                     _schedule_memory_refresh(ctx, memory, store, group_id)
                     reply = "已删除你在本群的成员档案、个人消息记忆，并重置群会话上下文。"
                 elif profile_command.action == "opt_out":
@@ -922,7 +924,7 @@ def build_handler(ctx: Any, store: Store):
                         store.set_member_consent(character_scope, member_id, "opted_out")
                         _invalidate_group_runtime(character_scope)
                     _invalidate_group_runtime(group_id)
-                    _reset_gateway_session(gateway, session_store, source)
+                    await _reset_gateway_session(gateway, event)
                     reply = "已停止建立和调用你的成员记忆；已有内容可用 /忘记我 删除。"
             except ValueError:
                 reply = "这条内容不能保存，请避免敏感信息并检查格式。"
@@ -973,7 +975,7 @@ def build_handler(ctx: Any, store: Store):
                         _invalidate_group_runtime(character_scope)
                     character.clear(character_scope)
                     _invalidate_group_runtime(group_id)
-                    _reset_gateway_session(gateway, session_store, source)
+                    await _reset_gateway_session(gateway, event)
                     reply = (
                         "本群机器人上下文与长期记忆已重置；知识库保留。"
                         if is_group else "当前私聊上下文与长期记忆已重置；知识库保留。"
@@ -1781,9 +1783,9 @@ def register(ctx: Any) -> None:
     handler = build_handler(ctx, store)
     auto_pair_handler = build_auto_pair_handler(ctx)
 
-    def pre_gateway_dispatch(**kwargs: Any):
+    async def pre_gateway_dispatch(**kwargs: Any):
         auto_pair_handler(**kwargs)
-        return handler(**kwargs)
+        return await handler(**kwargs)
 
     ctx.register_hook("pre_gateway_dispatch", pre_gateway_dispatch)
     ctx.register_hook("transform_llm_output", handler.transform_llm_output)

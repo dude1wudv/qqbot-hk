@@ -138,8 +138,12 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
                 return SimpleNamespace(success=True, message_id=f"r{len(self.calls)}")
 
         adapter = Adapter()
-        gateway = SimpleNamespace(adapters={"qqbot": adapter})
-        rewritten = handler(event("<@bot> 今天终于部署好了", "ask"), gateway)
+        gateway = SimpleNamespace(
+            adapters={"qqbot": adapter},
+            _is_user_authorized_for_source=lambda source: True,
+            _check_slash_access=lambda source, name: None,
+        )
+        rewritten = await handler(event("<@bot> 今天终于部署好了", "ask"), gateway)
         content = handler.transform_llm_output(
             response_text=json.dumps({"action": "reply", "message": "终于跑通了。可以歇口气了！"}),
             user_message=rewritten["text"], platform="qqbot",

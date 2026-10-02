@@ -40,12 +40,16 @@ chat_reasoning_patch_label="$(docker image inspect -f '{{index .Config.Labels "i
 qq_context_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-context-patch"}}' "$image_id")"
 qq_help_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-help-patch"}}' "$image_id")"
 qq_output_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-output-patch"}}' "$image_id")"
+doctor_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.doctor-patch"}}' "$image_id")"
+dependency_pins_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.dependency-pins"}}' "$image_id")"
 test "$base_digest_label" = "sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7"
 test "$audio_patch_label" = "v2"
 test "$chat_reasoning_patch_label" = "v5"
 test "$qq_context_patch_label" = "v1"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
+test "$doctor_patch_label" = "v2"
+test "$dependency_pins_label" = "2026-10-02"
 
 docker exec -i hermes-qqbot python - <<'PY'
 import json
@@ -152,6 +156,8 @@ docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/de
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-context.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-commands.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-output.py >/dev/null
+docker run --rm --init --network none --entrypoint python "$image_id" /opt/hermes/verify-hermes-qq-lifecycle.py
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-dependencies.py
 docker exec -i hermes-qqbot python - <<'PY'
 import json
 import os
@@ -302,6 +308,13 @@ if "terminal" not in tools or "file" not in tools:
     raise SystemExit("QQ terminal/file toolset is not enabled")
 if {"code", "computer", "tts"}.intersection(tools):
     raise SystemExit("QQ toolset exposes an unintended execution tool")
+cli_tools = ((config.get("platform_toolsets") or {}).get("cli") or [])
+if set(cli_tools) != set(tools):
+    raise SystemExit("CLI diagnostics must reflect the deployed QQ tool capabilities")
+from hermes_cli.env_loader import load_hermes_dotenv
+load_hermes_dotenv(hermes_home=Path("/opt/data"), project_env=Path("/opt/hermes/.env"))
+if not os.environ.get("QQ_CLIENT_SECRET"):
+    raise SystemExit("deployed member pseudonym secret is unavailable to the plugin")
 qq_extra = (((config.get("platforms") or {}).get("qqbot") or {}).get("extra") or {})
 if qq_extra.get("dm_policy") != "pairing":
     raise SystemExit("QQ DM policy is not pairing")
@@ -591,4 +604,4 @@ echo "CHAT_COMPLETIONS_ROUTE=verified"
 echo "CONFIG_CHECK=passed"
 echo "VOICE_POLICY=disabled"
 echo "PLUGIN_CHECK=passed"
-echo "DOCTOR=completed"
+echo "DOCTOR=passed"
