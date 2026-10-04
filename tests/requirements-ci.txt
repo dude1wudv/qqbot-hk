@@ -1,0 +1,6 @@
+# YAML config/cron tests; same pin as workspace requirements-release.txt.
+PyYAML==6.0.3
+# PNG expression tests; observed cached package metadata supports Python >=3.10.
+Pillow==12.3.0
+# Windows does not ship the IANA timezone database used by ZoneInfo.
+tzdata==2026.5; sys_platform == "win32"
