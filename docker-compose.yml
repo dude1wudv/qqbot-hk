@@ -24,7 +24,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "hermes gateway status >/dev/null 2>&1"]
       interval: 30s
-      timeout: 10s
+      timeout: 30s
       retries: 5
       start_period: 45s
 
