@@ -2,11 +2,18 @@ import ast
 import contextlib
 import hashlib
 import importlib.util
+import os
 from pathlib import Path
+import shutil
+import socket
 import sys
+import tempfile
+import threading
 import types
 import unittest
 from unittest.mock import patch
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -156,6 +163,104 @@ class HermesDoctorPatchTests(unittest.TestCase):
             hashlib.sha256(self.original.encode("utf-8")).hexdigest(),
         )
 
+
+class HermesPluginDoctorPatchTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.original = (ROOT / "tests/fixtures/hermes-plugin-dev.py").read_text(encoding="utf-8")
+        cls.patched = PATCH.patch_plugin_doctor(cls.original)
+
+    def runtime(self, source, observed):
+        function = next(
+            node for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == "_doctor_runtime"
+        )
+        registry = types.SimpleNamespace(
+            _snapshot_entries=lambda: [], _plugin_override_policy={}, _tools={},
+            _lock=threading.RLock(), _generation=0,
+        )
+
+        class Manager:
+            def __init__(self):
+                self._plugins = {}
+
+            def _scan_directory(self, _path, *, source):
+                return [types.SimpleNamespace(key="fixture", name="fixture", kind="tool")]
+
+            def _load_plugin(self, manifest):
+                home = Path(os.environ["HERMES_HOME"])
+                config = home / "config.yaml"
+                settings = yaml.safe_load(config.read_text()) if config.exists() else {}
+                observed.update(
+                    home=home, config=settings,
+                    deadline=(settings.get("plugins") or {}).get("load_timeout_seconds", 10),
+                )
+                self._plugins[manifest.key] = types.SimpleNamespace(
+                    error="", enabled=True, tools_registered=(), hooks_registered=(),
+                )
+
+            def unload(self):
+                observed["unloaded"] = True
+
+        def deny_network(*_args, **_kwargs):
+            raise RuntimeError("doctor network access blocked")
+
+        namespace = dict(
+            contextmanager=contextlib.contextmanager, ExitStack=contextlib.ExitStack,
+            Path=Path, tempfile=tempfile, shutil=shutil, os=os, patch=patch,
+            socket=socket, sys=sys, SimpleNamespace=types.SimpleNamespace,
+            _deny_network=deny_network, _DoctorLoadError=RuntimeError,
+            _is_plugin_module=lambda _name: False,
+        )
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "<doctor-runtime>", "exec"), namespace)
+        plugins = types.ModuleType("hermes_cli.plugins")
+        plugins.PluginManager = Manager
+        tools = types.ModuleType("tools")
+        tools.__path__ = []
+        module = types.ModuleType("tools.registry")
+        module.registry = registry
+        return namespace["_doctor_runtime"], {
+            **config_modules(), "hermes_cli.plugins": plugins,
+            "tools": tools, "tools.registry": module,
+        }
+
+    def test_deadline_in_isolated_home_and_full_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            production = Path(directory)
+            (production / "config.yaml").write_text("never_copy: private-runtime-sentinel\n")
+            plugin = production / "fixture"
+            plugin.mkdir()
+            (plugin / "plugin.yaml").write_text("name: fixture\n")
+            for source, expected in ((self.original, 10), (self.patched, 60)):
+                with self.subTest(deadline=expected):
+                    observed = {}
+                    runtime, modules = self.runtime(source, observed)
+                    with patch.dict(sys.modules, modules), patch.dict(os.environ, {"HERMES_HOME": str(production)}):
+                        with runtime(plugin):
+                            self.assertEqual(expected, observed["deadline"])
+                            self.assertNotEqual(production, observed["home"])
+                            self.assertEqual(
+                                {"plugins": {"load_timeout_seconds": 60}} if expected == 60 else {},
+                                observed["config"],
+                            )
+                            with self.assertRaisesRegex(RuntimeError, "network access blocked"):
+                                socket.create_connection(("example.com", 443))
+                        self.assertEqual(str(production), os.environ["HERMES_HOME"])
+                    self.assertTrue(observed["unloaded"])
+                    self.assertFalse(observed["home"].exists())
+            self.assertEqual("never_copy: private-runtime-sentinel\n", (production / "config.yaml").read_text())
+
+    def test_pinned_source_and_patch_integrity(self):
+        self.assertEqual(PATCH.PLUGIN_DEV_SHA256, hashlib.sha256(self.original.encode()).hexdigest())
+        self.assertEqual(self.patched, PATCH.patch_plugin_doctor(self.patched))
+        for source in (
+            self.original + "\n# source drift\n",
+            self.patched + "\n" + PATCH.PLUGIN_DEV_MARKER + "\n",
+            self.patched.replace("load_timeout_seconds: 60", "load_timeout_seconds: 0"),
+            self.patched + "\n# patched source drift\n",
+        ):
+            with self.subTest(source=source[-80:]), self.assertRaises(PATCH.PatchError):
+                PATCH.patch_plugin_doctor(source)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.qq-context-patch="v1" \
       io.qqbot-hk.qq-help-patch="v1" \
       io.qqbot-hk.qq-output-patch="v1" \
-      io.qqbot-hk.doctor-patch="v2" \
+      io.qqbot-hk.doctor-patch="v3" \
       io.qqbot-hk.dependency-pins="2026-10-06"
 
 COPY --chmod=0755 scripts/patch-hermes-dependencies.py /tmp/patch-hermes-dependencies.py
@@ -61,4 +61,5 @@ RUN python /opt/hermes/verify-hermes-audio.py \
     && python /opt/hermes/verify-hermes-qq-commands.py \
     && python /opt/hermes/verify-hermes-qq-output.py \
     && python /opt/hermes/verify-hermes-qq-lifecycle.py \
-    && python /opt/hermes/verify-hermes-dependencies.py
+    && python /opt/hermes/verify-hermes-dependencies.py \
+    && QQ_CLIENT_SECRET=offline-synthetic-member-secret python -m hermes_cli.main plugins doctor /opt/hermes/qqbot-hk/plugins/smart_group_qq --ci
