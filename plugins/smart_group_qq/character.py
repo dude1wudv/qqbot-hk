@@ -113,6 +113,7 @@ class ResidentCharacter:
         self.store = store
         self.config = dict(config or {})
         self.enabled = bool(self.config.get("enabled", True))
+        self.proactive_enabled = bool(self.config.get("proactive_enabled", True))
         self.persona = str(self.config.get("persona") or PERSONA)
         self.targets = {}  # Runtime adapter handles only; never serialized.
         self._tick_lock = asyncio.Lock()
@@ -211,7 +212,7 @@ class ResidentCharacter:
             args.append(kind)
         return [
             dict(row)
-            for row in db.execute(query + " ORDER BY created DESC LIMIT 100", args)
+            for row in db.execute(query + " ORDER BY created DESC, rowid DESC LIMIT 100", args)
         ]
 
     def _add(
@@ -239,7 +240,7 @@ class ResidentCharacter:
         )
         # Keep persistent data bounded without dropping active goals.
         db.execute(
-            "DELETE FROM character_items WHERE scope=? AND kind=? AND id NOT IN (SELECT id FROM character_items WHERE scope=? AND kind=? ORDER BY created DESC LIMIT 100)",
+            "DELETE FROM character_items WHERE scope=? AND kind=? AND id NOT IN (SELECT id FROM character_items WHERE scope=? AND kind=? ORDER BY created DESC, rowid DESC LIMIT 100)",
             (scope, kind, scope, kind),
         )
         return item_id
@@ -390,9 +391,23 @@ class ResidentCharacter:
                 )
             elif name == "角色":
                 style = _conversation_style(self._rows(db, scope))
+                proactive = "全局可用" if self.proactive_enabled else "全局关闭"
+                paused = "本群暂停" if (
+                    state.get("group_mode") == "only"
+                    or state.get("mode") == "quiet"
+                    or state.get("quiet_until", 0) > now
+                    or not state.get("proactive", True)
+                ) else "本群开启"
+                next_tick = (
+                    datetime.fromtimestamp(float(state.get("next_tick") or 0), tz=ZoneInfo("Asia/Shanghai"))
+                    .strftime("%Y-%m-%d %H:%M")
+                    if state.get("next_tick", 0) > now else "下一轮对话后"
+                )
+                blocked = "是" if state.get("platform_blocked") else "否"
                 result = (
                     f"我是小栖，你的 AI 电子室友。当前{'安静中' if state['quiet_until']>now else state['mode']}，兴趣是开源、游戏和有趣日常。\n"
                     f"本会话相处风格：{style['tone']}；{style['detail']}。\n"
+                    f"主动分享：{proactive}，{paused}；下一次探索：{next_tick}；平台阻断：{blocked}。\n"
                     "只根据本会话的近期互动慢慢适应，不与其他群或私聊共用。\n"
                     "可说：活跃一点、少说一点、安静一会儿、停止主动分享。\n"
                     "/经历 /梗簿 /目标 /探索 /宠物 /剧情 /表情"
@@ -620,7 +635,7 @@ class ResidentCharacter:
         self.maintain()
         if (
             not self.enabled
-            or not self.config.get("proactive_enabled", True)
+            or not self.proactive_enabled
             or self._tick_lock.locked()
         ):
             return

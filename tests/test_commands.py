@@ -41,7 +41,7 @@ class CommandTests(unittest.TestCase):
         for command in (
             "/help", "/reset", "/new", "/compress", "/status", "/summary", "/rules",
             "/deepseek", "/mimo",
-            "/low /medium /high /xhigh /max", "/kb", "/我的记忆", "/记住我", "/纠正记忆",
+            "/群投票", "/我的记忆", "/记住我", "/纠正记忆",
             "/忘记我", "/停止记忆",
         ):
             self.assertIn(command, menu)
@@ -82,6 +82,10 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command.argument, "我负责后端发布")
         self.assertEqual(parse_profile_command("/我的记忆").action, "show")
         self.assertEqual(parse_profile_command("/忘记我").action, "forget")
+        self.assertEqual(parse_profile_command("/我的记忆 项目").argument, "项目")
+        self.assertEqual(parse_profile_command("／ 我的记忆  ").argument, "")
+        self.assertIsNone(parse_profile_command("/忘记我 参数"))
+        self.assertIsNone(parse_profile_command("/停止记忆 参数"))
 
     def test_unknown_command_passes_through(self):
         self.assertIsNone(parse_command("/unknown"))

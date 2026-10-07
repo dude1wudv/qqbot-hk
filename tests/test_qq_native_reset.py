@@ -37,7 +37,7 @@ class QQNativeResetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((event.text, event.source, event.marker), ("/other", source, "original"))
 
     async def test_confirmation_waits_for_native_reset_for_reset_and_privacy_commands(self):
-        store = Store(":memory:")
+        store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(store.close)
 
         class Context:

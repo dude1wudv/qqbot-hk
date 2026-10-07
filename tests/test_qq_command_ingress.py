@@ -65,7 +65,7 @@ class LocalQQAdapter(BusyParent):
 
 class IngressTests(IsolatedAsyncioTestCase):
     def setUp(self):
-        self.store = Store(":memory:")
+        self.store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(self.store.close)
         self.addCleanup(uninstall_command_ingress, LocalQQAdapter)
         self.ctx = Context()

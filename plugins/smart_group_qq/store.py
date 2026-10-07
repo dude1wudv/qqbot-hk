@@ -16,6 +16,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import threading
 import unicodedata
 from contextlib import contextmanager
@@ -24,8 +25,7 @@ from typing import Any, Iterator
 
 
 PENDING_STALE_SECONDS = 300.0
-SCHEMA_VERSION = 4
-_MEMBER_REF_NAMESPACE = b"smart_group_qq/member-ref/v1"
+SCHEMA_VERSION = 5
 _SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
     re.compile(r"\bghp_[A-Za-z0-9]{12,}\b"),
@@ -37,6 +37,11 @@ class Store:
     """Small SQLite repository backed by Hermes ``plugin_storage.plugin_db()``."""
 
     def __init__(self, database: Any = None, *, member_secret: str | bytes | None = None):
+        if not isinstance(member_secret, (str, bytes)) or not member_secret.strip():
+            raise ValueError("QQ_CLIENT_SECRET is required for member pseudonyms")
+        self._member_secret = (
+            member_secret.encode("utf-8") if isinstance(member_secret, str) else member_secret
+        )
         self._owned = False
         if database is None:
             database = ":memory:"
@@ -46,13 +51,6 @@ class Store:
         else:
             self.db = database
         self._lock = threading.RLock()
-        self._member_secret = (
-            str(member_secret).encode("utf-8")
-            if isinstance(member_secret, str)
-            else bytes(member_secret)
-            if member_secret is not None
-            else _MEMBER_REF_NAMESPACE
-        )
         # A plugin_db connection is a sqlite3 connection in Hermes 0.21.0.
         # Keep this setup deliberately narrow so no alternate storage backend
         # is silently invented.
@@ -77,7 +75,7 @@ class Store:
                 return cls(db_factory(), member_secret=os.environ.get("QQ_CLIENT_SECRET"))
         # This fallback is only useful for import/unit tests.  A running
         # Hermes context always supplies plugin_storage.plugin_db().
-        return cls(":memory:")
+        return cls(":memory:", member_secret=os.environ.get("QQ_CLIENT_SECRET"))
 
     def _init_schema(self) -> None:
         version_row = self.db.execute("PRAGMA user_version").fetchone()
@@ -271,6 +269,37 @@ class Store:
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS group_memory_epochs ("
             "group_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL DEFAULT 0)"
+        )
+        self.db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS group_polls (
+                poll_id TEXT PRIMARY KEY,
+                group_id TEXT NOT NULL,
+                creator_ref TEXT NOT NULL,
+                question TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('open','closed','expired')),
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_group_polls_status_expiry
+                ON group_polls(group_id, status, expires_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_group_polls_one_open
+                ON group_polls(group_id) WHERE status='open';
+            CREATE TABLE IF NOT EXISTS group_poll_options (
+                poll_id TEXT NOT NULL REFERENCES group_polls(poll_id) ON DELETE CASCADE,
+                option_no INTEGER NOT NULL CHECK(option_no BETWEEN 1 AND 5),
+                text TEXT NOT NULL,
+                PRIMARY KEY(poll_id, option_no)
+            );
+            CREATE TABLE IF NOT EXISTS group_poll_votes (
+                poll_id TEXT NOT NULL,
+                member_ref TEXT NOT NULL,
+                option_no INTEGER NOT NULL,
+                PRIMARY KEY(poll_id, member_ref),
+                FOREIGN KEY(poll_id, option_no)
+                    REFERENCES group_poll_options(poll_id, option_no) ON DELETE CASCADE
+            );
+            """
         )
         if stored_schema_version < SCHEMA_VERSION:
             self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -960,16 +989,12 @@ class Store:
         return [dict(row) for row in rows]
 
     @staticmethod
-    def member_digest(group_id: Any, member_id: Any, secret: str | bytes | None = None) -> str:
+    def member_digest(group_id: Any, member_id: Any, secret: str | bytes) -> str:
         """Return a stable, non-reversible identifier for a group member."""
 
-        key = (
-            str(secret).encode("utf-8")
-            if isinstance(secret, str)
-            else bytes(secret)
-            if secret is not None
-            else _MEMBER_REF_NAMESPACE
-        )
+        if not isinstance(secret, (str, bytes)) or not secret.strip():
+            raise ValueError("member secret is required")
+        key = secret.encode("utf-8") if isinstance(secret, str) else secret
         payload = (str(group_id) + "\x00" + str(member_id)).encode("utf-8")
         return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
@@ -978,7 +1003,7 @@ class Store:
         cls,
         group_id: Any,
         member_id: Any,
-        secret: str | bytes | None = None,
+        secret: str | bytes,
     ) -> str:
         return "m-" + cls.member_digest(group_id, member_id, secret)[:20]
 
@@ -1098,10 +1123,107 @@ class Store:
             ).fetchone()
         return dict(row) if row is not None else {}
 
+    def apply_group_poll(
+        self, group_id: str, member_id: str, action: str, *,
+        question: str = "", options: tuple[str, ...] = (),
+        poll_id: str = "", option_no: int = 0, now: float | None = None,
+    ) -> dict[str, Any]:
+        """Expire, mutate and count a group poll under one immediate transaction."""
+        if action not in {"show", "create", "vote", "close"}:
+            raise ValueError("invalid poll action")
+        if not group_id or not member_id:
+            raise ValueError("group and member are required")
+        if action == "create" and (
+            not question.strip() or len(question) > 200
+            or not 2 <= len(options) <= 5
+            or any(not item.strip() or len(item) > 100 for item in options)
+        ):
+            raise ValueError("invalid poll question or options")
+        stamp = time.time() if now is None else float(now)
+        if not math.isfinite(stamp):
+            raise ValueError("invalid poll time")
+        group = str(group_id)
+        ref = self.member_ref_for(group, member_id)
+        with self.transaction() as db:
+            # Do not raise for normal rule failures: expiry must still commit.
+            db.execute(
+                "UPDATE group_polls SET status='expired' "
+                "WHERE group_id=? AND status='open' AND expires_at<=?",
+                (group, stamp),
+            )
+            if action == "create":
+                if db.execute(
+                    "SELECT 1 FROM group_polls WHERE group_id=? AND status='open'", (group,)
+                ).fetchone():
+                    return {"error": "本群已有进行中的投票，请先结束或等待过期。"}
+                poll_id = secrets.token_hex(5)
+                db.execute(
+                    "INSERT INTO group_polls VALUES (?,?,?,?, 'open',?,?)",
+                    (poll_id, group, ref, question, stamp, stamp + 86400),
+                )
+                db.executemany(
+                    "INSERT INTO group_poll_options VALUES (?,?,?)",
+                    [(poll_id, index, text) for index, text in enumerate(options, 1)],
+                )
+            if action == "show":
+                row = db.execute(
+                    "SELECT * FROM group_polls WHERE group_id=? "
+                    "ORDER BY (status='open') DESC, created_at DESC, rowid DESC LIMIT 1",
+                    (group,),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    "SELECT * FROM group_polls WHERE group_id=? AND poll_id=?",
+                    (group, poll_id),
+                ).fetchone()
+            if row is None:
+                return {"error": "本群没有找到该投票。" if poll_id else "本群暂无投票。"}
+            poll_id = str(row["poll_id"])
+            if action in {"vote", "close"}:
+                if row["status"] != "open":
+                    return {"error": "投票已结束或已过期，不能再修改。"}
+                if action == "close":
+                    if row["creator_ref"] != ref:
+                        return {"error": "只有创建者可以结束这个投票。"}
+                    db.execute("UPDATE group_polls SET status='closed' WHERE poll_id=?", (poll_id,))
+                else:
+                    if not db.execute(
+                        "SELECT 1 FROM group_poll_options WHERE poll_id=? AND option_no=?",
+                        (poll_id, option_no),
+                    ).fetchone():
+                        return {"error": "选项编号无效，请查看当前投票。"}
+                    db.execute(
+                        "INSERT INTO group_poll_votes VALUES (?,?,?) "
+                        "ON CONFLICT(poll_id,member_ref) DO UPDATE SET option_no=excluded.option_no",
+                        (poll_id, ref, option_no),
+                    )
+            result = dict(row)
+            if action == "close":
+                result["status"] = "closed"
+            result["options"] = [
+                dict(item) for item in db.execute(
+                    "SELECT o.option_no, o.text, COUNT(v.member_ref) AS votes "
+                    "FROM group_poll_options o LEFT JOIN group_poll_votes v "
+                    "ON v.poll_id=o.poll_id AND v.option_no=o.option_no "
+                    "WHERE o.poll_id=? GROUP BY o.option_no, o.text ORDER BY o.option_no",
+                    (poll_id,),
+                )
+            ]
+            return result
+
     def forget_group_member(self, group_id: str, member_id: str, *, hard_delete: bool = True) -> int:
         ref, _ = self._member_identity(group_id, member_id)
         with self.transaction() as db:
             self._advance_memory_epoch(group_id)
+            db.execute(
+                "DELETE FROM group_poll_votes WHERE member_ref=? AND poll_id IN "
+                "(SELECT poll_id FROM group_polls WHERE group_id=?)",
+                (ref, str(group_id)),
+            )
+            db.execute(
+                "DELETE FROM group_polls WHERE group_id=? AND creator_ref=? AND status!='closed'",
+                (str(group_id), ref),
+            )
             db.execute("DELETE FROM character_items WHERE scope=? AND (owner=? OR kind IN ('discovery','episode'))", (str(group_id), ref))
             db.execute("DELETE FROM character_relations WHERE scope=? AND owner=?", (str(group_id), ref))
             db.execute("DELETE FROM character_commands WHERE scope=?", (str(group_id),))
@@ -1293,6 +1415,10 @@ class Store:
         results = [dict(row) for row in selected.values()]
         if query:
             terms = self._search_terms(query)
+            results = [
+                row for row in results
+                if terms & self._search_terms(f"{row['fact_key']} {row['fact_value']}")
+            ]
             results.sort(
                 key=lambda row: (
                     len(terms & self._search_terms(f"{row['fact_key']} {row['fact_value']}")),

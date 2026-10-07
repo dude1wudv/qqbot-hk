@@ -11,7 +11,7 @@ from smart_group_qq.store import Store
 
 class ConversationTests(unittest.IsolatedAsyncioTestCase):
     async def test_sharing_is_classified_and_budget_does_not_block_name_calls(self):
-        store = Store(":memory:")
+        store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(store.close)
         ctx = FakeContext({"ambient": {"participation": {
             "enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0,
@@ -27,7 +27,7 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(ctx.llm.calls), 2)
 
     async def test_retreat_requires_actual_engagement_and_allows_other_members(self):
-        store = Store(":memory:")
+        store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(store.close)
         ctx = FakeContext({"ambient": {"participation": {
             "enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0, "wake_words": [],
@@ -125,7 +125,7 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(delivered, [])
 
     async def test_real_handler_records_one_turn_and_all_bubble_references(self):
-        store = Store(":memory:")
+        store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(store.close)
         handler = build_handler(FakeContext(), store)
 

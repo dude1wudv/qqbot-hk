@@ -19,7 +19,7 @@ from smart_group_qq.store import Store
 
 class CharacterTests(unittest.TestCase):
     def setUp(self):
-        self.store = Store()
+        self.store = Store(member_secret="test-only-secret")
         self.addCleanup(self.store.close)
         self.char = ResidentCharacter(self.store)
 
@@ -57,7 +57,7 @@ class CharacterTests(unittest.TestCase):
     def test_adaptive_style_survives_real_sqlite_reopen(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "style.sqlite"
-            store = Store(path)
+            store = Store(path, member_secret="test-only-secret")
             try:
                 char = ResidentCharacter(store)
                 self.record_questions("g", ("哈哈游戏甲", "好玩游戏乙", "哈哈游戏丙"), character=char, store=store)
@@ -65,7 +65,7 @@ class CharacterTests(unittest.TestCase):
                 self.assertIn("轻松有来有回", expected["tone"])
             finally:
                 store.close()
-            reopened = Store(path)
+            reopened = Store(path, member_secret="test-only-secret")
             try:
                 self.assertEqual(self.style(character=ResidentCharacter(reopened)), expected)
             finally:
@@ -150,12 +150,12 @@ class CharacterTests(unittest.TestCase):
     def test_restart_keeps_pet_and_pause(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "data.db"
-            store = Store(path)
+            store = Store(path, member_secret="test-only-secret")
             char = ResidentCharacter(store)
             char.command("g", "u", "/宠物取名 电电", "a")
             char.command("g", "u", "安静一会儿", "b")
             store.close()
-            reopened = Store(path)
+            reopened = Store(path, member_secret="test-only-secret")
             try:
                 char = ResidentCharacter(reopened)
                 self.assertEqual(char.state("g")["pet"]["name"], "电电")
@@ -243,7 +243,7 @@ class CharacterTests(unittest.TestCase):
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.store = Store()
+        self.store = Store(member_secret="test-only-secret")
         self.addCleanup(self.store.close)
         self.char = ResidentCharacter(self.store, {"think_interval_seconds": 30})
         self.url = "https://github.com/moeru-ai/airi/releases/tag/v-test"
@@ -327,6 +327,15 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.char.platform_event("g", "GROUP_MSG_RECEIVE")
         await self.char.tick(self.ctx, self.policy, self.memory)
         self.assertEqual(self.adapter._send_group_text.await_count, 1)
+    async def test_role_status_reports_proactive_state_and_platform_block(self):
+        status = self.char.command("g", "u", "/角色", "role-status")
+        self.assertIn("主动分享：全局可用", status)
+        self.assertIn("本群开启", status)
+        self.assertIn("下一次探索：", status)
+        self.char.platform_event("g", "GROUP_MSG_REJECT")
+        status = self.char.command("g", "u", "/角色", "role-status-2")
+        self.assertIn("平台阻断：是", status)
+
 
     async def test_send_failure_backs_off_and_does_not_repeat_ambiguous_delivery(self):
         self.adapter._send_group_text.side_effect = RuntimeError(

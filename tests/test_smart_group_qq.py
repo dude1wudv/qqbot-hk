@@ -92,7 +92,7 @@ def event(text, message_id="msg-1", *, platform="qqbot", chat_type="group", grou
 
 class PluginTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.store = Store(":memory:")
+        self.store = Store(":memory:", member_secret="test-only-secret")
         self.adapter = FakeAdapter()
         self.native_reset = AsyncMock()
         self.gateway = SimpleNamespace(
@@ -111,6 +111,38 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         source = SimpleNamespace(platform=self.source_platform, chat_type="group", chat_id="group-a", user_id="member-a", chat_name="群")
         self.gateway.adapters = {self.source_platform: self.adapter}
         return SimpleNamespace(text=text, message_id=message_id, source=source)
+
+    async def test_profile_keyword_query_is_private_scoped_and_idempotent(self):
+        handler = build_handler(FakeContext(), self.store)
+        async def execute(text, message_id):
+            result = await handler(self.make_event(text, message_id), self.gateway)
+            await asyncio.sleep(0)
+            return result
+
+        await execute("/我的记忆 项目", "query-before-consent")
+        self.assertNotIn("QQ Bot", self.adapter.sent[-1][1])
+        self.assertEqual(self.store.get_group_member("group-a", "member-a")["consent_status"], "unknown")
+        await execute("/记住我：项目=QQ Bot", "remember-project")
+        await execute("/记住我：偏好=简短回答", "remember-preference")
+        handler.profiles.remember("group-a", "member-b", "项目=他人项目")
+        handler.profiles.remember("group-b", "member-a", "项目=其他群项目")
+        await execute("/我的记忆 项目", "query-hit")
+        content = self.adapter.sent[-1][1]
+        self.assertIn("QQ Bot", content)
+        for private in ("简短回答", "他人项目", "其他群项目", "member-a"):
+            self.assertNotIn(private, content)
+        sent = len(self.adapter.sent)
+        self.assertEqual((await execute("/我的记忆 项目", "query-hit"))["reason"], "duplicate")
+        self.assertEqual(len(self.adapter.sent), sent)
+        await execute("/我的记忆 数据库", "query-miss")
+        self.assertNotIn("QQ Bot", self.adapter.sent[-1][1])
+        await execute("/我的记忆", "query-all")
+        self.assertIn("QQ Bot", self.adapter.sent[-1][1])
+        self.assertIn("简短回答", self.adapter.sent[-1][1])
+        await execute("/停止记忆", "query-stop")
+        await execute("/我的记忆 项目", "query-opted-out")
+        self.assertIn("已停止", self.adapter.sent[-1][1])
+        self.assertEqual(self.store.get_group_member("group-a", "member-a")["consent_status"], "opted_out")
 
     async def test_bare_slash_help_through_handler(self):
         handler = build_handler(FakeContext(), self.store)

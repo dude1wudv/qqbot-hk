@@ -106,7 +106,7 @@ class ParsingTests(unittest.TestCase):
 
 class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.store = Store(":memory:")
+        self.store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(self.store.close)
         self.adapter = FakeAdapter()
         self.gateway = SimpleNamespace(

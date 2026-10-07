@@ -104,7 +104,7 @@ for raw in qq_source.read_text(encoding="utf-8").splitlines():
     qq_values[name.strip()] = value.strip()
 
 required = ("QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_SCHEDULE_GROUPS")
-missing = [name for name in required if not qq_values.get(name)]
+missing = [name for name in required if not qq_values.get(name, "").strip()]
 if missing:
     raise SystemExit("missing required QQ variables: " + ", ".join(missing))
 

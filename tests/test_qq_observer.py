@@ -167,7 +167,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
             def get_config(self, key, default=None):
                 return default
 
-        store = Store(":memory:")
+        store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(store.close)
         handler = build_handler(Context(), store)
         qq_observer.install_nonmention_observer(handler.observe_nonmention)
@@ -194,7 +194,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
             def get_config(self, key, default=None):
                 return default
 
-        store = Store(":memory:")
+        store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(store.close)
         handler = build_handler(Context(), store)
         qq_observer.install_nonmention_observer(handler.observe_nonmention)
@@ -211,7 +211,7 @@ class ObserverTests(IsolatedAsyncioTestCase):
             def get_config(self, key, default=None):
                 return default
 
-        store = Store(":memory:")
+        store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(store.close)
         handler = build_handler(Context(), store)
         qq_observer.install_nonmention_observer(handler.observe_nonmention)
@@ -440,7 +440,7 @@ class ObserverCommandChainTests(IsolatedAsyncioTestCase):
 
         for ambient, participation in ((True, True), (False, True), (True, False), (False, False)):
             with self.subTest(ambient=ambient, participation=participation):
-                store = Store(":memory:")
+                store = Store(":memory:", member_secret="test-only-secret")
                 ctx = Context(ambient, participation)
                 handler = build_handler(ctx, store)
                 adapter = Adapter(handler)

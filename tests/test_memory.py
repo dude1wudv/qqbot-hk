@@ -14,7 +14,7 @@ from smart_group_qq.store import SCHEMA_VERSION, Store
 
 class MemoryTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.store = Store(":memory:")
+        self.store = Store(":memory:", member_secret="test-only-secret")
         self.memory = GroupMemory(
             self.store, window_size=3, idle_seconds=3600, summary_chars=800,
             compact_after_messages=3, max_history_rows=100,
@@ -145,7 +145,7 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
                 db.commit()
             finally:
                 db.close()
-            migrated = Store(path)
+            migrated = Store(path, member_secret="test-only-secret")
             try:
                 self.assertEqual(migrated.memory_payload("group-a")["structured"]["summary"], "保留旧摘要")
                 self.assertEqual(migrated.db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
@@ -165,7 +165,7 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 db.close()
             with self.assertRaises(RuntimeError):
-                Store(path)
+                Store(path, member_secret="test-only-secret")
             check = sqlite3.connect(path)
             try:
                 self.assertEqual(check.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION + 1)
@@ -300,7 +300,7 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("openid-secret", str(member))
         self.assertEqual(member["message_count"], 1)
         self.assertEqual(
-            self.store.member_ref("group-a", "openid-secret"), member["member_ref"],
+            self.store.member_ref("group-a", "openid-secret", "test-only-secret"), member["member_ref"],
         )
         self.store.set_member_consent("group-a", "openid-secret", "opted_in")
         self.assertEqual(self.store.get_group_member("group-a", "openid-secret")["consent_status"], "opted_in")

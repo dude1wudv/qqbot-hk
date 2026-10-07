@@ -24,7 +24,7 @@ class SummaryLLM:
 
 class MemoryRecoveryTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.store = Store(":memory:")
+        self.store = Store(":memory:", member_secret="test-only-secret")
         self.addCleanup(self.store.close)
 
     def record(self, memory, count, text="待整理"):

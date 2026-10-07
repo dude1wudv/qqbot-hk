@@ -39,6 +39,7 @@ from .media import MAX_IMAGES, image_attachments, image_inputs, limit_attachment
 from .policy import PolicyEngine
 from .qq_observer import install_nonmention_observer
 from .response import ReplyRegistry, ReplyRequest
+from .polls import PollService, parse_poll_command
 from .store import Store
 
 logger = logging.getLogger(__name__)
@@ -614,6 +615,7 @@ def build_handler(ctx: Any, store: Store):
         "media_cache_roots": ctx.get_config("media_cache_roots", ["/opt/data/cache"]),
     }
     policy = PolicyEngine(settings, logger=logger)
+    polls = PollService(store)
     character = ResidentCharacter(store, ctx.get_config("character", {}))
     memory_cfg = settings.get("memory") if isinstance(settings.get("memory"), Mapping) else {}
     ambient_cfg = settings.get("ambient") if isinstance(settings.get("ambient"), Mapping) else {}
@@ -827,6 +829,7 @@ def build_handler(ctx: Any, store: Store):
         attachment_title, attachment_paths = _attachment_add_request(text)
         kb_command = parse_kb_command(text)
         profile_command = parse_profile_command(text)
+        poll_command = parse_poll_command(text)
         model_rewrite = model_alias_rewrite(text)
         reasoning_rewrite = reasoning_alias_rewrite(text)
         static_decision = policy.static(original_text)
@@ -844,6 +847,7 @@ def build_handler(ctx: Any, store: Store):
                 access_denial = "暂时无法确认命令权限，请稍后重试。"
         local_command = (character_command or profile_command or parse_command(text)
                          or text.startswith("/kb") or text == "/配置"
+                         or (poll_command is not None and is_group)
                          or (is_group and text.lower() in {"/only", "/all"})
                          or (interaction and interaction.error))
         if direct_control and local_command and message_id and not static_decision.blocked and not access_denial:
@@ -878,6 +882,16 @@ def build_handler(ctx: Any, store: Store):
         elif text == "/配置":
             claim_action = "interaction:configuration"
             reply = CONFIG_ERROR + "\n/model 查看当前模型；/reasoning 查看当前推理；/status 查看配置默认值。\n可用 /deepseek /mimo /low /medium /high /xhigh /max，以及 /模型、/推理、/配置 等中文写法。"
+        elif poll_command and is_group and direct_control:
+            claim_action = "poll:" + poll_command.action
+            try:
+                reply = polls.execute(group_id, member_id, poll_command)
+            except (ValueError, TypeError):
+                reply = "投票参数无效，请发送 /群投票 查看用法。"
+        elif poll_command:
+            # Synthetic/non-mention group events never reach this branch because
+            # direct_control is false; keep the explicit guard for future hooks.
+            return {"action": "allow"}
         elif character_command and direct_control:
             claim_action = "character:" + character_command[0]
             try:
@@ -896,7 +910,7 @@ def build_handler(ctx: Any, store: Store):
             claim_action = "profile:" + profile_command.action
             try:
                 if profile_command.action == "show":
-                    reply = profiles.presentation(group_id, member_id)
+                    reply = profiles.presentation(group_id, member_id, query=profile_command.argument)
                 elif profile_command.action in {"remember", "correct"}:
                     if not profile_command.argument:
                         reply = "请使用 /记住我：内容，或 /纠正记忆：字段=新内容。"

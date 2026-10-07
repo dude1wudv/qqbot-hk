@@ -74,8 +74,7 @@ platforms:
   qqbot:
     enabled: true
     extra:
-      # Unknown DMs reach Hermes' pairing gate. The plugin may approve them only
-      # during the explicit, expiring enrollment window below.
+      # Unknown DMs must pass Hermes' pairing gate; automatic approval is disabled.
       dm_policy: pairing
       group_policy: allowlist
       # Both the QQ adapter and central gateway grant group-only access.
@@ -126,15 +125,17 @@ plugins:
       settings:
         character:
           enabled: true
-          proactive_enabled: false
-          # GitHub release discovery is disabled; normal @ and group replies remain available.
+          proactive_enabled: true
+          # Operator-maintained GitHub release feeds only; user URLs are rejected.
           think_interval_seconds: 900
-          discovery_feeds: []
+          discovery_feeds:
+            - https://github.com/moeru-ai/airi/releases.atom
+            - https://github.com/mindcraft-bots/mindcraft/releases.atom
+            - https://github.com/SillyTavern/SillyTavern/releases.atom
         status_model: deepseek/deepseek-v4.1-flash
         status_reasoning: low
         auto_pair:
-          enabled: true
-          until_utc: "2026-09-05T08:00:00Z"
+          enabled: false
         keyword_replies:
           - id: bot-help
             match: exact

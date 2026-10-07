@@ -341,6 +341,21 @@ plugin_settings = (
 )
 if not isinstance(plugin_settings, Mapping):
     raise SystemExit("smart_group_qq settings are invalid")
+character_config = plugin_settings.get("character")
+if not isinstance(character_config, Mapping):
+    raise SystemExit("smart_group_qq character config is missing")
+if character_config.get("proactive_enabled") is not True:
+    raise SystemExit("character proactive sharing must be enabled")
+expected_feeds = [
+    "https://github.com/moeru-ai/airi/releases.atom",
+    "https://github.com/mindcraft-bots/mindcraft/releases.atom",
+    "https://github.com/SillyTavern/SillyTavern/releases.atom",
+]
+if character_config.get("discovery_feeds") != expected_feeds:
+    raise SystemExit("character discovery feeds are not the fixed release sources")
+auto_pair = plugin_settings.get("auto_pair")
+if not isinstance(auto_pair, Mapping) or auto_pair.get("enabled") is not False or "until_utc" in auto_pair:
+    raise SystemExit("temporary QQ auto-pair configuration is still enabled")
 memory_config = plugin_settings.get("memory")
 if not isinstance(memory_config, Mapping):
     raise SystemExit("smart_group_qq memory config is missing")
@@ -489,7 +504,7 @@ with sqlite3.connect(db_path) as connection:
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise SystemExit("plugin database integrity check failed")
     schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-    if schema_version != 4:
+    if schema_version != 5:
         raise SystemExit("plugin database schema version does not match this release")
     foreign_key_errors = list(connection.execute("PRAGMA foreign_key_check"))
     if foreign_key_errors:
@@ -504,7 +519,8 @@ with sqlite3.connect(db_path) as connection:
         "group_memories", "group_history", "knowledge_documents", "knowledge_chunks",
         "compaction_jobs", "group_members", "member_memory_facts",
         "group_memory_epochs", "character_state", "character_items",
-        "character_relations", "character_commands",
+        "character_relations", "character_commands", "group_polls",
+        "group_poll_options", "group_poll_votes",
     }
     if not required_tables.issubset(tables):
         raise SystemExit("plugin memory/knowledge schema is incomplete")
@@ -525,15 +541,16 @@ with sqlite3.connect(db_path) as connection:
         raise SystemExit("member memory fact schema is incomplete")
     indexes = {
         row[1]
-        for table in ("group_history", "group_memories", "compaction_jobs", "group_members", "member_memory_facts")
+        for table in ("group_history", "group_memories", "compaction_jobs", "group_members", "member_memory_facts", "group_polls")
         for row in connection.execute(f"PRAGMA index_list({table})")
     }
     required_indexes = {
         "idx_compaction_jobs_ready", "idx_compaction_jobs_group", "idx_group_members_seen",
         "idx_member_facts_active", "idx_member_facts_key",
+        "idx_group_polls_status_expiry", "idx_group_polls_one_open",
     }
     if not required_indexes.issubset(indexes):
-        raise SystemExit("member memory indexes are incomplete")
+        raise SystemExit("member/poll indexes are incomplete")
 from gateway.config import Platform
 from gateway.platforms.qqbot.adapter import QQAdapter
 from gateway.run import GatewayRunner, load_gateway_config_for_runner

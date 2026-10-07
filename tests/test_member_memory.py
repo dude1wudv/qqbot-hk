@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
@@ -17,6 +18,19 @@ class MemberMemoryTests(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self):
         self.store.close()
+
+    def test_member_secret_is_required_without_creating_database(self):
+        for secret in (None, "", b"", " \t", b" \t"):
+            with self.subTest(secret=secret), self.assertRaises(ValueError):
+                Store(member_secret=secret)
+        with patch.dict("os.environ", {}, clear=True), self.assertRaises(ValueError):
+            Store.from_context({})
+        with patch.dict("os.environ", {"QQ_CLIENT_SECRET": "test-only-secret"}, clear=True):
+            store = Store.from_context({})
+            try:
+                self.assertEqual(store.member_ref_for("g", "m"), self.store.member_ref_for("g", "m"))
+            finally:
+                store.close()
 
     def test_explicit_memory_is_group_scoped_and_forgettable(self):
         self.memory.touch("group-a", "member-a", display_name="小明")

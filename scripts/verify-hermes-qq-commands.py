@@ -107,7 +107,7 @@ async def verify_real_ingress(config) -> None:
             return {"ambient": {"enabled": False, "participation": {
                 "enabled": False, "wake_words": ["小分队机器人"]}}}.get(key, default)
 
-    store = Store(":memory:")
+    store = Store(":memory:", member_secret="offline-synthetic-member-secret")
     handler = build_handler(Context(), store)
     runner = InboundHarness(config)
     runner._check_slash_access = lambda source, name: None
