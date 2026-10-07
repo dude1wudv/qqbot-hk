@@ -9,11 +9,12 @@ from pathlib import Path
 import sys
 
 ORIGINAL_LOCK_SHA256 = "193a3a3703499eb7c4b4ce48d3ba1e9dae2be62a48315c1e7ea9545e8be4a067"
-SAFE_LOCK_SHA256 = "8b39377f88447e93f4526948ba646b0c20c75ceb3e692374d08fd49713c42691"
+SAFE_LOCK_SHA256 = "dabb346fe733b1d967ce92d44187a0a3dc430ee3601f744315987da836f93484"
 MANIFESTS = {
     "package.json": (
         "8b5b2ea9721e8d4bdedea457f5b5bab038e7f3e11ea4e1381bd43f2e87ce04cd",
         (("overrides", "@xmldom/xmldom", None, "0.9.12"),
+         ("overrides", "source-map-js", None, "1.2.2"),
          ("overrides", "brace-expansion", "5.0.9", "5.0.12"),
          ("overrides", "undici@^6", "6.28.0", "6.28.1"),
          ("overrides", "undici@^7", "7.29.0", "7.29.1")),
@@ -73,7 +74,7 @@ def main() -> int:
     except (OSError, UnicodeError, ValueError, PatchError) as exc:
         print(f"ERROR: Hermes dependency patch failed: {exc}", file=sys.stderr)
         return 1
-    print("HERMES_DEPENDENCIES=xmldom:0.9.12,brace-expansion:5.0.12,undici:6.28.1/7.29.1,vitest:4.1.11")
+    print("HERMES_DEPENDENCIES=xmldom:0.9.12,source-map-js:1.2.2,brace-expansion:5.0.12,undici:6.28.1/7.29.1,vitest:4.1.11")
     return 0
 
 

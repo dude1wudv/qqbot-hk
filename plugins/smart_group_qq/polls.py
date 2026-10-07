@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
+
+from .commands import normalize_command_text
 
 
 @dataclass(frozen=True)
@@ -15,16 +18,15 @@ class PollCommand:
 
 
 def parse_poll_command(value: Any) -> PollCommand | None:
-    text = str(value or "").replace("／", "/").strip()
-    if not text.startswith("/群投票"):
+    text = normalize_command_text(value)
+    match = re.fullmatch(r"/群投票(?:\s+(.*))?", text, re.DOTALL)
+    if match is None:
         return None
-    rest = text[len("/群投票"):].strip()
-    if not rest:
+    rest = str(match.group(1) or "").strip()
+    if not rest or rest == "查看":
         return PollCommand("show")
-    if rest == "查看":
-        return PollCommand("show")
-    if rest.startswith("创建"):
-        payload = rest[len("创建"):].strip()
+    if rest.startswith("创建 "):
+        payload = rest[len("创建 "):].strip()
         pieces = tuple(item.strip() for item in payload.split("|"))
         if len(pieces) < 3:
             return PollCommand("invalid")

@@ -1,12 +1,15 @@
 import asyncio
 import json
+import io
 from pathlib import Path
 import sys
 import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins"))
 from smart_group_qq import build_handler
@@ -327,6 +330,72 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.char.platform_event("g", "GROUP_MSG_RECEIVE")
         await self.char.tick(self.ctx, self.policy, self.memory)
         self.assertEqual(self.adapter._send_group_text.await_count, 1)
+
+    def deployed_character_config(self):
+        config = yaml.safe_load(
+            (Path(__file__).resolve().parents[1] / "config/hermes-config.yaml").read_text(encoding="utf-8")
+        )
+        return config["plugins"]["entries"]["smart_group_qq"]["settings"]["character"]
+
+    async def test_real_config_atom_feed_shares_once_with_persisted_source(self):
+        config = self.deployed_character_config()
+        self.assertTrue(config["proactive_enabled"])
+        self.assertEqual(len(config["discovery_feeds"]), 3)
+        character = ResidentCharacter(self.store, config)
+        character.bind("g", self.adapter, "u")
+        atom = (
+            '<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>AIRI release</title>'
+            f'<link href="{self.url}"/><updated>2026-10-06T00:00:00Z</updated></entry></feed>'
+        ).encode()
+
+        class FakeOpener:
+            def open(self, request, timeout):
+                self_url = request.full_url
+                if self_url == config["discovery_feeds"][0]:
+                    return io.BytesIO(atom)
+                return io.BytesIO(b'<feed xmlns="http://www.w3.org/2005/Atom"/>')
+
+        with patch("smart_group_qq.character.urllib.request.build_opener", return_value=FakeOpener()) as opener:
+            await character.tick(self.ctx, self.policy, self.memory)
+            self.adapter._send_group_text.assert_awaited_once()
+            rows = self.store.db.execute(
+                "SELECT evidence,status FROM character_items WHERE scope='g' AND kind='discovery'"
+            ).fetchall()
+            self.assertEqual([(r["evidence"], r["status"]) for r in rows], [(self.url, "shared")])
+            character.command("g", "u", "/探索", "real-feed-next")
+            await character.tick(self.ctx, self.policy, self.memory)
+            self.assertEqual(self.adapter._send_group_text.await_count, 1)
+            self.assertEqual(self.llm.acomplete_structured.await_count, 1)
+            self.assertEqual(opener.call_count, 3)
+
+    async def test_real_config_controls_stop_before_feed_or_model(self):
+        for control in ("停止主动分享", "only", "安静一会儿", "少说一点"):
+            with self.subTest(control=control):
+                character = ResidentCharacter(self.store, self.deployed_character_config())
+                scope = "control-" + control
+                character.bind(scope, self.adapter, "u")
+                if control == "only":
+                    character.set_group_mode(scope, "only")
+                else:
+                    character.command(scope, "u", control, "pause-" + control)
+                with patch("smart_group_qq.character.read_feed") as feed:
+                    await character.tick(self.ctx, self.policy, self.memory)
+                    feed.assert_not_called()
+                self.assertIn("本群暂停", character.command(scope, "u", "/角色", "role-" + control))
+        self.llm.acomplete_structured.assert_not_awaited()
+        self.adapter._send_group_text.assert_not_awaited()
+
+    async def test_no_configured_feed_avoids_model_and_network(self):
+        config = self.deployed_character_config()
+        config["discovery_feeds"] = []
+        character = ResidentCharacter(self.store, config)
+        character.bind("g", self.adapter, "u")
+        with patch("smart_group_qq.character.read_feed") as feed:
+            await character.tick(self.ctx, self.policy, self.memory)
+            feed.assert_not_called()
+        self.llm.acomplete_structured.assert_not_awaited()
+        self.adapter._send_group_text.assert_not_awaited()
+
     async def test_role_status_reports_proactive_state_and_platform_block(self):
         status = self.char.command("g", "u", "/角色", "role-status")
         self.assertIn("主动分享：全局可用", status)

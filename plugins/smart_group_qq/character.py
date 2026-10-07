@@ -401,8 +401,10 @@ class ResidentCharacter:
                 next_tick = (
                     datetime.fromtimestamp(float(state.get("next_tick") or 0), tz=ZoneInfo("Asia/Shanghai"))
                     .strftime("%Y-%m-%d %H:%M")
-                    if state.get("next_tick", 0) > now else "下一轮对话后"
+                    if state.get("next_tick", 0) > now else "下一轮维护（北京时间）"
                 )
+                if scope.startswith("dm:"):
+                    paused, next_tick = "私聊不主动推送", "不适用"
                 blocked = "是" if state.get("platform_blocked") else "否"
                 result = (
                     f"我是小栖，你的 AI 电子室友。当前{'安静中' if state['quiet_until']>now else state['mode']}，兴趣是开源、游戏和有趣日常。\n"

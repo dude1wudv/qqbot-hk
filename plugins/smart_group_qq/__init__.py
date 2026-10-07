@@ -776,6 +776,20 @@ def build_handler(ctx: Any, store: Store):
             and raw_message.get("_smart_group_qq_nonmention")
         )
         official = bool(is_group and not synthetic)
+        poll_command = parse_poll_command(text)
+        if poll_command is not None:
+            if not is_group:
+                return {"action": "allow"}
+            if not official:
+                return {"action": "skip", "reason": "nonmention_command"}
+            if not group_id or not member_id or not message_id:
+                return {"action": "skip", "reason": "invalid_poll_source"}
+            check_poll_access = getattr(gateway, "_check_slash_access", None)
+            try:
+                if not callable(check_poll_access) or check_poll_access(source, "群投票"):
+                    return {"action": "skip", "reason": "poll_access_denied"}
+            except Exception:
+                return {"action": "skip", "reason": "poll_access_denied"}
         if not group_id or (not text and not image_paths):
             return {"action": "allow"}
         character_scope = group_id if is_group else "dm:" + group_id
@@ -829,13 +843,12 @@ def build_handler(ctx: Any, store: Store):
         attachment_title, attachment_paths = _attachment_add_request(text)
         kb_command = parse_kb_command(text)
         profile_command = parse_profile_command(text)
-        poll_command = parse_poll_command(text)
         model_rewrite = model_alias_rewrite(text)
         reasoning_rewrite = reasoning_alias_rewrite(text)
         static_decision = policy.static(original_text)
         access_denial = None
         check_access = getattr(gateway, "_check_slash_access", None)
-        if direct_control and (interaction or text.startswith("/")):
+        if poll_command is None and direct_control and (interaction or text.startswith("/")):
             command_name = text.lstrip("/").split(maxsplit=1)[0] if text else "角色"
             try:
                 access_denial = (
@@ -871,7 +884,7 @@ def build_handler(ctx: Any, store: Store):
             reply = (
                 "已切换为仅 @ 模式，普通群聊不再自动响应。主动 GitHub 推送已关闭。"
                 if text.lower() == "/only"
-                else "已恢复群聊自动参与；仍需 @ 才执行管理命令，主动 GitHub 推送保持关闭。"
+                else "已恢复群聊自动参与；仍需 @ 才执行管理命令，主动分享由本群开关、安静状态与平台权限决定。"
             )
 
         elif interaction and interaction.error:
@@ -888,10 +901,6 @@ def build_handler(ctx: Any, store: Store):
                 reply = polls.execute(group_id, member_id, poll_command)
             except (ValueError, TypeError):
                 reply = "投票参数无效，请发送 /群投票 查看用法。"
-        elif poll_command:
-            # Synthetic/non-mention group events never reach this branch because
-            # direct_control is false; keep the explicit guard for future hooks.
-            return {"action": "allow"}
         elif character_command and direct_control:
             claim_action = "character:" + character_command[0]
             try:

@@ -137,6 +137,10 @@ managed_names = {
     "VOICE_TOOLS_OPENAI_KEY", "QQ_SCHEDULE_GROUPS",
 }
 existing_lines = runtime_env_source.read_text(encoding="utf-8").splitlines() if runtime_env_source.is_file() else []
+for line in existing_lines:
+    name, separator, value = line.partition("=")
+    if separator and name.strip() == "QQ_CLIENT_SECRET" and value.strip() != qq_values["QQ_CLIENT_SECRET"]:
+        raise SystemExit("QQ member secret differs from the deployed runtime; refusing identity migration")
 unmanaged_lines = [line for line in existing_lines if line.split("=", 1)[0].strip() not in managed_names]
 unmanaged_env = "\n".join(unmanaged_lines).strip()
 
@@ -155,13 +159,62 @@ docker network inspect sub2api_sub2api-network >/dev/null
 docker compose -f "$project_dir/docker-compose.yml" config --quiet
 docker compose -f "$project_dir/docker-compose.yml" build "$service"
 install -m 0644 "$project_dir/config/SOUL.md" "$stage_dir/SOUL.md"
-install -d -o 10000 -g 10000 -m 0755 "$data_dir/hooks/smart_group_qq"
-install -o 10000 -g 10000 -m 0644 "$project_dir/hooks/smart_group_qq/HOOK.yaml" "$data_dir/hooks/smart_group_qq/HOOK.yaml"
-install -o 10000 -g 10000 -m 0644 "$project_dir/hooks/smart_group_qq/handler.py" "$data_dir/hooks/smart_group_qq/handler.py"
 install -m 0644 "$project_dir/config/scheduled-messages.yaml" "$stage_dir/smart-group-schedules.yaml"
 install -m 0755 "$project_dir/scripts/reconcile-smart-group-cron.py" "$stage_dir/reconcile-smart-group-cron.py"
 cp -a "$project_dir/plugins/smart_group_qq" "$stage_dir/smart_group_qq"
 chown -R 10000:10000 "$stage_dir"
+# Stop only the bot for a consistent rollback snapshot. Preserve active routes,
+# model overrides and history; the async policy performs lossless handoff later.
+docker compose -f "$project_dir/docker-compose.yml" stop "$service"
+restart_stopped_service=true
+session_backup_dir="$deploy_dir/backups/hermes-sessions"
+install -d -o 10000 -g 10000 -m 0700 "$session_backup_dir"
+session_backup_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+python3 - "$data_dir" "$session_backup_dir" "$session_backup_stamp" <<'PY'
+import os
+from pathlib import Path
+import sqlite3
+import sys
+
+data_dir, backup_dir = map(Path, sys.argv[1:3])
+stamp = sys.argv[3]
+for name, relative in (
+    ("state.db", "state.db"),
+    ("plugin-data.db", "plugin-data/smart_group_qq/data.db"),
+):
+    source_path = data_dir / relative
+    target_path = backup_dir / f"{name}.{stamp}"
+    if not source_path.is_file():
+        continue
+    source = sqlite3.connect(f"file:{source_path}?mode=ro", uri=True)
+    try:
+        if source.execute("PRAGMA integrity_check").fetchone()[0].lower() != "ok":
+            raise SystemExit("rollback database integrity check failed")
+        target = sqlite3.connect(target_path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
+    os.chmod(target_path, 0o600)
+PY
+if test -f "$data_dir/sessions/sessions.json"; then
+  install -o 10000 -g 10000 -m 0600 "$data_dir/sessions/sessions.json" "$session_backup_dir/sessions.json.$session_backup_stamp"
+fi
+config_backup_dir="$session_backup_dir/config.$session_backup_stamp"
+install -d -o 10000 -g 10000 -m 0700 "$config_backup_dir"
+for relative in config.yaml SOUL.md .env plugins hooks cron smart-group-schedules.yaml; do
+  if test -e "$data_dir/$relative"; then
+    cp -a "$data_dir/$relative" "$config_backup_dir/"
+  fi
+done
+cp -a "$project_dir/docker-compose.yml" "$config_backup_dir/"
+docker inspect -f '{{.Image}}' "$service" > "$config_backup_dir/previous-image-id"
+echo "ROLLBACK_SNAPSHOT=$session_backup_stamp"
+install -d -o 10000 -g 10000 -m 0755 "$data_dir/hooks/smart_group_qq"
+install -o 10000 -g 10000 -m 0644 "$project_dir/hooks/smart_group_qq/HOOK.yaml" "$data_dir/hooks/smart_group_qq/HOOK.yaml"
+install -o 10000 -g 10000 -m 0644 "$project_dir/hooks/smart_group_qq/handler.py" "$data_dir/hooks/smart_group_qq/handler.py"
 
 install -o 10000 -g 10000 -m 0644 "$stage_dir/config.yaml" "$data_dir/.config.yaml.new"
 install -o 10000 -g 10000 -m 0600 "$stage_dir/.env" "$data_dir/.env.new"
@@ -188,37 +241,6 @@ chown -R 10000:10000 "$data_dir/plugins/smart_group_qq" "$data_dir/plugin-data/s
 chmod 0700 "$data_dir"
 chmod 0600 "$data_dir/.env"
 
-# Stop only the bot for a consistent rollback snapshot. Preserve active routes,
-# model overrides and history; the async policy performs lossless handoff later.
-docker compose -f "$project_dir/docker-compose.yml" stop "$service"
-restart_stopped_service=true
-session_backup_dir="$deploy_dir/backups/hermes-sessions"
-install -d -o 10000 -g 10000 -m 0700 "$session_backup_dir"
-session_backup_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-python3 - "$data_dir/state.db" "$session_backup_dir/state.db.$session_backup_stamp" <<'PY'
-import os
-from pathlib import Path
-import sqlite3
-import sys
-
-source_path, target_path = map(Path, sys.argv[1:])
-if source_path.is_file():
-    source = sqlite3.connect(f"file:{source_path}?mode=ro", uri=True)
-    try:
-        if source.execute("PRAGMA integrity_check").fetchone()[0].lower() != "ok":
-            raise SystemExit("Hermes session database integrity check failed")
-        target = sqlite3.connect(target_path)
-        try:
-            source.backup(target)
-        finally:
-            target.close()
-    finally:
-        source.close()
-    os.chmod(target_path, 0o600)
-PY
-if test -f "$data_dir/sessions/sessions.json"; then
-  install -o 10000 -g 10000 -m 0600 "$data_dir/sessions/sessions.json" "$session_backup_dir/sessions.json.$session_backup_stamp"
-fi
 docker compose -f "$project_dir/docker-compose.yml" up -d --force-recreate --no-deps "$service"
 restart_stopped_service=false
 

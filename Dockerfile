@@ -8,7 +8,7 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.qq-help-patch="v1" \
       io.qqbot-hk.qq-output-patch="v1" \
       io.qqbot-hk.doctor-patch="v2" \
-      io.qqbot-hk.dependency-pins="2026-10-02"
+      io.qqbot-hk.dependency-pins="2026-10-06"
 
 COPY --chmod=0755 scripts/patch-hermes-dependencies.py /tmp/patch-hermes-dependencies.py
 COPY --chmod=0644 overrides/hermes-package-lock.json /tmp/hermes-package-lock.json
