@@ -127,13 +127,14 @@ plugins:
       settings:
         character:
           enabled: true
-          proactive_enabled: true
-          # Operator-maintained GitHub release feeds only; user URLs are rejected.
-          think_interval_seconds: 900
-          discovery_feeds:
-            - https://github.com/moeru-ai/airi/releases.atom
-            - https://github.com/mindcraft-bots/mindcraft/releases.atom
-            - https://github.com/SillyTavern/SillyTavern/releases.atom
+        stickers:
+          enabled: true
+          auto_collect: true
+          auto_send: true
+          min_confidence: 0.95
+          send_cooldown_seconds: 60
+          max_per_group: 64
+          retention_days: 30
         status_model: deepseek/deepseek-v4.1-flash
         status_reasoning: low
         auto_pair:

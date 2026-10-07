@@ -128,7 +128,7 @@ class PollStoreTests(unittest.TestCase):
             for _ in range(2):
                 migrated = Store(path, member_secret="test-only-secret")
                 try:
-                    self.assertEqual(migrated.db.execute("PRAGMA user_version").fetchone()[0], 5)
+                    self.assertEqual(migrated.db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
                     self.assertEqual(migrated.get_history("g")[0]["text"], "保留历史")
                     self.assertEqual(migrated.list_member_memory_facts("g", "u")[0]["fact_value"], "保留项目")
                     self.assertIn("保留宠物", migrated.db.execute("SELECT payload FROM character_state").fetchone()[0])
@@ -208,7 +208,6 @@ class PollIngressTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0)
                 self.assertEqual(list(self.store.db.iterdump()), before)
                 self.assertEqual(self.adapter.sent, [])
-                self.assertEqual(handler.character.targets, {})
 
     async def test_revote_group_isolation_audit_privacy_close_and_forget_commands(self):
         handler = build_handler(Context(), self.store)

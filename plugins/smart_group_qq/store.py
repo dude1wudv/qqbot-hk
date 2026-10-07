@@ -23,9 +23,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from .expressions import STICKER_CATEGORIES
+
 
 PENDING_STALE_SECONDS = 300.0
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
     re.compile(r"\bghp_[A-Za-z0-9]{12,}\b"),
@@ -301,6 +303,40 @@ class Store:
             );
             """
         )
+        self.db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS group_stickers (
+                group_id TEXT NOT NULL, digest TEXT NOT NULL,
+                category TEXT NOT NULL, caption TEXT NOT NULL,
+                mime_type TEXT NOT NULL, image_data BLOB NOT NULL,
+                created REAL NOT NULL, expires REAL NOT NULL,
+                last_used REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY(group_id,digest)
+            );
+            CREATE INDEX IF NOT EXISTS idx_group_stickers_category
+                ON group_stickers(group_id,category,expires,last_used);
+            CREATE TABLE IF NOT EXISTS group_sticker_sources (
+                group_id TEXT NOT NULL, digest TEXT NOT NULL, member_ref TEXT NOT NULL,
+                PRIMARY KEY(group_id,digest,member_ref),
+                FOREIGN KEY(group_id,digest) REFERENCES group_stickers(group_id,digest) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS group_sticker_delivery (
+                group_id TEXT PRIMARY KEY, last_attempt REAL NOT NULL,
+                blocked INTEGER NOT NULL DEFAULT 0
+            );
+            """
+        )
+        if stored_schema_version < 6:
+            # Retire only the removed feature's generated data, not member goals or history.
+            self.db.execute("DELETE FROM character_items WHERE kind='discovery'")
+            self.db.execute(
+                "DELETE FROM character_items WHERE kind='goal' AND owner='' AND text=?",
+                ("发现值得一起玩的开源 AI 项目，关注 AIRI、Mindcraft 和 SillyTavern 的新发布",),
+            )
+            self.db.execute(
+                "UPDATE character_state SET payload=json_remove(payload,"
+                "'$.next_tick','$.failures','$.proactive','$.platform_blocked') WHERE json_valid(payload)"
+            )
         if stored_schema_version < SCHEMA_VERSION:
             self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.db.commit()
@@ -1117,6 +1153,8 @@ class Store:
                 "WHERE group_id=? AND member_ref=?",
                 (value, str(group_id), ref),
             )
+            if value == "opted_out":
+                self._remove_member_stickers(db, str(group_id), ref)
             row = db.execute(
                 "SELECT * FROM group_members WHERE group_id=? AND member_ref=?",
                 (str(group_id), ref),
@@ -1211,10 +1249,133 @@ class Store:
             ]
             return result
 
+    @staticmethod
+    def _remove_member_stickers(db: sqlite3.Connection, group_id: str, member_ref: str) -> None:
+        db.execute(
+            "DELETE FROM group_sticker_sources WHERE group_id=? AND member_ref=?",
+            (group_id, member_ref),
+        )
+        db.execute(
+            "DELETE FROM group_stickers WHERE group_id=? AND NOT EXISTS "
+            "(SELECT 1 FROM group_sticker_sources s WHERE s.group_id=group_stickers.group_id "
+            "AND s.digest=group_stickers.digest)",
+            (group_id,),
+        )
+
+    def add_group_sticker(
+        self, group_id: str, member_id: str, image_data: bytes, mime_type: str,
+        category: str, caption: str, *, expected_epoch: int, expected_profile_version: int,
+        retention_days: int = 30, max_per_group: int = 64, max_total: int = 256,
+    ) -> bool:
+        """Persist an already screened, metadata-free image; never source URLs or raw IDs."""
+        if (not group_id or str(group_id).startswith("dm:") or not member_id
+                or not isinstance(image_data, bytes) or not 0 < len(image_data) <= 512 * 1024
+                or mime_type not in {"image/png", "image/gif"} or category not in STICKER_CATEGORIES):
+            raise ValueError("invalid screened sticker")
+        caption = self._bounded_text(caption, 80)
+        digest = hashlib.sha256(image_data).hexdigest()
+        ref = self.member_ref_for(group_id, member_id)
+        now = time.time()
+        with self.transaction() as db:
+            member = self.get_group_member(group_id, member_ref=ref)
+            if (self.memory_epoch(group_id) != expected_epoch or not member
+                    or member["consent_status"] == "opted_out" or member.get("deleted_at") is not None
+                    or member["profile_version"] != expected_profile_version):
+                return False
+            db.execute("DELETE FROM group_stickers WHERE expires<=?", (now,))
+            db.execute(
+                "INSERT INTO group_stickers(group_id,digest,category,caption,mime_type,image_data,created,expires) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(group_id,digest) "
+                "DO UPDATE SET expires=MAX(group_stickers.expires,excluded.expires)",
+                (group_id, digest, category, caption, mime_type, image_data, now,
+                 now + min(90, max(1, int(retention_days))) * 86400),
+            )
+            db.execute("INSERT OR IGNORE INTO group_sticker_sources VALUES(?,?,?)", (group_id, digest, ref))
+            db.execute(
+                "DELETE FROM group_stickers WHERE group_id=? AND digest NOT IN "
+                "(SELECT digest FROM group_stickers WHERE group_id=? ORDER BY last_used DESC,created DESC,digest LIMIT ?)",
+                (group_id, group_id, min(128, max(1, int(max_per_group)))),
+            )
+            db.execute(
+                "DELETE FROM group_stickers WHERE (group_id,digest) NOT IN "
+                "(SELECT group_id,digest FROM group_stickers ORDER BY last_used DESC,created DESC,digest LIMIT ?)",
+                (min(256, max(1, int(max_total))),),
+            )
+            return db.execute(
+                "SELECT 1 FROM group_stickers WHERE group_id=? AND digest=?", (group_id, digest)
+            ).fetchone() is not None
+
+    def list_group_stickers(self, group_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(row) for row in self.db.execute(
+                "SELECT category,COUNT(*) AS count FROM group_stickers WHERE group_id=? AND expires>? "
+                "GROUP BY category ORDER BY category", (str(group_id), time.time()),
+            )]
+
+    def group_sticker_metadata(self, group_id: str, digest: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.db.execute(
+                "SELECT category,caption FROM group_stickers WHERE group_id=? AND digest=? AND expires>?",
+                (group_id, digest, time.time()),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def set_sticker_platform_block(self, group_id: str, blocked: bool) -> None:
+        with self.transaction() as db:
+            db.execute(
+                "INSERT INTO group_sticker_delivery(group_id,last_attempt,blocked) VALUES(?,0,?) "
+                "ON CONFLICT(group_id) DO UPDATE SET blocked=excluded.blocked",
+                (group_id, int(blocked)),
+            )
+
+    def sticker_platform_blocked(self, group_id: str) -> bool:
+        with self._lock:
+            row = self.db.execute("SELECT blocked FROM group_sticker_delivery WHERE group_id=?", (group_id,)).fetchone()
+            return bool(row and row[0])
+
+    def reserve_group_sticker(
+        self, group_id: str, category: str, *, expected_epoch: int, cooldown_seconds: float = 0,
+    ) -> dict[str, Any] | None:
+        """Reserve before transport; even an ambiguous delivery consumes the cooldown."""
+        now = time.time()
+        with self.transaction() as db:
+            if self.memory_epoch(group_id) != expected_epoch:
+                return None
+            prior = db.execute(
+                "SELECT last_attempt,blocked FROM group_sticker_delivery WHERE group_id=?", (group_id,)
+            ).fetchone()
+            if prior and (prior[1] or now - prior[0] < max(0, float(cooldown_seconds))):
+                return None
+            row = db.execute(
+                "SELECT digest,mime_type,image_data FROM group_stickers "
+                "WHERE group_id=? AND category=? AND expires>? ORDER BY last_used,created,digest LIMIT 1",
+                (group_id, category, now),
+            ).fetchone()
+            if row is None:
+                return None
+            db.execute(
+                "UPDATE group_stickers SET last_used=? WHERE group_id=? AND digest=?",
+                (now, group_id, row["digest"]),
+            )
+            db.execute(
+                "INSERT INTO group_sticker_delivery(group_id,last_attempt) VALUES(?,?) ON CONFLICT(group_id) "
+                "DO UPDATE SET last_attempt=excluded.last_attempt", (group_id, now),
+            )
+            return dict(row)
+
+    def purge_group_stickers(self) -> int:
+        with self.transaction() as db:
+            expired = db.execute("DELETE FROM group_stickers WHERE expires<=?", (time.time(),))
+            db.execute(
+                "DELETE FROM group_sticker_delivery WHERE blocked=0 AND group_id NOT IN (SELECT group_id FROM group_stickers)"
+            )
+            return max(0, expired.rowcount)
+
     def forget_group_member(self, group_id: str, member_id: str, *, hard_delete: bool = True) -> int:
         ref, _ = self._member_identity(group_id, member_id)
         with self.transaction() as db:
             self._advance_memory_epoch(group_id)
+            self._remove_member_stickers(db, str(group_id), ref)
             db.execute(
                 "DELETE FROM group_poll_votes WHERE member_ref=? AND poll_id IN "
                 "(SELECT poll_id FROM group_polls WHERE group_id=?)",
@@ -1224,7 +1385,7 @@ class Store:
                 "DELETE FROM group_polls WHERE group_id=? AND creator_ref=? AND status!='closed'",
                 (str(group_id), ref),
             )
-            db.execute("DELETE FROM character_items WHERE scope=? AND (owner=? OR kind IN ('discovery','episode'))", (str(group_id), ref))
+            db.execute("DELETE FROM character_items WHERE scope=? AND (owner=? OR kind='episode')", (str(group_id), ref))
             db.execute("DELETE FROM character_relations WHERE scope=? AND owner=?", (str(group_id), ref))
             db.execute("DELETE FROM character_commands WHERE scope=?", (str(group_id),))
             db.execute("DELETE FROM character_state WHERE scope=?", (str(group_id),))

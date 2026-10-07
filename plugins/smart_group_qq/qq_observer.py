@@ -382,6 +382,7 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
     record["_dispatch_payload"] = dict(data)
     record["_dispatch_message"] = dispatch_message
     record["_load_attachments"] = getattr(adapter, "_process_attachments", None)
+    record["_sticker_is_allowed"] = lambda: bool(allowed(group_id, member_id))
     if callable(should_reply) and callable(dispatch_message):
         try:
             if await should_reply(record):

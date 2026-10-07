@@ -7,6 +7,7 @@ import os
 import tempfile
 
 MOODS = {"开心", "疑惑", "无语", "鼓励", "晚安"}
+STICKER_CATEGORIES = ("开心", "疑惑", "无语", "鼓励", "晚安", "赞同", "惊讶", "难过", "感谢", "庆祝")
 
 
 def render_expression(

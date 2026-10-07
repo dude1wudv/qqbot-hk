@@ -1,10 +1,8 @@
 import asyncio
 import json
-import io
 from pathlib import Path
 import sys
 import tempfile
-import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -15,8 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins"))
 from smart_group_qq import build_handler
 from smart_group_qq.character import ResidentCharacter, command_parts, _conversation_style
 from smart_group_qq.attention import AttentionManager
-from smart_group_qq.memory import GroupMemory
-from smart_group_qq.policy import PolicyEngine
 from smart_group_qq.store import Store
 
 
@@ -243,192 +239,28 @@ class CharacterTests(unittest.TestCase):
         self.assertIsNone(command_parts("他说安静一会儿"))
         self.assertIsNone(command_parts("“安静一会儿”"))
 
+    def test_removed_github_push_surface_keeps_role_and_chat_controls(self):
+        config = yaml.safe_load(
+            (Path(__file__).resolve().parents[1] / "config/hermes-config.yaml").read_text(encoding="utf-8")
+        )["plugins"]["entries"]["smart_group_qq"]["settings"]["character"]
+        self.assertFalse({"proactive_enabled", "discovery_feeds", "think_interval_seconds"} & config.keys())
+        for name in ("tick", "bind", "_discoveries", "platform_event", "targets"):
+            self.assertFalse(hasattr(self.char, name))
+        for command in ("/探索", "停止主动分享", "开启主动分享"):
+            self.assertIsNone(command_parts(command))
+        role = self.char.command("g", "u", "/角色", "role")
+        self.assertIn("/宠物", role)
+        self.assertNotIn("探索", role)
+        self.assertNotIn("主动分享", role)
+        self.char.command("g", "u", "安静一会儿", "quiet")
+        self.assertTrue(self.char.paused("g"))
+
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store = Store(member_secret="test-only-secret")
         self.addCleanup(self.store.close)
-        self.char = ResidentCharacter(self.store, {"think_interval_seconds": 30})
-        self.url = "https://github.com/moeru-ai/airi/releases/tag/v-test"
-        self.char._discoveries = AsyncMock(
-            return_value=[
-                {"title": "AIRI release", "url": self.url, "published": "2026-09-22"}
-            ]
-        )
-        self.adapter = SimpleNamespace(
-            _is_group_allowed=lambda g, u: True,
-            _send_group_text=AsyncMock(return_value=SimpleNamespace(success=True)),
-        )
-        self.char.bind("g", self.adapter, "u")
-        self.llm = SimpleNamespace(
-            acomplete_structured=AsyncMock(
-                return_value=SimpleNamespace(
-                    parsed={
-                        "share": True,
-                        "message": "AIRI 有新的发布记录。",
-                        "source_url": self.url,
-                    }
-                )
-            )
-        )
-        self.ctx = SimpleNamespace(llm=self.llm)
-        self.memory = GroupMemory(self.store)
-        self.policy = PolicyEngine()
 
-    async def test_grounded_share_once_after_restart_and_goal_progress(self):
-        self.char.command("g", "u", "/目标 关注 AIRI", "1")
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.adapter._send_group_text.assert_awaited_once_with(
-            "g", "AIRI 有新的发布记录。\n" + self.url, reply_to=None
-        )
-        self.assertIn(self.url, self.char.command("g", "u", "/目标", "2"))
-        restarted = ResidentCharacter(self.store)
-        restarted._discoveries = self.char._discoveries
-        restarted.bind("g", self.adapter, "u")
-        restarted.command("g", "u", "/探索", "3")
-        await restarted.tick(self.ctx, self.policy, self.memory)
-        self.assertEqual(self.adapter._send_group_text.await_count, 1)
-
-    async def test_no_source_no_send(self):
-        self.llm.acomplete_structured.return_value = SimpleNamespace(
-            parsed={
-                "share": True,
-                "message": "编造发布",
-                "source_url": "https://invalid.example",
-            }
-        )
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.adapter._send_group_text.assert_not_awaited()
-
-    async def test_pause_during_generation_cancels_send(self):
-        async def complete(**kwargs):
-            self.char.command("g", "u", "安静一会儿", "pause")
-            return SimpleNamespace(
-                parsed={"share": True, "message": "新的发布", "source_url": self.url}
-            )
-
-        self.llm.acomplete_structured.side_effect = complete
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.adapter._send_group_text.assert_not_awaited()
-
-    async def test_forget_during_generation_cancels_send(self):
-        async def complete(**kwargs):
-            self.store.forget_group_member("g", "u")
-            return SimpleNamespace(
-                parsed={"share": True, "message": "新的发布", "source_url": self.url}
-            )
-
-        self.llm.acomplete_structured.side_effect = complete
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.adapter._send_group_text.assert_not_awaited()
-
-    async def test_platform_revocation_and_dm_never_send(self):
-        self.char.platform_event("g", "GROUP_MSG_REJECT")
-        self.char.bind("dm:g", self.adapter, "u")
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.adapter._send_group_text.assert_not_awaited()
-        self.char.platform_event("g", "GROUP_MSG_RECEIVE")
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.assertEqual(self.adapter._send_group_text.await_count, 1)
-
-    def deployed_character_config(self):
-        config = yaml.safe_load(
-            (Path(__file__).resolve().parents[1] / "config/hermes-config.yaml").read_text(encoding="utf-8")
-        )
-        return config["plugins"]["entries"]["smart_group_qq"]["settings"]["character"]
-
-    async def test_real_config_atom_feed_shares_once_with_persisted_source(self):
-        config = self.deployed_character_config()
-        self.assertTrue(config["proactive_enabled"])
-        self.assertEqual(len(config["discovery_feeds"]), 3)
-        character = ResidentCharacter(self.store, config)
-        character.bind("g", self.adapter, "u")
-        atom = (
-            '<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>AIRI release</title>'
-            f'<link href="{self.url}"/><updated>2026-10-06T00:00:00Z</updated></entry></feed>'
-        ).encode()
-
-        class FakeOpener:
-            def open(self, request, timeout):
-                self_url = request.full_url
-                if self_url == config["discovery_feeds"][0]:
-                    return io.BytesIO(atom)
-                return io.BytesIO(b'<feed xmlns="http://www.w3.org/2005/Atom"/>')
-
-        with patch("smart_group_qq.character.urllib.request.build_opener", return_value=FakeOpener()) as opener:
-            await character.tick(self.ctx, self.policy, self.memory)
-            self.adapter._send_group_text.assert_awaited_once()
-            rows = self.store.db.execute(
-                "SELECT evidence,status FROM character_items WHERE scope='g' AND kind='discovery'"
-            ).fetchall()
-            self.assertEqual([(r["evidence"], r["status"]) for r in rows], [(self.url, "shared")])
-            character.command("g", "u", "/探索", "real-feed-next")
-            await character.tick(self.ctx, self.policy, self.memory)
-            self.assertEqual(self.adapter._send_group_text.await_count, 1)
-            self.assertEqual(self.llm.acomplete_structured.await_count, 1)
-            self.assertEqual(opener.call_count, 3)
-
-    async def test_real_config_controls_stop_before_feed_or_model(self):
-        for control in ("停止主动分享", "only", "安静一会儿", "少说一点"):
-            with self.subTest(control=control):
-                character = ResidentCharacter(self.store, self.deployed_character_config())
-                scope = "control-" + control
-                character.bind(scope, self.adapter, "u")
-                if control == "only":
-                    character.set_group_mode(scope, "only")
-                else:
-                    character.command(scope, "u", control, "pause-" + control)
-                with patch("smart_group_qq.character.read_feed") as feed:
-                    await character.tick(self.ctx, self.policy, self.memory)
-                    feed.assert_not_called()
-                self.assertIn("本群暂停", character.command(scope, "u", "/角色", "role-" + control))
-        self.llm.acomplete_structured.assert_not_awaited()
-        self.adapter._send_group_text.assert_not_awaited()
-
-    async def test_no_configured_feed_avoids_model_and_network(self):
-        config = self.deployed_character_config()
-        config["discovery_feeds"] = []
-        character = ResidentCharacter(self.store, config)
-        character.bind("g", self.adapter, "u")
-        with patch("smart_group_qq.character.read_feed") as feed:
-            await character.tick(self.ctx, self.policy, self.memory)
-            feed.assert_not_called()
-        self.llm.acomplete_structured.assert_not_awaited()
-        self.adapter._send_group_text.assert_not_awaited()
-
-    async def test_role_status_reports_proactive_state_and_platform_block(self):
-        status = self.char.command("g", "u", "/角色", "role-status")
-        self.assertIn("主动分享：全局可用", status)
-        self.assertIn("本群开启", status)
-        self.assertIn("下一次探索：", status)
-        self.char.platform_event("g", "GROUP_MSG_REJECT")
-        status = self.char.command("g", "u", "/角色", "role-status-2")
-        self.assertIn("平台阻断：是", status)
-
-
-    async def test_send_failure_backs_off_and_does_not_repeat_ambiguous_delivery(self):
-        self.adapter._send_group_text.side_effect = RuntimeError(
-            "unknown delivery result"
-        )
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.assertGreater(self.char.state("g")["next_tick"], time.time() + 30)
-        self.char.command("g", "u", "/探索", "retry")
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.assertEqual(self.adapter._send_group_text.await_count, 1)
-
-    async def test_pause_during_reconnection_prevents_transport(self):
-        async def connected():
-            self.char.command("g", "u", "安静一会儿", "connection-pause")
-            return True
-
-        self.adapter._ensure_connected = connected
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.adapter._send_group_text.assert_not_awaited()
-
-    async def test_no_data_avoids_model_calls(self):
-        self.char._discoveries.return_value = []
-        await self.char.tick(self.ctx, self.policy, self.memory)
-        self.llm.acomplete_structured.assert_not_awaited()
 
     async def test_private_success_records_scoped_episode_and_forget_cancels_old_reply(
         self,

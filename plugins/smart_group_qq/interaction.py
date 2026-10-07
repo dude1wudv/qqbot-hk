@@ -13,6 +13,7 @@ import unicodedata
 from typing import Sequence
 
 from .commands import clean_text, normalize_command_text
+from .expressions import STICKER_CATEGORIES
 
 MODELS = {
     "deepseek": "deepseek",
@@ -50,7 +51,7 @@ NO_ARGS = {
     "角色",
     "经历",
     "梗簿",
-    "探索",
+    "表情库",
     "宠物",
     "喂食",
     "摸摸",
@@ -188,11 +189,6 @@ def resolve_interaction(
         "恢复聊天": "恢复聊天",
         "可以说话了": "恢复聊天",
         "少说一点": "少说一点",
-        "停止主动分享": "停止主动分享",
-        "别主动推送了": "停止主动分享",
-        "关闭主动分享": "停止主动分享",
-        "开启主动分享": "开启主动分享",
-        "恢复主动分享": "开启主动分享",
         "看看宠物": "/宠物",
         "看看小电团": "/宠物",
         "查看我的目标": "/目标",
@@ -205,6 +201,8 @@ def resolve_interaction(
         "结束剧情": "/结束剧情",
         "查看我的记忆": "/我的记忆",
         "看看你记住了我什么": "/我的记忆",
+        "看看表情库": "/表情库",
+        "查看表情包分类": "/表情库",
         "停止记住我": "/停止记忆",
         "别再记住我的信息": "/停止记忆",
         "删除我的记忆": "/忘记我",
@@ -214,8 +212,6 @@ def resolve_interaction(
         "查看当前模型": "/model",
         "现在用的什么模型": "/model",
         "当前推理强度是多少": "/reasoning",
-        "看看你有什么新发现": "/探索",
-        "去看看有没有新发现": "/探索",
     }
     if value in fixed:
         canonical = fixed[value]
@@ -310,7 +306,7 @@ def resolve_interaction(
             "/投票 " + {"一": "1", "二": "2"}.get(match[1], match[1]), True
         )
     match = re.fullmatch(
-        r"(?:发|来)(?:个|一个)(开心|疑惑|无语|鼓励|晚安)(?:的)?表情(?:包)?", value
+        r"(?:发|来)(?:个|一个)(" + "|".join(STICKER_CATEGORIES) + r")(?:的)?表情(?:包)?", value
     )
     if match:
         return Interaction("/表情 " + match[1], True)

@@ -30,7 +30,7 @@ from .duty_roster import duty_roster_text
 from .formatter import format_for_qq, split_message, split_group_reply
 from .attention import AttentionManager, AttentionMode
 from .character import ResidentCharacter, command_parts
-from .expressions import render_expression
+from .expressions import MOODS, STICKER_CATEGORIES, render_expression
 from .interaction import resolve_interaction, CONFIG_ERROR
 from .knowledge import KnowledgeBase, KnowledgeError, kb_help_text, parse_kb_command
 from .memory import GroupMemory, normalize_member_message
@@ -41,6 +41,7 @@ from .qq_observer import install_nonmention_observer
 from .response import ReplyRegistry, ReplyRequest
 from .polls import PollService, parse_poll_command
 from .store import Store
+from .stickers import StickerService
 
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "smart_group_qq"
@@ -478,7 +479,8 @@ def _start_maintenance(
                     group_id = str(item["group_id"])
                     if memory.needs_refresh(group_id, now=now):
                         await memory.refresh_ai(ctx, group_id)
-                await handler.character.tick(ctx, handler.policy, memory)
+                handler.character.maintain()
+                store.purge_group_stickers()
                 registry = getattr(handler, "response_registry", None)
                 if registry is not None:
                     registry.cleanup()
@@ -613,10 +615,14 @@ def build_handler(ctx: Any, store: Store):
         "member_memory": ctx.get_config("member_memory", {}),
         "knowledge": ctx.get_config("knowledge", {}),
         "media_cache_roots": ctx.get_config("media_cache_roots", ["/opt/data/cache"]),
+        "stickers": ctx.get_config("stickers", {}),
     }
     policy = PolicyEngine(settings, logger=logger)
     polls = PollService(store)
     character = ResidentCharacter(store, ctx.get_config("character", {}))
+    stickers = StickerService(
+        ctx, store, settings["stickers"], roots=settings["media_cache_roots"],
+    )
     memory_cfg = settings.get("memory") if isinstance(settings.get("memory"), Mapping) else {}
     ambient_cfg = settings.get("ambient") if isinstance(settings.get("ambient"), Mapping) else {}
     participation_cfg = ambient_cfg.get("participation")
@@ -700,6 +706,7 @@ def build_handler(ctx: Any, store: Store):
                 "reply_sent", chat_id=record.group_id, message_id=record.message_id,
                 source=record.source_kind,
             )
+            stickers.queue_reply(record)
 
     response_registry = ReplyRegistry(store.memory_epoch, store.record_audit, delivered)
 
@@ -793,6 +800,12 @@ def build_handler(ctx: Any, store: Store):
         if not group_id or (not text and not image_paths):
             return {"action": "allow"}
         character_scope = group_id if is_group else "dm:" + group_id
+
+        def sticker_allowed():
+            allowed = getattr(adapter, "_is_group_allowed", None)
+            return bool(is_group and member_id and authorized(source)
+                        and callable(allowed) and allowed(group_id, member_id))
+
         direct_control = official or not is_group or bool(
             isinstance(raw_message, Mapping) and raw_message.get("_smart_group_qq_direct")
         )
@@ -812,8 +825,6 @@ def build_handler(ctx: Any, store: Store):
             text = interaction.text
         character_text = text
         character_command = command_parts(character_text)
-        if is_group and not policy.static(text).blocked:
-            character.bind(group_id, adapter, member_id)
         if not is_group and not text.startswith(("/", "／")) and not interaction and not character_command and not policy.static(text).blocked:
             background = character.context(character_scope, member_id, text)
             if not background:
@@ -882,9 +893,9 @@ def build_handler(ctx: Any, store: Store):
             _cancel_batch(group_id)
             response_registry.cancel_group(group_id, ordinary_only=True)
             reply = (
-                "已切换为仅 @ 模式，普通群聊不再自动响应。主动 GitHub 推送已关闭。"
+                "已切换为仅 @ 模式，普通群聊不再自动响应。"
                 if text.lower() == "/only"
-                else "已恢复群聊自动参与；仍需 @ 才执行管理命令，主动分享由本群开关、安静状态与平台权限决定。"
+                else "已恢复群聊自动参与；仍需 @ 才执行管理命令，安静状态与平台权限仍有效。"
             )
 
         elif interaction and interaction.error:
@@ -904,8 +915,15 @@ def build_handler(ctx: Any, store: Store):
         elif character_command and direct_control:
             claim_action = "character:" + character_command[0]
             try:
-                reply = character.command(character_scope, member_id, character_text, message_id)
-                if character_command[0] in {"安静", "安静一会儿", "安静一下", "少说一点", "停止主动分享"}:
+                name, argument = character_command
+                if name == "表情库" or (name == "表情" and not argument):
+                    reply = stickers.inventory(character_scope)
+                elif name == "表情" and argument not in MOODS:
+                    reply = (f"本群还没有「{argument}」类表情包，可用 /表情库 查看库存。"
+                             if argument in STICKER_CATEGORIES else stickers.inventory(character_scope))
+                else:
+                    reply = character.command(character_scope, member_id, character_text, message_id)
+                if name in {"安静", "安静一会儿", "安静一下", "少说一点"}:
                     _cancel_batch(group_id)
                     response_registry.cancel_group(group_id, ordinary_only=True)
             except ValueError:
@@ -1038,6 +1056,12 @@ def build_handler(ctx: Any, store: Store):
                     claim_action = "keyword:" + str(decision.rule_id or "reply")
                     reply = decision.notice
 
+        if is_group and official and image_paths and not local_command and not static_decision.blocked and not access_denial:
+            stickers.queue_collect(
+                group_id, member_id, message_id, paths=image_paths, allowed=sticker_allowed,
+                message_text=original_text, created_at=_sent_at(getattr(event, "timestamp", None)) or None,
+            )
+
         if reply is not None or generated is not None:
             claim = ("qqbot", message_id, claim_action)
             if not store.claim_message(*claim):
@@ -1046,6 +1070,17 @@ def build_handler(ctx: Any, store: Store):
                 return {"action": "skip", "reason": "duplicate"}
             if claim_action == "character:表情" and character_command[1]:
                 async def send_expression():
+                    if is_group:
+                        stored = await stickers.send_category(
+                            group_id, character_command[1], adapter, reply_to=message_id,
+                            allowed=sticker_allowed, expected_epoch=store.memory_epoch(group_id),
+                        )
+                        if stored is not None:
+                            store.finish_claim(*claim, success=stored)
+                            return
+                    if is_group and not stickers._allowed(sticker_allowed):
+                        store.finish_claim(*claim, success=False)
+                        return
                     path = render_expression(character_command[1])
                     send_image = getattr(adapter, "send_image_file", None)
                     if path and callable(send_image):
@@ -1171,6 +1206,16 @@ def build_handler(ctx: Any, store: Store):
             _schedule_profile_extract(
                 ctx, profiles, store, group_id, member_id, question, message_id, "addressed"
             )
+        sticker_revision = character.state(character_scope)["revision"]
+        sticker_token = batch_tokens.get(group_id, 0)
+
+        def sticker_reply_allowed():
+            state = character.state(character_scope)
+            return (stickers._allowed(sticker_allowed) and not state["quiet_until"] > time.time()
+                    and state["mode"] != "quiet" and state["group_mode"] != "only"
+                    and state["revision"] == sticker_revision and batch_tokens.get(group_id, 0) == sticker_token
+                    and store.memory_epoch(group_id) == epoch)
+
         registered = response_registry.register(
             ReplyRequest(
                 request_ref=request_ref,
@@ -1182,6 +1227,8 @@ def build_handler(ctx: Any, store: Store):
                 merged_ids=batch_ids,
                 question=question,
                 direct=direct,
+                sticker_adapter=adapter,
+                sticker_guard=sticker_reply_allowed,
             ),
             official=official,
         )
@@ -1634,6 +1681,15 @@ def build_handler(ctx: Any, store: Store):
         text = str(record.get("text") or "").strip()
         if not group_id or not message_id or (not text and not image_attachments(record.get("_dispatch_payload"))):
             return False
+        if not clean_text(text).startswith(("/", "／")) and not policy.static(text).blocked:
+            attachments = image_attachments(record.get("_dispatch_payload"))
+            if attachments:
+                stickers.queue_collect(
+                    group_id, str(record.get("member_id") or ""), message_id,
+                    loader=record.get("_load_attachments"), attachments=attachments,
+                    allowed=record.get("_sticker_is_allowed"),
+                    message_text=text, created_at=_sent_at(record.get("timestamp")) or None,
+                )
         if clean_text(text).startswith(("/", "／")):
             named_bot = any(
                 re.match(r"^@" + re.escape(str(word)) + r"(?=[\s/／，,：:])", text, re.I)
@@ -1684,7 +1740,7 @@ def build_handler(ctx: Any, store: Store):
             discovered_groups.pop(next(iter(discovered_groups)))
 
     observe_nonmention.discover_group = discover_group
-    observe_nonmention.platform_event = character.platform_event
+    observe_nonmention.platform_event = stickers.platform_event
 
     observe_nonmention.queue_max_size = int(ambient_cfg.get("queue_max_size", 2000))
 
@@ -1787,6 +1843,7 @@ def build_handler(ctx: Any, store: Store):
     handle.policy = policy
     handle.attention = attention
     handle.response_registry = response_registry
+    handle.stickers = stickers
     handle.observe_nonmention = observe_nonmention
     handle.transform_llm_output = transform_llm_output
     handle.post_llm_call = post_llm_call

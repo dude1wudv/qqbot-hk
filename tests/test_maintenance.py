@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
@@ -24,7 +24,7 @@ class MaintenanceTests(unittest.TestCase):
         store = MagicMock()
         store.list_memory_backlog_groups.return_value = []
         handler = MagicMock()
-        handler.character.tick = AsyncMock(side_effect=[RuntimeError("temporary"), None])
+        handler.character.maintain = MagicMock(side_effect=[RuntimeError("temporary"), None])
         storage = ModuleType("plugins.plugin_storage")
         storage.plugin_db = MagicMock()
         with patch.dict(sys.modules, {"plugins.plugin_storage": storage}), \
@@ -63,7 +63,7 @@ class MaintenanceTests(unittest.TestCase):
                 self.assertIs(ctx._smart_group_qq_maintenance_task, task)
                 ctx.spawn_task.assert_called_once()
                 await asyncio.wait_for(ready.wait(), 2)
-                self.assertEqual(handler.character.tick.await_count, 2)
+                self.assertEqual(handler.character.maintain.call_count, 2)
                 store.record_audit.assert_called_once_with("maintenance_ready", source="gateway_startup")
                 task.cancel()
                 with self.assertRaises(asyncio.CancelledError):

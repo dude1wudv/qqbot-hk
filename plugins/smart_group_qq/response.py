@@ -121,6 +121,8 @@ class ReplyRequest:
     sent_message_ids: list[str] = field(default_factory=list)
     send_lock: Any = field(default_factory=asyncio.Lock)
     last_send_result: Any = None
+    sticker_adapter: Any = None
+    sticker_guard: Callable[[], bool] | None = None
 
 
 class ReplyRegistry:

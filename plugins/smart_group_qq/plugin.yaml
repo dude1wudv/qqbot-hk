@@ -1,6 +1,6 @@
 name: smart_group_qq
-version: 1.4.0
-description: Hermes-native QQ group governance, durable AI and member memory, RAG and ambient observer
+version: 1.5.0
+description: Hermes-native QQ governance, durable memory, resident character and safe group-local sticker collection
 entrypoint: __init__:register
 hooks:
   - pre_gateway_dispatch

@@ -346,15 +346,16 @@ if not isinstance(plugin_settings, Mapping):
 character_config = plugin_settings.get("character")
 if not isinstance(character_config, Mapping):
     raise SystemExit("smart_group_qq character config is missing")
-if character_config.get("proactive_enabled") is not True:
-    raise SystemExit("character proactive sharing must be enabled")
-expected_feeds = [
-    "https://github.com/moeru-ai/airi/releases.atom",
-    "https://github.com/mindcraft-bots/mindcraft/releases.atom",
-    "https://github.com/SillyTavern/SillyTavern/releases.atom",
-]
-if character_config.get("discovery_feeds") != expected_feeds:
-    raise SystemExit("character discovery feeds are not the fixed release sources")
+if any(name in character_config for name in ("proactive_enabled", "discovery_feeds", "think_interval_seconds")):
+    raise SystemExit("removed GitHub push configuration is still present")
+sticker_config = plugin_settings.get("stickers")
+if not isinstance(sticker_config, Mapping) or any(
+    sticker_config.get(name) is not True for name in ("enabled", "auto_collect", "auto_send")
+):
+    raise SystemExit("group sticker collection and contextual sending must be enabled")
+if (sticker_config.get("min_confidence") != 0.95 or sticker_config.get("send_cooldown_seconds") != 60
+        or sticker_config.get("max_per_group") != 64 or sticker_config.get("retention_days") != 30):
+    raise SystemExit("group sticker safety limits are invalid")
 auto_pair = plugin_settings.get("auto_pair")
 if not isinstance(auto_pair, Mapping) or auto_pair.get("enabled") is not False or "until_utc" in auto_pair:
     raise SystemExit("temporary QQ auto-pair configuration is still enabled")
@@ -497,7 +498,7 @@ with sqlite3.connect(db_path) as connection:
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise SystemExit("plugin database integrity check failed")
     schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-    if schema_version != 5:
+    if schema_version != 6:
         raise SystemExit("plugin database schema version does not match this release")
     foreign_key_errors = list(connection.execute("PRAGMA foreign_key_check"))
     if foreign_key_errors:
@@ -514,9 +515,16 @@ with sqlite3.connect(db_path) as connection:
         "group_memory_epochs", "character_state", "character_items",
         "character_relations", "character_commands", "group_polls",
         "group_poll_options", "group_poll_votes",
+        "group_stickers", "group_sticker_sources", "group_sticker_delivery",
     }
     if not required_tables.issubset(tables):
         raise SystemExit("plugin memory/knowledge schema is incomplete")
+    if connection.execute("SELECT 1 FROM character_items WHERE kind='discovery' LIMIT 1").fetchone():
+        raise SystemExit("removed GitHub push discovery data remains")
+    if int(connection.execute("SELECT COUNT(*) FROM group_stickers").fetchone()[0]) > 256:
+        raise SystemExit("group sticker global bound exceeded")
+    if connection.execute("SELECT 1 FROM group_stickers WHERE length(image_data)>524288 LIMIT 1").fetchone():
+        raise SystemExit("group sticker byte bound exceeded")
     memory_columns = {row[1] for row in connection.execute("PRAGMA table_info(group_memories)")}
     if not {"structured_json", "last_history_id", "model", "version"}.issubset(memory_columns):
         raise SystemExit("plugin AI memory migration is incomplete")
@@ -534,13 +542,14 @@ with sqlite3.connect(db_path) as connection:
         raise SystemExit("member memory fact schema is incomplete")
     indexes = {
         row[1]
-        for table in ("group_history", "group_memories", "compaction_jobs", "group_members", "member_memory_facts", "group_polls")
+        for table in ("group_history", "group_memories", "compaction_jobs", "group_members", "member_memory_facts", "group_polls", "group_stickers")
         for row in connection.execute(f"PRAGMA index_list({table})")
     }
     required_indexes = {
         "idx_compaction_jobs_ready", "idx_compaction_jobs_group", "idx_group_members_seen",
         "idx_member_facts_active", "idx_member_facts_key",
         "idx_group_polls_status_expiry", "idx_group_polls_one_open",
+        "idx_group_stickers_category",
     }
     if not required_indexes.issubset(indexes):
         raise SystemExit("member/poll indexes are incomplete")
@@ -598,6 +607,7 @@ print("MEMBER_MEMORY_SCHEMA=ok")
 print("MEMBER_MEMORY_CONFIG=ok")
 print("COMPACTION_SCHEMA=ok")
 print("QQ_GATEWAY=connected")
+print("GITHUB_PUSH=removed STICKER_COLLECTION=enabled STICKER_AUTO_SEND=contextual COOLDOWN_SECONDS=60")
 print("VOICE_INPUT=disabled VOICE_OUTPUT=disabled AUDIO_ENV=absent")
 PY
 docker exec hermes-qqbot hermes doctor >/tmp/hermes-qqbot-doctor.txt
