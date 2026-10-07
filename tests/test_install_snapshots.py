@@ -127,6 +127,22 @@ class InstallSnapshotTests(unittest.TestCase):
                 exec(guard, {"Mapping": Mapping, "plugin_settings": {"auto_pair": auto_pair}})
         self.assertNotIn("datetime.fromisoformat(until_raw", block)
 
+    def test_plugin_registration_deadline_is_finite_and_checked(self):
+        config = yaml.safe_load((ROOT / "config/hermes-config.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(config["plugins"]["load_timeout_seconds"], 60)
+        verify = (ROOT / "scripts/verify-server.sh").read_text(encoding="utf-8")
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY", verify, re.DOTALL)
+        module = ast.parse(next(block for block in blocks if "load_timeout_seconds" in block))
+        node = next(
+            node for node in module.body
+            if isinstance(node, ast.If) and "load_timeout_seconds" in ast.unparse(node.test)
+        )
+        guard = compile(ast.Module(body=[node], type_ignores=[]), "plugin-deadline-guard", "exec")
+        exec(guard, {"config": config})
+        for value in (None, 0, -1, 600):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                exec(guard, {"config": {"plugins": {"load_timeout_seconds": value}}})
+
 
 if __name__ == "__main__":
     unittest.main()

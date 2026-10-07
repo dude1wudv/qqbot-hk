@@ -115,6 +115,8 @@ platform_toolsets:
   cli: *qq_toolsets
 
 plugins:
+  # Keep import/register bounded while allowing SQLite setup under disk pressure.
+  load_timeout_seconds: 60
   enabled:
     - smart_group_qq
   entries:

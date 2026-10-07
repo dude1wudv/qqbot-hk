@@ -333,6 +333,9 @@ if config.get("tts"):
     raise SystemExit("TTS provider config must be absent")
 
 
+if (config.get("plugins") or {}).get("load_timeout_seconds") != 60:
+    raise SystemExit("plugin load deadline must remain bounded at 60 seconds")
+
 plugin_settings = (
     (((config.get("plugins") or {}).get("entries") or {}).get("smart_group_qq") or {})
     .get("settings")
