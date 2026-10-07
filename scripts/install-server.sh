@@ -262,7 +262,11 @@ test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}n
 # so deployment success must not depend on the first live QQ event.
 docker exec -i "$service" python - <<'PY'
 import os
+from pathlib import Path
 import sys
+from hermes_cli.env_loader import load_hermes_dotenv
+
+load_hermes_dotenv(hermes_home=Path("/opt/data"), project_env=Path("/opt/hermes/.env"))
 
 sys.path.insert(0, "/opt/data/plugins")
 from smart_group_qq.store import Store
