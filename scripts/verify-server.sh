@@ -165,7 +165,6 @@ from pathlib import Path
 import sqlite3
 import subprocess
 from collections.abc import Mapping
-from datetime import datetime, timezone
 
 required = [
     Path("/opt/data/SOUL.md"),
@@ -473,15 +472,6 @@ from gateway.platforms.qqbot.constants import API_BASE
 if API_BASE.rstrip("/") != "https://api.sgroup.qq.com":
     raise SystemExit("QQ API base is not the production gateway")
 
-auto_pair = (((config.get("plugins") or {}).get("entries") or {}).get("smart_group_qq") or {}).get("settings", {}).get("auto_pair", {})
-until_raw = str(auto_pair.get("until_utc") or "")
-try:
-    until = datetime.fromisoformat(until_raw.replace("Z", "+00:00"))
-except ValueError as exc:
-    raise SystemExit("QQ auto-pair deadline is invalid") from exc
-if until.tzinfo is None or not auto_pair.get("enabled"):
-    raise SystemExit("QQ auto-pair window is not configured")
-auto_pair_state = "active" if datetime.now(timezone.utc) < until.astimezone(timezone.utc) else "expired"
 
 
 declaration = yaml.safe_load(Path("/opt/data/smart-group-schedules.yaml").read_text(encoding="utf-8")) or {}
@@ -594,7 +584,7 @@ gateway = json.loads(Path("/opt/data/gateway_state.json").read_text(encoding="ut
 qq = gateway.get("platforms", {}).get("qqbot", {})
 if gateway.get("gateway_state") != "running" or qq.get("state") != "connected":
     raise SystemExit("QQ gateway is not connected")
-print(f"DM_POLICY=pairing API_BASE=production AUTO_PAIR={auto_pair_state} UNTIL_UTC={until_raw}")
+print("DM_POLICY=pairing API_BASE=production AUTO_PAIR=disabled")
 print("GROUP_ACCESS=all_groups")
 print(f"SCHEDULE_TARGET_COUNT={len(groups)}")
 print(f"PLUGIN_STATUS={plugin.get('status')}")

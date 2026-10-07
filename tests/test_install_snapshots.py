@@ -1,5 +1,7 @@
 import os
+import ast
 from contextlib import closing
+from collections.abc import Mapping
 from pathlib import Path
 import re
 import sqlite3
@@ -9,6 +11,8 @@ import tempfile
 import unittest
 from types import ModuleType
 from unittest.mock import patch
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +106,26 @@ class InstallSnapshotTests(unittest.TestCase):
             with patch.dict(sys.modules, {"hermes_cli.env_loader": loader, "smart_group_qq.store": store_module}):
                 exec(compile(MIGRATION_BLOCK, "explicit-migration", "exec"), {})
         self.assertEqual(calls, ["load", "store", "close"])
+
+    def test_disabled_auto_pair_passes_without_legacy_deadline(self):
+        verify = (ROOT / "scripts/verify-server.sh").read_text(encoding="utf-8")
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY", verify, re.DOTALL)
+        block = next(text for text in blocks if 'auto_pair = plugin_settings.get("auto_pair")' in text)
+        module = ast.parse(block)
+        index = next(
+            i for i, node in enumerate(module.body)
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "auto_pair" for target in node.targets
+            )
+        )
+        guard = compile(ast.Module(body=module.body[index:index + 2], type_ignores=[]), "auto-pair-guard", "exec")
+        config = yaml.safe_load((ROOT / "config/hermes-config.yaml").read_text(encoding="utf-8"))
+        settings = config["plugins"]["entries"]["smart_group_qq"]["settings"]
+        exec(guard, {"Mapping": Mapping, "plugin_settings": settings})
+        for auto_pair in ({}, {"enabled": True}, {"enabled": False, "until_utc": "2026-09-05T08:00:00Z"}):
+            with self.subTest(auto_pair=auto_pair), self.assertRaises(SystemExit):
+                exec(guard, {"Mapping": Mapping, "plugin_settings": {"auto_pair": auto_pair}})
+        self.assertNotIn("datetime.fromisoformat(until_raw", block)
 
 
 if __name__ == "__main__":
