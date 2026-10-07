@@ -128,8 +128,8 @@ class StickerService:
         return True
 
     def platform_event(self, group_id, event_type):
-        if event_type in {"GROUP_MSG_REJECT", "GROUP_DEL_ROBOT", "GROUP_MSG_RECEIVE"}:
-            self.store.set_sticker_platform_block(group_id, event_type != "GROUP_MSG_RECEIVE")
+        if group_id and event_type in {"GROUP_MSG_REJECT", "GROUP_DEL_ROBOT", "GROUP_MSG_RECEIVE", "GROUP_ADD_ROBOT"}:
+            self.store.set_sticker_platform_block(group_id, event_type in {"GROUP_MSG_REJECT", "GROUP_DEL_ROBOT"})
 
     def inventory(self, group_id):
         if str(group_id).startswith("dm:"):

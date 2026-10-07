@@ -196,6 +196,7 @@ class StoreTests(unittest.TestCase):
                     self.assertEqual(reopened.apply_group_poll("g", "a", "show")["question"], "保留投票")
                     state = json.loads(reopened.db.execute("SELECT payload FROM character_state WHERE scope='g'").fetchone()[0])
                     self.assertEqual(state, {"mode": "quiet", "story": {"premise": "保留剧情"}})
+                    self.assertTrue(reopened.sticker_platform_blocked("g"))
                 finally:
                     reopened.close()
             with closing(sqlite3.connect(path)) as db:
@@ -215,6 +216,12 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(self.store.sticker_platform_blocked("g"))
         restarted.platform_event("g", "GROUP_MSG_RECEIVE")
         self.assertFalse(self.store.sticker_platform_blocked("g"))
+        restarted.platform_event("g", "GROUP_DEL_ROBOT")
+        self.assertTrue(self.store.sticker_platform_blocked("g"))
+        restarted.platform_event("g", "GROUP_ADD_ROBOT")
+        self.assertFalse(self.store.sticker_platform_blocked("g"))
+        restarted.platform_event("", "GROUP_MSG_REJECT")
+        self.assertIsNone(self.store.db.execute("SELECT 1 FROM group_sticker_delivery WHERE group_id=''").fetchone())
 
 
 class StickerFixture:

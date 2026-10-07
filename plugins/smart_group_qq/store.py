@@ -327,6 +327,13 @@ class Store:
             """
         )
         if stored_schema_version < 6:
+            # Preserve the platform's refusal across retiring the old character sender.
+            self.db.execute(
+                "INSERT INTO group_sticker_delivery(group_id,last_attempt,blocked) "
+                "SELECT scope,0,1 FROM character_state WHERE json_valid(payload) AND scope!='' "
+                "AND scope NOT LIKE 'dm:%' AND json_extract(payload,'$.platform_blocked')=1 "
+                "ON CONFLICT(group_id) DO UPDATE SET blocked=1"
+            )
             # Retire only the removed feature's generated data, not member goals or history.
             self.db.execute("DELETE FROM character_items WHERE kind='discovery'")
             self.db.execute(
