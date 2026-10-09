@@ -922,7 +922,12 @@ def build_handler(ctx: Any, store: Store):
                     reply = (f"本群还没有「{argument}」类表情包，可用 /表情库 查看库存。"
                              if argument in STICKER_CATEGORIES else stickers.inventory(character_scope))
                 else:
-                    reply = character.command(character_scope, member_id, character_text, message_id)
+                    reply = await character.command_async(ctx, character_scope, member_id, character_text, message_id)
+                if name in {"忘表达", "结束话题", "忘话题"} and reply == "已处理。":
+                    _invalidate_group_runtime(character_scope)
+                    if character_scope != group_id:
+                        _invalidate_group_runtime(group_id)
+                    await _reset_gateway_session(gateway, event)
                 if name in {"安静", "安静一会儿", "安静一下", "少说一点"}:
                     _cancel_batch(group_id)
                     response_registry.cancel_group(group_id, ordinary_only=True)

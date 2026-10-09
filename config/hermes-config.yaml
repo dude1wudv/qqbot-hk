@@ -127,6 +127,12 @@ plugins:
       settings:
         character:
           enabled: true
+          # Optional narration runs only when a user starts/advances an adventure.
+          # The persisted branching state remains usable if the model times out.
+          story_narration_enabled: true
+          story_timeout_seconds: 8
+          conversation_recall_enabled: true
+          recall_cooldown_seconds: 3600
         stickers:
           enabled: true
           auto_collect: true
