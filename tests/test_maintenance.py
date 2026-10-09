@@ -27,11 +27,24 @@ class MaintenanceTests(unittest.TestCase):
         handler.character.maintain = MagicMock(side_effect=[RuntimeError("temporary"), None])
         storage = ModuleType("plugins.plugin_storage")
         storage.plugin_db = MagicMock()
-        with patch.dict(sys.modules, {"plugins.plugin_storage": storage}), \
-                patch.object(plugin, "Store", return_value=store), \
+        loader = ModuleType("hermes_cli.env_loader")
+        loader.load_hermes_dotenv = MagicMock()
+        secrets = ModuleType("agent.secret_scope")
+        def scoped_secret(name):
+            loader.load_hermes_dotenv.assert_called_once_with()
+            self.assertEqual(name, "QQ_CLIENT_SECRET")
+            return "synthetic-profile-secret"
+        secrets.get_secret = scoped_secret
+        with patch.dict(sys.modules, {"plugins.plugin_storage": storage,
+                                     "hermes_cli.env_loader": loader,
+                                     "agent.secret_scope": secrets}), \
+                patch.dict(plugin.os.environ, {}, clear=True), \
+                patch.object(plugin, "Store", return_value=store) as store_factory, \
                 patch.object(plugin, "build_handler", return_value=handler), \
                 patch.object(plugin, "install_nonmention_observer"):
             plugin.register(ctx)  # no running asyncio loop, as in production
+        store_factory.assert_called_once_with(storage.plugin_db.return_value,
+                                              member_secret="synthetic-profile-secret")
         ctx.spawn_task.assert_not_called()
         event, start = ctx.subscribe.call_args.args
         self.assertEqual(event, "smart_group_qq:gateway_startup")

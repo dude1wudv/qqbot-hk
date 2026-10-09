@@ -1854,7 +1854,12 @@ def build_handler(ctx: Any, store: Store):
 def register(ctx: Any) -> None:
     try:
         from plugins.plugin_storage import plugin_db
-        store = Store(plugin_db(ctx.plugin_id), member_secret=os.environ.get("QQ_CLIENT_SECRET"))
+        from hermes_cli.env_loader import load_hermes_dotenv
+        from agent.secret_scope import get_secret
+        # Plugin discovery can precede the gateway's dotenv initialization.
+        # Native loading and scoped lookup preserve profile credential isolation.
+        load_hermes_dotenv()
+        store = Store(plugin_db(ctx.plugin_id), member_secret=get_secret("QQ_CLIENT_SECRET"))
     except Exception:
         logger.exception("smart_group_qq storage initialization failed")
         return
