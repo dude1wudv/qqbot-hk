@@ -250,7 +250,7 @@ class ResponseTests(unittest.TestCase):
         registry, audits, _ = self._registry()
         record = self._record(ref="e" * 32, direct=True)
         registry.register(record)
-        output = registry.transform("not-json", "[群对话标记:" + record.request_ref + "]")
+        output = registry.transform('{"action":"reply","message":3}', "[群对话标记:" + record.request_ref + "]")
         self.assertEqual(output, INVALID_REPLY_MESSAGE)
         self.assertEqual(record.pending_message, INVALID_REPLY_MESSAGE)
         self.assertFalse(record.record_on_success)

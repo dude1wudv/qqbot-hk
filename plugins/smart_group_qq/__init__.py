@@ -61,15 +61,7 @@ _DEFAULT_WAKE_WORDS = (
     "qqbot",
     "hermes",
     "bot",
-    "帮看下",
-    "帮忙看",
-    "看一下",
-    "在吗",
-    "在嘛",
-    "请问",
-    "帮我",
 )
-_WAKE_LEAD = " \t\r\n\u3000,，.。!！?？:：;；~～、-—\"'“”‘’()（）[]【】<>《》·"
 _HELP_SIGNAL = re.compile(
     r"帮我|帮忙|帮看|求助|请问|有人知道|有人会|怎么解决|如何解决|确认收到|回复一下|在吗|在嘛"
 )
@@ -82,14 +74,17 @@ _PLAIN_AT_NAME = re.compile(r"^@([^\s@<>]+)")
 
 def _wake_hit(value: str, wake_words: Any) -> bool:
     """True when a message opens with a wake word, i.e. calls the bot by name."""
-    normalized = str(value or "").strip().strip(_WAKE_LEAD).lower()
-    if not normalized:
-        return False
-    return any(
-        normalized.startswith(str(word).strip().lower())
-        for word in wake_words or ()
-        if str(word).strip()
-    )
+    normalized = str(value or "").lstrip().lower()
+    # Quoted names/examples are not a call; ASCII names need a word boundary.
+    for word in wake_words or ():
+        name = str(word).strip().lower()
+        if not name or not normalized.startswith(name):
+            continue
+        rest = normalized[len(name):]
+        if name[-1].isascii() and name[-1].isalnum() and rest and (rest[0].isascii() and (rest[0].isalnum() or rest[0] == "_")):
+            continue
+        return True
+    return False
 
 
 def _sent_at(value: Any) -> float:
@@ -189,7 +184,7 @@ def _configure_adapter(adapter: Any, registry: ReplyRegistry | None = None) -> N
             if record is not None and not current.send_allowed(record):
                 try:
                     from gateway.platforms.base import SendResult
-                    return SendResult(success=False, error="stale smart group reply")
+                    return SendResult(success=False, retryable=False, error="stale smart group reply")
                 except Exception:
                     return type("SendResult", (), {"success": False, "error": "stale smart group reply"})()
             if record is not None and __method == "send" and bound is not None and "content" in bound.arguments:
@@ -922,7 +917,12 @@ def build_handler(ctx: Any, store: Store):
                     reply = (f"本群还没有「{argument}」类表情包，可用 /表情库 查看库存。"
                              if argument in STICKER_CATEGORIES else stickers.inventory(character_scope))
                 else:
-                    reply = character.command(character_scope, member_id, character_text, message_id)
+                    reply = await character.command_async(ctx, character_scope, member_id, character_text, message_id)
+                if name in {"忘表达", "结束话题", "忘话题"} and reply == "已处理。":
+                    _invalidate_group_runtime(character_scope)
+                    if character_scope != group_id:
+                        _invalidate_group_runtime(group_id)
+                    await _reset_gateway_session(gateway, event)
                 if name in {"安静", "安静一会儿", "安静一下", "少说一点"}:
                     _cancel_batch(group_id)
                     response_registry.cancel_group(group_id, ordinary_only=True)
@@ -1138,9 +1138,9 @@ def build_handler(ctx: Any, store: Store):
             + '忽略时输出 {\"action\":\"ignore\",\"message\":null}；'
             + '回复时输出 {\"action\":\"reply\",\"message\":\"最终群聊正文\"}。'
             + "不要输出 Markdown 代码块、解释、前后缀或额外字段。"
-            + "正文像群友接话，长度根据内容决定，允许完整表达和自然提问，不机械限制字数。"
-            + "避免模板化客服收尾；真正好奇时可以主动提问、邀请互动。"
-            + "提问应来自具体好奇或任务需要，不机械追问；复杂话题可以展开。"
+            + "群聊默认只接最相关的一点，用1–2句、约40–100字，最多180字；被@也不自动展开。"
+            + "不复述整段背景，不写长篇点评，不为了延续对话在末尾追加问题。"
+            + "只有用户明确要求详细说明、代码、步骤或其他完整交付时才展开；信息不足时只问一个必要问题。"
         )
         section_cfg = memory_cfg.get("context_section_chars")
         section_budgets = section_cfg if isinstance(section_cfg, Mapping) else {}
@@ -1529,7 +1529,7 @@ def build_handler(ctx: Any, store: Store):
         async with lock:
             cooldown = float(participation_cfg.get("cooldown_seconds", 5))
             remaining = cooldown - (time.monotonic() - successful_reply_at.get(group_id, float("-inf")))
-            if remaining > 0:
+            if remaining > 0 and not _participation_score(group_id, items)[1]:
                 await asyncio.sleep(remaining)
             max_age = float(participation_cfg.get("max_age_seconds", 120))
             eligible = []
@@ -1563,7 +1563,7 @@ def build_handler(ctx: Any, store: Store):
                 store.record_audit("rule_ignore", chat_id=group_id,
                                    message_id=str(latest.get("message_id") or ""), source="participation_budget")
                 return
-            if score >= 70 and (direct or not topical):
+            if direct:
                 admitted = True
                 audit_action = "rule_reply"
             elif score >= 30 or (character.enabled and character.state(group_id)["mode"] == "free" and score > 0):

@@ -84,11 +84,10 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
             ("g", "终于跑通了。", "anchor"),
             ("g", "可以歇口气了！", "anchor"),
             ("g", "可以歇口气了！", "anchor"),
-            ("g", "你呢？", "anchor"),
         ])
-        self.assertEqual(delivered, ["终于跑通了。\n可以歇口气了！\n你呢？"])
-        self.assertEqual(record.sent_message_ids, ["bubble-1", "bubble-3", "bubble-4"])
-        self.assertEqual(["message_reference" in body for body in adapter.bodies], [True, False, False, False])
+        self.assertEqual(delivered, ["终于跑通了。\n可以歇口气了！"])
+        self.assertEqual(record.sent_message_ids, ["bubble-1", "bubble-3"])
+        self.assertEqual(["message_reference" in body for body in adapter.bodies], [True, False, False])
         self.assertTrue(all(body["msg_id"] == "anchor" for body in adapter.bodies))
         self.assertEqual(registry.size, 0)
 

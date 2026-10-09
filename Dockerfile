@@ -7,6 +7,7 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.qq-context-patch="v1" \
       io.qqbot-hk.qq-help-patch="v1" \
       io.qqbot-hk.qq-output-patch="v1" \
+      io.qqbot-hk.qq-recovery-patch="v1" \
       io.qqbot-hk.doctor-patch="v3" \
       io.qqbot-hk.dependency-pins="2026-10-06"
 
@@ -38,6 +39,10 @@ COPY --chmod=0755 scripts/patch-hermes-qq-output.py /tmp/patch-hermes-qq-output.
 RUN python /tmp/patch-hermes-qq-output.py \
     && rm -f /tmp/patch-hermes-qq-output.py
 
+COPY --chmod=0755 scripts/patch-hermes-qq-recovery.py /tmp/patch-hermes-qq-recovery.py
+RUN python /tmp/patch-hermes-qq-recovery.py \
+    && rm -f /tmp/patch-hermes-qq-recovery.py
+
 COPY --chmod=0644 runtime/qqbot_context.py /opt/hermes/qqbot_context.py
 COPY --chmod=0644 plugins/smart_group_qq/media.py /opt/hermes/qqbot_hk_media.py
 COPY --chmod=0755 scripts/patch-hermes-qq-context.py /tmp/patch-hermes-qq-context.py
@@ -49,6 +54,7 @@ COPY --chmod=0755 scripts/verify-hermes-audio.py /opt/hermes/verify-hermes-audio
 COPY --chmod=0755 scripts/verify-hermes-chat-reasoning.py /opt/hermes/verify-hermes-chat-reasoning.py
 COPY --chmod=0755 scripts/verify-hermes-qq-context.py /opt/hermes/verify-hermes-qq-context.py
 COPY --chmod=0755 scripts/verify-hermes-qq-commands.py /opt/hermes/verify-hermes-qq-commands.py
+COPY --chmod=0755 scripts/verify-hermes-qq-recovery.py /opt/hermes/verify-hermes-qq-recovery.py
 COPY --chmod=0755 scripts/verify-hermes-qq-output.py /opt/hermes/verify-hermes-qq-output.py
 COPY --chmod=0755 scripts/verify-hermes-qq-lifecycle.py /opt/hermes/verify-hermes-qq-lifecycle.py
 COPY --chmod=0755 scripts/verify-hermes-dependencies.py /opt/hermes/verify-hermes-dependencies.py
@@ -60,6 +66,7 @@ RUN python /opt/hermes/verify-hermes-audio.py \
     && python /opt/hermes/verify-hermes-qq-context.py \
     && python /opt/hermes/verify-hermes-qq-commands.py \
     && python /opt/hermes/verify-hermes-qq-output.py \
+    && python /opt/hermes/verify-hermes-qq-recovery.py \
     && python /opt/hermes/verify-hermes-qq-lifecycle.py \
     && python /opt/hermes/verify-hermes-dependencies.py \
     && QQ_CLIENT_SECRET=offline-synthetic-member-secret python -m hermes_cli.main plugins doctor /opt/hermes/qqbot-hk/plugins/smart_group_qq --ci

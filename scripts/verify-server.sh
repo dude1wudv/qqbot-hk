@@ -40,6 +40,7 @@ chat_reasoning_patch_label="$(docker image inspect -f '{{index .Config.Labels "i
 qq_context_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-context-patch"}}' "$image_id")"
 qq_help_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-help-patch"}}' "$image_id")"
 qq_output_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-output-patch"}}' "$image_id")"
+qq_recovery_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-recovery-patch"}}' "$image_id")"
 doctor_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.doctor-patch"}}' "$image_id")"
 dependency_pins_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.dependency-pins"}}' "$image_id")"
 test "$base_digest_label" = "sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7"
@@ -48,6 +49,7 @@ test "$chat_reasoning_patch_label" = "v5"
 test "$qq_context_patch_label" = "v1"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
+test "$qq_recovery_patch_label" = "v1"
 test "$doctor_patch_label" = "v3"
 test "$dependency_pins_label" = "2026-10-06"
 
@@ -156,6 +158,7 @@ docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/de
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-context.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-commands.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-output.py >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-recovery.py >/dev/null
 docker run --rm --init --network none --entrypoint python "$image_id" /opt/hermes/verify-hermes-qq-lifecycle.py
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-dependencies.py
 docker exec -i hermes-qqbot python - <<'PY'
@@ -409,10 +412,14 @@ if not isinstance(participation_config, Mapping):
 if participation_config.get("enabled") is not True:
     raise SystemExit("smart_group_qq ambient.participation.enabled must be true")
 try:
-    if int(participation_config.get("cooldown_seconds", 0)) != 0:
+    if int(participation_config.get("cooldown_seconds", 0)) != 15:
+        raise ValueError
+    if int(participation_config.get("max_interjections_per_minute", 0)) != 2:
+        raise ValueError
+    if int(participation_config.get("unanswered_pause_seconds", 0)) != 120:
         raise ValueError
 except (TypeError, ValueError):
-    raise SystemExit("smart_group_qq ambient.participation.cooldown_seconds must be 0")
+    raise SystemExit("smart_group_qq participation requires cooldown=15, max_interjections=2, unanswered_pause=120")
 try:
     if int(participation_config.get("debounce_seconds", 0)) != 2:
         raise ValueError
@@ -430,10 +437,10 @@ except (TypeError, ValueError):
     raise SystemExit("smart_group_qq ambient.participation age/timeout config is invalid")
 try:
     participation_confidence = float(participation_config.get("min_confidence"))
-    if abs(participation_confidence - 0.55) > 1e-9:
+    if abs(participation_confidence - 0.70) > 1e-9:
         raise ValueError
 except (TypeError, ValueError):
-    raise SystemExit("smart_group_qq ambient.participation.min_confidence must be 0.55")
+    raise SystemExit("smart_group_qq ambient.participation.min_confidence must be 0.70")
 wake_words = participation_config.get("wake_words")
 if not isinstance(wake_words, list) or not any(str(item).strip() for item in wake_words):
     raise SystemExit("smart_group_qq ambient.participation.wake_words must be a non-empty list")
@@ -619,6 +626,7 @@ echo "HERMES_CHAT_REASONING_PATCH=verified"
 echo "HERMES_QQ_CONTEXT_PATCH=verified"
 echo "HERMES_QQ_HELP_PATCH=verified"
 echo "HERMES_QQ_OUTPUT_PATCH=verified"
+echo "HERMES_QQ_RECOVERY_PATCH=verified"
 echo "QQ_NATIVE_COMMANDS=verified"
 echo "CHAT_COMPLETIONS_ROUTE=verified"
 echo "CONFIG_CHECK=passed"
