@@ -7,6 +7,7 @@ from typing import Any
 
 
 DEFAULT_MAX_CHARS = 1500
+_QUOTE_PAIRS = {"“": "”", "‘": "’", "「": "」", "『": "』", "（": "）", "(": ")"}
 
 
 @dataclass(frozen=True)
@@ -98,14 +99,66 @@ def trim_chat_followup(text: str) -> str:
     ).rstrip()
 
 
+# Explicit tasks keep their payload intact. A mention alone is not a detail request.
+_DETAIL_REQUEST = re.compile(
+    r"详细|展开|完整|长文|长篇|逐[步条行]|步骤|教程|代码|脚本|程序|函数|SQL|JSON|配置|"
+    r"日志|报错|排查|调试|修复|翻译|原文|全文|写[一个份段篇]|列[出个]|对比|比较|"
+    r"总结|分析|解释|证明|推导|计算|清单|计划|攻略|表格|报告|讲解|解决|"
+    r"\b(?:code|debug|explain|translate|detailed|steps)\b", re.IGNORECASE,
+)
+
+
+def prepare_group_reply(text: str, question: str) -> str:
+    """Bound casual replies only; preserve requested task output before formatting."""
+    if _DETAIL_REQUEST.search(question) or "```" in text or re.search(r"https?://|^\s*[\[{]", text):
+        return text.strip()
+    value = trim_chat_followup(text.strip())
+    # Preserve a short literal/code answer: never cut inside structured content.
+    if len(value) <= 180:
+        return value
+    # Reuse quote-aware boundaries so Chinese quotes are never left hanging.
+    sentences = _sentence_parts(format_for_qq(value))
+    selected: list[str] = []
+    for sentence in sentences:
+        if len(selected) >= 2 or len("".join(selected)) + len(sentence) > 180:
+            break
+        selected.append(sentence)
+    if selected:
+        return "".join(selected)
+    # Prefer a complete clause when the model ignored the requested length.
+    clauses = _sentence_parts(format_for_qq(value), clauses=True)
+    if clauses and len(clauses[0]) <= 179:
+        return clauses[0].rstrip("，,；;：:") + "。"
+    # Avoid inventing a replacement answer or a canned follow-up question.
+    closing: list[str] = []
+    excerpt = ""
+    for char in value:
+        next_closing = closing.copy()
+        if next_closing and char == next_closing[-1]:
+            next_closing.pop()
+        elif char in _QUOTE_PAIRS or char == '"':
+            next_closing.append(_QUOTE_PAIRS.get(char, char))
+        if len(excerpt) + 1 + len(next_closing) + 1 > 180:
+            break
+        excerpt += char
+        closing = next_closing
+    return excerpt.rstrip() + "…" + "".join(reversed(closing))
+
+
 def split_group_reply(text: Any, *, direct: bool = False) -> list[str]:
-    """Preserve full output; packet size is separate from conversational freedom."""
+    """Keep task output intact and bound short replies to at most two bubbles."""
     value = format_for_qq(text)
     if len(value) > 240 or "```" in str(text):
         return split_message(value, max_chars=1500)
+    parts = _sentence_parts(value)
+    # Bound pushes per short turn, even when the model emits many tiny sentences.
+    return parts if len(parts) <= 2 else [parts[0], "\n".join(parts[1:])]
+
+
+def _sentence_parts(value: str, *, clauses: bool = False) -> list[str]:
     # A question inside a quote is not a bubble boundary: splitting there
     # strands the closing quote and the rest of the sentence in another reply.
-    pairs = {"“": "”", "‘": "’", "「": "」", "『": "』", "（": "）", "(": ")"}
+    pairs = _QUOTE_PAIRS
     closing: list[str] = []
     parts: list[str] = []
     start = 0
@@ -119,7 +172,7 @@ def split_group_reply(text: Any, *, direct: bool = False) -> list[str]:
         if closing:
             continue
         following = value[index + 1:index + 2]
-        boundary = char == "\n" or char in "。！？" or (
+        boundary = (clauses and char in "，,；;：:") or char == "\n" or char in "。！？" or (
             char in "!?" and (not following or following.isspace())
         )
         if boundary and following and following in "。！？!?":

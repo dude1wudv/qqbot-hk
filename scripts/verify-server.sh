@@ -40,6 +40,7 @@ chat_reasoning_patch_label="$(docker image inspect -f '{{index .Config.Labels "i
 qq_context_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-context-patch"}}' "$image_id")"
 qq_help_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-help-patch"}}' "$image_id")"
 qq_output_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-output-patch"}}' "$image_id")"
+qq_recovery_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-recovery-patch"}}' "$image_id")"
 doctor_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.doctor-patch"}}' "$image_id")"
 dependency_pins_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.dependency-pins"}}' "$image_id")"
 test "$base_digest_label" = "sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7"
@@ -48,6 +49,7 @@ test "$chat_reasoning_patch_label" = "v5"
 test "$qq_context_patch_label" = "v1"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
+test "$qq_recovery_patch_label" = "v1"
 test "$doctor_patch_label" = "v3"
 test "$dependency_pins_label" = "2026-10-06"
 
@@ -156,6 +158,7 @@ docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/de
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-context.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-commands.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-output.py >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-recovery.py >/dev/null
 docker run --rm --init --network none --entrypoint python "$image_id" /opt/hermes/verify-hermes-qq-lifecycle.py
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-dependencies.py
 docker exec -i hermes-qqbot python - <<'PY'
@@ -619,6 +622,7 @@ echo "HERMES_CHAT_REASONING_PATCH=verified"
 echo "HERMES_QQ_CONTEXT_PATCH=verified"
 echo "HERMES_QQ_HELP_PATCH=verified"
 echo "HERMES_QQ_OUTPUT_PATCH=verified"
+echo "HERMES_QQ_RECOVERY_PATCH=verified"
 echo "QQ_NATIVE_COMMANDS=verified"
 echo "CHAT_COMPLETIONS_ROUTE=verified"
 echo "CONFIG_CHECK=passed"

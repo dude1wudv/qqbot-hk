@@ -10,41 +10,73 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
+from .formatter import prepare_group_reply
+
 
 SILENT_MARKER = "[SILENT]"
 INVALID_REPLY_MESSAGE = "这次回复格式异常，请稍后重试。"
 _FENCE = re.compile(r"^```(?:json|python|py)?\s*(.*?)\s*```$", re.IGNORECASE | re.DOTALL)
 
 
+class _DuplicateFields(ValueError):
+    pass
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateFields("duplicate_fields")
+        result[key] = value
+    return result
+
+
+def _literal_object(text):
+    node = ast.parse(text, mode="eval")
+    for item in ast.walk(node):
+        if isinstance(item, ast.Dict):
+            keys = [ast.literal_eval(key) for key in item.keys]
+            if len(keys) != len(set(keys)):
+                raise _DuplicateFields("duplicate_fields")
+    return ast.literal_eval(node)
+
+
 def _reply_object(response_text: str) -> dict[str, Any]:
-    """Extract the reply object from common model wrappers without loosening its schema."""
+    """Accept one envelope, rejecting duplicate keys and ambiguous multiple decisions."""
     candidate = str(response_text or "").strip()
     fenced = _FENCE.fullmatch(candidate)
     if fenced:
         candidate = fenced.group(1).strip()
-    errors: list[Exception] = []
-    candidates = [candidate]
-    # Models can emit literal newlines/tabs inside message strings; keep schema validation strict.
-    decoder = json.JSONDecoder(strict=False)
-    for index, char in enumerate(candidate):
-        if char == "{":
-            try:
-                _, end = decoder.raw_decode(candidate[index:])
-            except (json.JSONDecodeError, TypeError, ValueError):
-                continue
-            candidates.append(candidate[index:index + end])
+    decoder = json.JSONDecoder(strict=False, object_pairs_hook=_unique_object)
+    for loader in (decoder.decode, _literal_object):
+        try:
+            value = loader(candidate)
+        except _DuplicateFields:
+            raise
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            continue
+        if not isinstance(value, dict):
+            raise ValueError("not_object")
+        return value
+    objects = []
+    index = 0
+    while index < len(candidate):
+        start = candidate.find("{", index)
+        if start < 0:
             break
-    for value_text in candidates:
-        for loader in (decoder.decode, ast.literal_eval):
-            try:
-                value = loader(value_text)
-            except (TypeError, ValueError, SyntaxError, json.JSONDecodeError, MemoryError) as exc:
-                errors.append(exc)
-                continue
-            if isinstance(value, dict):
-                return value
-            errors.append(ValueError("not_object"))
-    raise ValueError("invalid_json") from (errors[-1] if errors else None)
+        try:
+            value, end = decoder.raw_decode(candidate[start:])
+        except _DuplicateFields:
+            raise
+        except (ValueError, TypeError, RecursionError):
+            index = start + 1
+            continue
+        index = start + end  # Never reinterpret JSON inside an envelope's message.
+        if isinstance(value, dict) and ("action" in value or "message" in value):
+            objects.append(value)
+    if len(objects) != 1:
+        raise ValueError("ambiguous_or_invalid_json")
+    return objects[0]
 
 
 def parse_reply_decision(response_text: str) -> tuple[str, str | None]:
@@ -82,7 +114,8 @@ def render_reply_envelope(response_text: Any) -> str | None:
 def _plain_text_fallback(response_text: Any) -> str | None:
     """Keep ordinary model prose deliverable while rejecting broken JSON envelopes."""
     text = str(response_text or "").strip()
-    if not text or text == SILENT_MARKER or "{" in text[:80]:
+    broken_envelope = re.search(r'(?:["\']?(?:action|message)["\']?\s*[:：])', text, re.I)
+    if not text or text == SILENT_MARKER or text.startswith(("{", "[")) or broken_envelope:
         return None
     return text
 
@@ -227,11 +260,11 @@ class ReplyRegistry:
                     "output_invalid", chat_id=record.group_id, message_id=record.message_id,
                     source=str(exc),
                 )
-                if record.direct:
+                fallback = _plain_text_fallback(response_text)
+                if fallback is None and record.direct and str(response_text or "").strip() != SILENT_MARKER:
                     record.pending_message = INVALID_REPLY_MESSAGE
                     record.record_on_success = False
                     return INVALID_REPLY_MESSAGE
-                fallback = _plain_text_fallback(response_text)
                 if fallback is None:
                     record.consumed = True
                     self._records.pop(record.request_ref, None)
@@ -247,6 +280,8 @@ class ReplyRegistry:
                 self._records.pop(record.request_ref, None)
                 return SILENT_MARKER
             message = str(message).strip()
+            if record.source_kind != "private":
+                message = prepare_group_reply(message, record.question)
             if not message:
                 record.consumed = True
                 self._records.pop(record.request_ref, None)
