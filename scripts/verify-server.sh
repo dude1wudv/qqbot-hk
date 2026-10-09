@@ -412,10 +412,14 @@ if not isinstance(participation_config, Mapping):
 if participation_config.get("enabled") is not True:
     raise SystemExit("smart_group_qq ambient.participation.enabled must be true")
 try:
-    if int(participation_config.get("cooldown_seconds", 0)) != 0:
+    if int(participation_config.get("cooldown_seconds", 0)) != 15:
+        raise ValueError
+    if int(participation_config.get("max_interjections_per_minute", 0)) != 2:
+        raise ValueError
+    if int(participation_config.get("unanswered_pause_seconds", 0)) != 120:
         raise ValueError
 except (TypeError, ValueError):
-    raise SystemExit("smart_group_qq ambient.participation.cooldown_seconds must be 0")
+    raise SystemExit("smart_group_qq participation requires cooldown=15, max_interjections=2, unanswered_pause=120")
 try:
     if int(participation_config.get("debounce_seconds", 0)) != 2:
         raise ValueError
@@ -433,10 +437,10 @@ except (TypeError, ValueError):
     raise SystemExit("smart_group_qq ambient.participation age/timeout config is invalid")
 try:
     participation_confidence = float(participation_config.get("min_confidence"))
-    if abs(participation_confidence - 0.55) > 1e-9:
+    if abs(participation_confidence - 0.70) > 1e-9:
         raise ValueError
 except (TypeError, ValueError):
-    raise SystemExit("smart_group_qq ambient.participation.min_confidence must be 0.55")
+    raise SystemExit("smart_group_qq ambient.participation.min_confidence must be 0.70")
 wake_words = participation_config.get("wake_words")
 if not isinstance(wake_words, list) or not any(str(item).strip() for item in wake_words):
     raise SystemExit("smart_group_qq ambient.participation.wake_words must be a non-empty list")
