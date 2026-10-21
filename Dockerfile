@@ -4,6 +4,7 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.hermes-base-digest="sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7" \
       io.qqbot-hk.audio-patch="v2" \
       io.qqbot-hk.chat-reasoning-patch="v5" \
+      io.qqbot-hk.aux-budget-patch="v1" \
       io.qqbot-hk.qq-context-patch="v1" \
       io.qqbot-hk.qq-help-patch="v1" \
       io.qqbot-hk.qq-output-patch="v1" \
@@ -30,6 +31,10 @@ COPY --chmod=0755 scripts/patch-hermes-chat-reasoning.py /tmp/patch-hermes-chat-
 RUN python /tmp/patch-hermes-chat-reasoning.py \
     && rm -f /tmp/patch-hermes-chat-reasoning.py
 
+COPY --chmod=0755 scripts/patch-hermes-aux-budget.py /tmp/patch-hermes-aux-budget.py
+RUN python /tmp/patch-hermes-aux-budget.py \
+    && rm -f /tmp/patch-hermes-aux-budget.py
+
 
 COPY --chmod=0755 scripts/patch-hermes-qq-help.py /tmp/patch-hermes-qq-help.py
 RUN python /tmp/patch-hermes-qq-help.py \
@@ -52,6 +57,7 @@ RUN python /tmp/patch-hermes-qq-context.py \
 
 COPY --chmod=0755 scripts/verify-hermes-audio.py /opt/hermes/verify-hermes-audio.py
 COPY --chmod=0755 scripts/verify-hermes-chat-reasoning.py /opt/hermes/verify-hermes-chat-reasoning.py
+COPY --chmod=0755 scripts/verify-hermes-aux-budget.py /opt/hermes/verify-hermes-aux-budget.py
 COPY --chmod=0755 scripts/verify-hermes-qq-context.py /opt/hermes/verify-hermes-qq-context.py
 COPY --chmod=0755 scripts/verify-hermes-qq-commands.py /opt/hermes/verify-hermes-qq-commands.py
 COPY --chmod=0755 scripts/verify-hermes-qq-recovery.py /opt/hermes/verify-hermes-qq-recovery.py
@@ -63,6 +69,7 @@ COPY --chmod=0644 config/hermes-config.yaml /opt/hermes/qqbot-hk/hermes-config.y
 
 RUN python /opt/hermes/verify-hermes-audio.py \
     && python /opt/hermes/verify-hermes-chat-reasoning.py \
+    && python /opt/hermes/verify-hermes-aux-budget.py \
     && python /opt/hermes/verify-hermes-qq-context.py \
     && python /opt/hermes/verify-hermes-qq-commands.py \
     && python /opt/hermes/verify-hermes-qq-output.py \

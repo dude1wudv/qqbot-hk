@@ -27,6 +27,7 @@ from .expressions import STICKER_CATEGORIES
 
 
 PENDING_STALE_SECONDS = 300.0
+MAX_COMPACTION_FAILURES = 3
 SCHEMA_VERSION = 6
 _SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
@@ -726,6 +727,13 @@ class Store:
                     time.time() if updated_at is None else float(updated_at),
                 ),
             )
+            # Reset the retry budget atomically with durable progress. A later
+            # batch must not inherit failures from a cursor already summarized.
+            db.execute(
+                "UPDATE compaction_jobs SET from_history_id=?, attempt=0, error='', next_retry_at=0 "
+                "WHERE group_id=? AND status IN ('pending','running','failed') AND from_history_id<?",
+                (max(0, int(last_history_id)), str(group_id), max(0, int(last_history_id))),
+            )
         return True
 
     def memory_payload(self, group_id: str) -> dict[str, Any]:
@@ -842,15 +850,19 @@ class Store:
                     params.append(str(group_id))
                 row = db.execute(
                     "SELECT * FROM compaction_jobs WHERE "
-                    "((status IN ('pending','failed') AND (next_retry_at<=? OR ?)) OR "
+                    "((status IN ('pending','failed') AND (next_retry_at<=? OR ?) "
+                    "AND (attempt<? OR ?)) OR "
                     "(status='running' AND lease_until IS NOT NULL AND lease_until<=?))"
                     + group_clause + " ORDER BY id ASC LIMIT 1",
-                    (stamp, bool(force), stamp, *params[1:]),
+                    (stamp, bool(force), MAX_COMPACTION_FAILURES, bool(force), stamp, *params[1:]),
                 ).fetchone()
             if row is None:
                 return None
             status = str(row["status"])
-            ready = status in {"pending", "failed"} and (force or float(row["next_retry_at"] or 0) <= stamp)
+            ready = status in {"pending", "failed"} and (
+                force or (int(row["attempt"] or 0) < MAX_COMPACTION_FAILURES
+                          and float(row["next_retry_at"] or 0) <= stamp)
+            )
             expired = status == "running" and row["lease_until"] is not None and float(row["lease_until"]) <= stamp
             if not (ready or expired):
                 return None
@@ -888,9 +900,9 @@ class Store:
             attempt = max(1, int(row["attempt"] or 1))
             delay = min(3600.0, max(1.0, float(retry_delay) if retry_delay is not None else 5.0 * (2 ** min(attempt - 1, 8))))
             db.execute(
-                "UPDATE compaction_jobs SET status='failed', lease_until=NULL, error=?, "
+                "UPDATE compaction_jobs SET status='failed', lease_until=NULL, error=?, attempt=?, "
                 "next_retry_at=?, updated_at=? WHERE id=?",
-                (str(error or "compaction failed")[:500], stamp + delay, stamp, int(job_id)),
+                (str(error or "compaction failed")[:500], attempt, stamp + delay, stamp, int(job_id)),
             )
 
     def defer_compaction_job(

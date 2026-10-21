@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -54,6 +55,112 @@ class MemoryRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await memory.refresh_ai(ctx, "g")
         self.assertEqual(self.store.memory_payload("g")["last_history_id"], 21)
         self.assertIsNone(self.store.get_compaction_job("g"))
+
+    async def test_three_failures_stop_automatic_retries_and_force_can_recover(self):
+        memory = GroupMemory(self.store)
+        self.record(memory, 1)
+        self.store.set_memory("g", "原有摘要", structured={"summary": "原有摘要"}, model="valid")
+        before = self.store.memory_payload("g")
+        llm = SummaryLLM(fail=True)
+        ctx = SimpleNamespace(llm=llm)
+        await memory.refresh_ai(ctx, "g", force=True)
+        for expected in (2, 3):
+            retry = self.store.get_compaction_job("g")["next_retry_at"]
+            with patch("time.time", return_value=retry + 1):
+                await memory.refresh_ai(ctx, "g")
+            self.assertEqual(self.store.get_compaction_job("g")["attempt"], expected)
+        job = self.store.get_compaction_job("g")
+        self.assertFalse(memory.needs_refresh("g", now=job["next_retry_at"] + 100000))
+        memory.record("g", "m", "新消息不能绕过失败游标", "new")
+        with patch("time.time", return_value=job["next_retry_at"] + 100000):
+            await memory.refresh_ai(ctx, "g")
+            self.assertIsNone(self.store.claim_compaction_job(job["id"]))
+            self.assertIsNone(self.store.claim_compaction_job(group_id="g"))
+        self.assertEqual(llm.calls, 3)
+        self.assertEqual(self.store.memory_payload("g"), before)
+        self.assertEqual(self.store.count_history("g"), 2)
+        self.assertEqual(job["status"], "failed")
+        llm.fail = False
+        await memory.refresh_ai(ctx, "g", force=True)
+        self.assertEqual(llm.calls, 4)
+        self.assertEqual(self.store.memory_payload("g")["last_history_id"], 2)
+        self.assertIsNone(self.store.get_compaction_job("g"))
+
+    async def test_legacy_high_attempt_job_stops_without_migration(self):
+        memory = GroupMemory(self.store)
+        self.record(memory, 1)
+        job_id = self.store.enqueue_compaction_job("g", now=10)
+        self.store.db.execute(
+            "UPDATE compaction_jobs SET status='failed', attempt=143, next_retry_at=0 WHERE id=?",
+            (job_id,),
+        )
+        self.store.db.commit()
+        llm = SummaryLLM()
+        await memory.refresh_ai(SimpleNamespace(llm=llm), "g")
+        self.assertEqual(llm.calls, 0)
+        self.assertEqual(self.store.get_compaction_job("g")["attempt"], 143)
+        self.assertEqual(self.store.count_history("g"), 1)
+        await memory.refresh_ai(SimpleNamespace(llm=llm), "g", force=True)
+        self.assertEqual(llm.calls, 1)
+        self.assertIsNone(self.store.get_compaction_job("g"))
+
+    async def test_successful_cursor_resets_budget_before_later_batch_failure(self):
+        memory = GroupMemory(self.store, compaction_batch_messages=20)
+        self.record(memory, 21)
+        job_id = self.store.enqueue_compaction_job("g", now=10)
+        self.store.db.execute(
+            "UPDATE compaction_jobs SET status='failed', attempt=143, next_retry_at=0 WHERE id=?",
+            (job_id,),
+        )
+        self.store.db.commit()
+
+        class FirstBatchOnly(SummaryLLM):
+            async def acomplete_structured(inner, **kwargs):
+                inner.fail = inner.calls > 0
+                return await super().acomplete_structured(**kwargs)
+
+        llm = FirstBatchOnly()
+        await memory.refresh_ai(SimpleNamespace(llm=llm), "g", force=True)
+        job = self.store.get_compaction_job("g")
+        self.assertEqual(llm.calls, 2)
+        self.assertEqual(self.store.memory_payload("g")["last_history_id"], 20)
+        self.assertEqual(job["from_history_id"], 20)
+        self.assertEqual(job["attempt"], 1)
+        self.assertTrue(memory.needs_refresh("g", now=job["next_retry_at"] + 1))
+        with patch("time.time", return_value=job["next_retry_at"] + 1):
+            await memory.refresh_ai(SimpleNamespace(llm=SummaryLLM()), "g")
+        self.assertEqual(self.store.memory_payload("g")["last_history_id"], 21)
+        self.assertIsNone(self.store.get_compaction_job("g"))
+
+    async def test_overall_timeout_cancels_wrapper_and_preserves_cursor(self):
+        memory = GroupMemory(self.store)
+        self.record(memory, 1)
+        cancelled = asyncio.Event()
+
+        class SlowLLM:
+            async def acomplete_structured(inner, **kwargs):
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cancelled.set()
+
+        with patch("smart_group_qq.memory.SUMMARY_TIMEOUT_SECONDS", 0.01):
+            await asyncio.wait_for(memory.refresh_ai(SimpleNamespace(llm=SlowLLM()), "g", force=True), 1)
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(self.store.memory_payload("g")["last_history_id"], 0)
+        self.assertEqual(self.store.get_compaction_job("g")["error"], "TimeoutError")
+        self.assertEqual(self.store.get_compaction_job("g")["attempt"], 1)
+
+    async def test_error_metadata_contains_type_only(self):
+        memory = GroupMemory(self.store)
+        self.record(memory, 1)
+
+        class BrokenLLM:
+            async def acomplete_structured(inner, **kwargs):
+                raise ValueError("private response and secret token")
+
+        await memory.refresh_ai(SimpleNamespace(llm=BrokenLLM()), "g", force=True)
+        self.assertEqual(self.store.get_compaction_job("g")["error"], "ValueError")
 
     async def test_first_long_message_cannot_stall_small_summary_budget(self):
         memory = GroupMemory(self.store, summary_input_char_budget=1000)

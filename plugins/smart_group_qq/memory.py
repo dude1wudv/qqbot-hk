@@ -7,6 +7,9 @@ import re
 import time
 from typing import Any, Mapping
 
+from .store import MAX_COMPACTION_FAILURES
+
+SUMMARY_TIMEOUT_SECONDS = 75
 
 SUMMARY_SCHEMA = {
     "type": "object",
@@ -190,7 +193,8 @@ class GroupMemory:
             if job["status"] == "running":
                 return job["lease_until"] is not None and float(job["lease_until"]) <= stamp
             if job["status"] in {"pending", "failed"}:
-                return float(job["next_retry_at"] or 0) <= stamp
+                return (int(job["attempt"] or 0) < MAX_COMPACTION_FAILURES
+                        and float(job["next_retry_at"] or 0) <= stamp)
         updated_at = float(state.get("updated_at", 0) or 0)
         if updated_at and stamp - updated_at < self.summary_min_interval_seconds:
             return False
@@ -275,6 +279,7 @@ class GroupMemory:
             batch_source: str,
             batch_previous: Mapping[str, Any],
             failed_cursor: int,
+            error_type: str,
         ) -> dict[str, Any]:
             current = self.store.memory_payload(group_id)
             if self.store.memory_epoch(group_id) != epoch:
@@ -283,7 +288,7 @@ class GroupMemory:
                 # A model outage must not overwrite a good summary with a
                 # truncated tail of raw chat. Pending history remains retryable.
                 if job_id:
-                    self.store.finish_compaction_job(job_id, False, error="AI compaction failed")
+                    self.store.finish_compaction_job(job_id, False, error=error_type)
                 return current.get("structured") or {}
             payload = self._fallback_payload(batch_source, batch_previous)
             # A fallback is useful for this response, but the durable cursor
@@ -303,17 +308,17 @@ class GroupMemory:
             if job_id:
                 finish = getattr(self.store, "finish_compaction_job", None)
                 if callable(finish):
-                    finish(job_id, False, error="AI compaction failed")
+                    finish(job_id, False, error=error_type)
             return payload
 
         current_cursor = cursor
         if not callable(complete):
-            return failed_payload(source, previous, current_cursor)
+            return failed_payload(source, previous, current_cursor, "LLMUnavailable")
 
         batches = 0
         while source:
             try:
-                result = await complete(
+                result = await asyncio.wait_for(complete(
                     instructions=instructions,
                     input=[
                         {"type": "text", "text": "上一版群记忆：\n" + json.dumps(previous, ensure_ascii=False)},
@@ -322,11 +327,11 @@ class GroupMemory:
                     json_schema=SUMMARY_SCHEMA,
                     schema_name="qq_group_memory",
                     max_tokens=1400,
-                    timeout=75,
+                    timeout=SUMMARY_TIMEOUT_SECONDS,
                     temperature=0.1,
                     purpose="qq_group_memory_compaction",
                     task="compression",
-                )
+                ), timeout=SUMMARY_TIMEOUT_SECONDS)
                 parsed = getattr(result, "parsed", None)
                 if parsed is None and isinstance(result, Mapping):
                     parsed = result.get("parsed", result)
@@ -334,8 +339,8 @@ class GroupMemory:
                 if not payload or not payload.get("summary"):
                     raise ValueError("AI summary returned no usable summary")
                 model = str(getattr(result, "model", "") or "")
-            except Exception:
-                return failed_payload(source, previous, current_cursor)
+            except Exception as exc:
+                return failed_payload(source, previous, current_cursor, type(exc).__name__)
 
             current_state = self.store.memory_payload(group_id)
             if not self.store.set_memory(

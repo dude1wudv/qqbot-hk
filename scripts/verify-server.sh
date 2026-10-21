@@ -46,6 +46,7 @@ dependency_pins_label="$(docker image inspect -f '{{index .Config.Labels "io.qqb
 test "$base_digest_label" = "sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7"
 test "$audio_patch_label" = "v2"
 test "$chat_reasoning_patch_label" = "v5"
+test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.aux-budget-patch"}}' "$image_id")" = "v1"
 test "$qq_context_patch_label" = "v1"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
@@ -155,6 +156,7 @@ docker exec hermes-qqbot hermes config check >/dev/null
 docker exec hermes-qqbot hermes plugins doctor /opt/data/plugins/smart_group_qq --ci >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-audio.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-aux-budget.py
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-context.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-commands.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-output.py >/dev/null
