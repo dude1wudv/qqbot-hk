@@ -33,7 +33,7 @@ class HermesDependenciesPatchTests(unittest.TestCase):
                     "undici@^7": "7.29.0",
                 }
             },
-            "web/package.json": {"devDependencies": {"vitest": "4.1.10"}},
+            "web/package.json": {"devDependencies": {"vitest": "4.1.10", "vite": "8.2.0"}},
             "ui-tui/package.json": {
                 "dependencies": {"undici": "6.28.0"},
                 "devDependencies": {"vitest": "4.1.10"},
@@ -68,6 +68,8 @@ class HermesDependenciesPatchTests(unittest.TestCase):
         package = json.loads((self.root / "package.json").read_text(encoding="utf-8"))
         self.assertEqual(package["overrides"], {
             "@xmldom/xmldom": "0.9.12",
+            "sanitize-html": "2.18.0",
+            "vite": "8.3.5",
             "source-map-js": "1.2.2",
             "brace-expansion": "5.0.12",
             "undici@^6": "6.28.1",
@@ -95,6 +97,30 @@ class HermesDependenciesPatchTests(unittest.TestCase):
                 with self.assertRaises(PATCH.PatchError):
                     PATCH.patch_dependencies(self.root, self.lockfile)
                 self.assertEqual(self.snapshot(), before)
+
+
+class HermesSecurityLockTests(unittest.TestCase):
+    def test_checked_in_lock_matches_checksums_and_all_security_pins(self):
+        modules = []
+        for filename in ("patch-hermes-dependencies.py", "verify-hermes-dependencies.py"):
+            spec = importlib.util.spec_from_file_location(filename, ROOT / "scripts" / filename)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            modules.append(module)
+        patcher, verifier = modules
+        content = (ROOT / "overrides" / "hermes-package-lock.json").read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        self.assertEqual(digest, patcher.SAFE_LOCK_SHA256)
+        self.assertEqual(digest, verifier.LOCK_SHA256)
+        packages = json.loads(content)["packages"]
+        for package, allowed in verifier.PINS.items():
+            versions = {
+                data["version"] for path, data in packages.items()
+                if path.endswith("node_modules/" + package)
+            }
+            self.assertTrue(versions, package)
+            self.assertLessEqual(versions, allowed, package)
+        self.assertEqual(packages["web"]["devDependencies"]["vite"], "8.3.5")
 
 
 if __name__ == "__main__":

@@ -52,7 +52,7 @@ test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
 test "$qq_recovery_patch_label" = "v1"
 test "$doctor_patch_label" = "v3"
-test "$dependency_pins_label" = "2026-10-06"
+test "$dependency_pins_label" = "2026-10-21"
 
 docker exec -i hermes-qqbot python - <<'PY'
 import json

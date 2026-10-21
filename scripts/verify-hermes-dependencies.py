@@ -8,10 +8,11 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path("/opt/hermes")
-LOCK_SHA256 = "dabb346fe733b1d967ce92d44187a0a3dc430ee3601f744315987da836f93484"
+LOCK_SHA256 = "9499ed1d2dd49ab11cf770ad0ac42af80d7ed1838154673716794258e5db817c"
 PINS = {"brace-expansion": {"5.0.12"}, "undici": {"6.28.1", "7.29.1"},
         "vitest": {"4.1.11"}, "@vitest/mocker": {"4.1.11"},
-        "@xmldom/xmldom": {"0.9.12"}, "source-map-js": {"1.2.2"}}
+        "@xmldom/xmldom": {"0.9.12"}, "source-map-js": {"1.2.2"},
+        "sanitize-html": {"2.18.0"}, "vite": {"8.3.5"}}
 
 
 def main() -> None:
