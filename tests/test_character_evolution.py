@@ -7,7 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins"))
 from smart_group_qq import build_handler
@@ -269,6 +269,8 @@ class NarrativeTests(unittest.IsolatedAsyncioTestCase):
         await self.character.command_async(ctx, "g", "u", "/投票 1", "3")
         self.assertEqual(len(llm.calls), 1)
         payload = json.loads(llm.calls[0]["input"][0]["text"])
+        self.assertEqual(llm.calls[0]["timeout"], 300)
+        self.assertNotIn("max_tokens", llm.calls[0])
         self.assertNotIn("votes", payload)
         self.assertNotIn("owner", payload)
         self.assertNotIn(self.store.member_ref_for("g", "u"), json.dumps(payload))
@@ -286,7 +288,8 @@ class NarrativeTests(unittest.IsolatedAsyncioTestCase):
     async def test_actual_timeout_cancels_generation_without_losing_progress(self):
         started, release = asyncio.Event(), asyncio.Event()
         char = ResidentCharacter(self.store, {"story_timeout_seconds": 1})
-        reply = await char.command_async(SimpleNamespace(llm=ParticipationLLM(started=started, release=release)), "g", "u", "/剧情 夜行", "1")
+        with patch("smart_group_qq.llm_policy.REQUEST_TIMEOUT_SECONDS", 0.01):
+            reply = await char.command_async(SimpleNamespace(llm=ParticipationLLM(started=started, release=release)), "g", "u", "/剧情 夜行", "1")
         self.assertTrue(started.is_set())
         self.assertIn("/投票", reply)
         self.assertEqual(char.state("g")["story"]["chapter"], 0)

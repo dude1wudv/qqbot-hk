@@ -83,6 +83,32 @@ class QQMediaTests(unittest.IsolatedAsyncioTestCase):
                              result["msg_elements"][0]["attachments"]), 5)
         self.assertEqual(payload, original)
 
+    def test_nested_103_attachments_share_one_budget_and_keep_quoted_reference(self):
+        payload = {
+            "message_type": 103,
+            "attachments": [{"content_type": "image/png", "id": "direct", "url": "signed-direct"}],
+            "msg_elements": [{"msg_elements": [{"msg_id": "quoted-message", "attachments": [
+                {"id": str(index), "content_type": "image/png", "url": "signed-" + str(index)}
+                for index in range(7)
+            ]}]}],
+        }
+        bounded = MEDIA.limit_payload_images(payload)
+        self.assertEqual([item["id"] for item in MEDIA.image_attachments(bounded)],
+                         ["3", "4", "5", "6", "direct"])
+        self.assertEqual(len(MEDIA.image_attachments(payload)), 8)
+        self.assertEqual(MEDIA.reply_reference_id(bounded), "quoted-message")
+        metadata = MEDIA.quoted_metadata(bounded)
+        self.assertNotIn("signed-", repr(metadata))
+        self.assertNotIn("url", repr(metadata))
+        self.assertIn("quoted-message", repr(metadata))
+
+    def test_attachment_views_ignore_malformed_collections_without_dropping_files(self):
+        payload = {"message_type": "103", "attachments": {"content_type": "image/png"},
+                   "msg_elements": [None, {"attachments": [{"content_type": "application/pdf", "filename": "a.pdf"}]}]}
+        self.assertEqual(MEDIA.payload_attachments(payload),
+                         [{"content_type": "application/pdf", "filename": "a.pdf"}])
+        self.assertEqual(MEDIA.image_attachments(payload), [])
+
     async def test_manual_image_inputs_are_cache_scoped_bounded_and_limited(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "cache"

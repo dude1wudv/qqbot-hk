@@ -189,7 +189,7 @@ class StoreTests(unittest.TestCase):
             for _ in range(2):
                 reopened = Store(path, member_secret="test-only-secret")
                 try:
-                    self.assertEqual(reopened.db.execute("PRAGMA user_version").fetchone()[0], 6)
+                    self.assertEqual(reopened.db.execute("PRAGMA user_version").fetchone()[0], 7)
                     self.assertEqual(reopened.db.execute("SELECT COUNT(*) FROM character_items WHERE kind='discovery'").fetchone()[0], 0)
                     self.assertEqual(reopened.db.execute("SELECT text FROM character_items WHERE kind='goal'").fetchone()[0], "保留用户待办")
                     self.assertEqual(reopened.get_history("g")[0]["text"], "历史记录")
@@ -200,7 +200,7 @@ class StoreTests(unittest.TestCase):
                 finally:
                     reopened.close()
             with closing(sqlite3.connect(path)) as db:
-                db.execute("PRAGMA user_version=7")
+                db.execute("PRAGMA user_version=8")
                 db.commit()
             with self.assertRaisesRegex(RuntimeError, "newer"):
                 Store(path, member_secret="test-only-secret")
@@ -264,6 +264,9 @@ class ServiceTests(StickerFixture, unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.service.queue_collect("g", "b", "another-share", allowed=lambda: True, paths=[self.image]))
             await self.drain()
         self.assertEqual(self.ctx.llm.acomplete_structured.await_count, 1)
+        options = self.ctx.llm.acomplete_structured.await_args.kwargs
+        self.assertEqual(options["timeout"], 300)
+        self.assertNotIn("max_tokens", options)
         self.assertEqual(self.store.list_group_stickers("g"), [{"category": "开心", "count": 1}])
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM group_sticker_sources").fetchone()[0], 2)
         self.assertEqual(self.adapter.images, [])

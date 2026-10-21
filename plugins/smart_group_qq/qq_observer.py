@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Mapping, Optional, Union
 
 from .commands import clean_text
+from .media import attachment_metadata, limit_payload_images, payload_attachments, quoted_metadata, reply_reference_id
 
 
 Observer = Callable[[dict[str, Any]], Union[Awaitable[Any], Any]]
@@ -201,28 +202,18 @@ def _minimal_raw(
         "group_openid": group_id,
         "author": author,
     }
-    for key in ("message_type", "msg_elements", "reply_to_message_id"):
+    for key in ("message_type", "reply_to_message_id"):
         if key in data:
             raw[key] = data[key]
+    if "msg_elements" in data:
+        raw["msg_elements"] = quoted_metadata(data)
 
     # Attachment URLs are signed credentials and are not needed by consumers:
     # _process_attachments already returns local paths.  Keep only descriptive
     # metadata for audit/indexing purposes.
-    attachments = data.get("attachments")
-    if isinstance(attachments, list):
-        metadata: list[dict[str, Any]] = []
-        for item in attachments:
-            if not isinstance(item, Mapping):
-                continue
-            entry = {
-                key: item[key]
-                for key in ("content_type", "filename", "size")
-                if key in item and item[key] is not None
-            }
-            if entry:
-                metadata.append(entry)
-        if metadata:
-            raw["attachments"] = metadata
+    metadata = attachment_metadata(payload_attachments(data))
+    if metadata:
+        raw["attachments"] = metadata
     return raw
 
 
@@ -285,6 +276,8 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
     if author_map.get("bot") is True:
         return
 
+    data = limit_payload_images(data)
+
     if not _claim_message_id(adapter, message_id):
         return
 
@@ -305,8 +298,8 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
     username = first_text("username", "user_name", "screen_name")
     sequence = _event_sequence(payload)
     raw_content = str(data.get("content", "") or "").strip()
-    attachments = data.get("attachments")
-    has_attachments = isinstance(attachments, list) and bool(attachments)
+    attachments = payload_attachments(data)
+    has_attachments = bool(attachments)
     if not raw_content and not has_attachments:
         _release_message_id(adapter, message_id)
         return
@@ -348,8 +341,8 @@ async def _observe_message(adapter: Any, payload: Mapping[str, Any], callback: O
         "attachment_status": "deferred" if has_attachments else "none",
         "attachments_pending": False,
         "message_type": data.get("message_type"),
-        "msg_elements": data.get("msg_elements"),
-        "reply_to_message_id": data.get("reply_to_message_id"),
+        "msg_elements": quoted_metadata(data),
+        "reply_to_message_id": reply_reference_id(data),
         "raw": _minimal_raw(
             data,
             group_id,

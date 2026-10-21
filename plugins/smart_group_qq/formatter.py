@@ -2,12 +2,24 @@
 from __future__ import annotations
 
 import re
+import json
+from array import array
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
 
 DEFAULT_MAX_CHARS = 1500
 _QUOTE_PAIRS = {"“": "”", "‘": "’", "「": "」", "『": "』", "（": "）", "(": ")"}
+
+
+def _json_payload(value: str) -> bool:
+    if not value.lstrip().startswith(("{", "[")):
+        return False
+    try:
+        return isinstance(json.loads(value), (dict, list))
+    except (ValueError, TypeError, RecursionError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -28,7 +40,7 @@ class MessageChunk:
 def format_for_qq(text: Any, *, markdown_support: bool = False) -> str:
     """Turn common Markdown into quiet, readable QQ plain text."""
     value = "" if text is None else str(text)
-    if markdown_support:
+    if markdown_support or _json_payload(value):
         return value
     lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     output: list[str] = []
@@ -84,8 +96,9 @@ def format_for_qq(text: Any, *, markdown_support: bool = False) -> str:
         # An unfinished fence is still rendered as plain code, rather than
         # leaking Markdown syntax into clients.
         flush_code()
-    value = "\n".join(output).strip()
-    return re.sub(r"\n{3,}", "\n\n", value)
+    # Spaces and blank lines can be significant in code. Presentation may
+    # remove surrounding empty lines, but must not rewrite the code payload.
+    return "\n".join(output).strip("\n")
 
 
 format_text = format_for_qq
@@ -108,51 +121,29 @@ _DETAIL_REQUEST = re.compile(
 )
 
 
+def is_explicit_request(text: str) -> bool:
+    """A local hint for one slow-task notice, never a content truncation rule."""
+    return bool(_DETAIL_REQUEST.search(text) or re.search(
+        r"帮我|请(?:帮|查|找|写|做|给|生成|推荐)|能否|能不能|麻烦|"
+        r"写(?:封|首|句|则|条|信|诗)|推荐|查询|搜索|查找|生成|整理|制作|"
+        r"为什么|怎么办|怎么做|如何|(?i:\b(?:please|help|write|find|search|summarize)\b)",
+        str(text or ""),
+    ))
+
+
 def prepare_group_reply(text: str, question: str) -> str:
-    """Bound casual replies only; preserve requested task output before formatting."""
-    if _DETAIL_REQUEST.search(question) or "```" in text or re.search(r"https?://|^\s*[\[{]", text):
-        return text.strip()
-    value = trim_chat_followup(text.strip())
-    # Preserve a short literal/code answer: never cut inside structured content.
-    if len(value) <= 180:
-        return value
-    # Reuse quote-aware boundaries so Chinese quotes are never left hanging.
-    sentences = _sentence_parts(format_for_qq(value))
-    selected: list[str] = []
-    for sentence in sentences:
-        if len(selected) >= 2 or len("".join(selected)) + len(sentence) > 180:
-            break
-        selected.append(sentence)
-    if selected:
-        return "".join(selected)
-    # Prefer a complete clause when the model ignored the requested length.
-    clauses = _sentence_parts(format_for_qq(value), clauses=True)
-    if clauses and len(clauses[0]) <= 179:
-        return clauses[0].rstrip("，,；;：:") + "。"
-    # Avoid inventing a replacement answer or a canned follow-up question.
-    closing: list[str] = []
-    excerpt = ""
-    for char in value:
-        next_closing = closing.copy()
-        if next_closing and char == next_closing[-1]:
-            next_closing.pop()
-        elif char in _QUOTE_PAIRS or char == '"':
-            next_closing.append(_QUOTE_PAIRS.get(char, char))
-        if len(excerpt) + 1 + len(next_closing) + 1 > 180:
-            break
-        excerpt += char
-        closing = next_closing
-    return excerpt.rstrip() + "…" + "".join(reversed(closing))
+    """Keep the answer complete; concise conversation is a prompting policy."""
+    return text
 
 
 def split_group_reply(text: Any, *, direct: bool = False) -> list[str]:
     """Keep task output intact and bound short replies to at most two bubbles."""
     value = format_for_qq(text)
-    if len(value) > 240 or "```" in str(text):
+    if len(value) > 240 or "```" in str(text) or _json_payload(value):
         return split_message(value, max_chars=1500)
     parts = _sentence_parts(value)
     # Bound pushes per short turn, even when the model emits many tiny sentences.
-    return parts if len(parts) <= 2 else [parts[0], "\n".join(parts[1:])]
+    return parts if len(parts) <= 2 else [parts[0], "".join(parts[1:])]
 
 
 def _sentence_parts(value: str, *, clauses: bool = False) -> list[str]:
@@ -178,66 +169,81 @@ def _sentence_parts(value: str, *, clauses: bool = False) -> list[str]:
         if boundary and following and following in "。！？!?":
             continue
         if boundary:
-            part = value[start:index + 1].strip()
-            if part:
+            part = value[start:index + 1]
+            if part.strip():
                 parts.append(part)
-            start = index + 1
-    remainder = value[start:].strip()
-    if remainder:
+                start = index + 1
+            elif parts:
+                parts[-1] += part
+                start = index + 1
+    remainder = value[start:]
+    if remainder.strip():
         parts.append(remainder)
-    return parts or [value]
+    elif parts:
+        parts[-1] += remainder
+    return parts
+
+
+def _nonblank_packets(value: str, max_chars: int) -> list[str]:
+    """Redistribute whitespace without altering the payload or emitting blanks.
+
+    Each reachable prefix ends with a packet containing a non-whitespace
+    character. The sliding window finds such a preceding boundary in O(n).
+    This path is only needed when preferred word/line cuts left a blank packet.
+    """
+    predecessors = array("q", [-1]) * (len(value) + 1)
+    reachable = deque([0])
+    last_visible = -1
+    for end, character in enumerate(value, 1):
+        if not character.isspace():
+            last_visible = end - 1
+        while reachable and reachable[0] < end - max_chars:
+            reachable.popleft()
+        if reachable and reachable[0] <= last_visible:
+            predecessors[end] = reachable[0]
+            reachable.append(end)
+    if predecessors[-1] < 0:
+        # For example, one visible character followed by >= max_chars spaces
+        # cannot meet all three constraints. Never silently discard its spaces.
+        raise ValueError("Message cannot be split losslessly into non-blank packets within max_chars")
+    result = []
+    end = len(value)
+    while end:
+        start = predecessors[end]
+        result.append(value[start:end])
+        end = start
+    return list(reversed(result))
 
 
 def split_message(text: Any, *, max_chars: int = DEFAULT_MAX_CHARS) -> list[str]:
-    """Split by paragraphs/lines before using a hard character boundary."""
+    """Lossless non-blank packets; pure whitespace has no deliverable content.
+
+    Raise ValueError when mixed content cannot fit the packet limit without a
+    whitespace-only packet. This is preferable to silently damaging code/data.
+    """
     value = "" if text is None else str(text)
     if max_chars <= 0:
         raise ValueError("max_chars must be positive")
-    if not value:
-        return [""]
+    if not value.strip():
+        return []
     if len(value) <= max_chars:
         return [value]
     chunks: list[str] = []
-    current = ""
-
-    def append_piece(piece: str) -> None:
-        nonlocal current
-        if not piece:
-            return
-        if len(piece) <= max_chars - len(current):
-            current += piece
-            return
-        if current:
-            chunks.append(current.rstrip("\n"))
-            current = ""
-        remaining = piece
-        while len(remaining) > max_chars:
-            # Prefer the last whitespace in this segment, preserving readable
-            # words without ever exceeding the protocol limit.
-            cut = max(remaining.rfind(" ", 0, max_chars + 1), remaining.rfind("\n", 0, max_chars + 1))
-            if cut <= 0:
-                cut = max_chars
-            chunks.append(remaining[:cut].rstrip())
-            remaining = remaining[cut:].lstrip(" \n")
-        current = remaining
-
-    paragraphs = re.split(r"(\n\s*\n)", value)
-    for part in paragraphs:
-        if not part:
-            continue
-        if re.fullmatch(r"\n\s*\n", part or ""):
-            if current and len(current) + len(part) <= max_chars:
-                current += part
-            elif current:
-                chunks.append(current.rstrip("\n"))
-                current = ""
-            continue
-        pieces = part.splitlines(keepends=True)
-        for piece in pieces:
-            append_piece(piece)
-    if current:
-        chunks.append(current.rstrip("\n"))
-    return chunks or [""]
+    offset = 0
+    while len(value) - offset > max_chars:
+        segment = value[offset:offset + max_chars]
+        # Include the separator in the preceding packet, so concatenation is
+        # exact and indentation on the following line remains untouched.
+        cut = segment.rfind("\n") + 1
+        if not cut:
+            cut = segment.rfind(" ") + 1
+        if not cut or not segment[:cut].strip():
+            cut = max_chars
+        chunks.append(value[offset:offset + cut])
+        offset += cut
+    if offset < len(value):
+        chunks.append(value[offset:])
+    return _nonblank_packets(value, max_chars) if any(not chunk.strip() for chunk in chunks) else chunks
 
 
 def chunk_messages(
@@ -271,4 +277,5 @@ def format_and_chunk(
 
 __all__ = [
     "MessageChunk", "format_for_qq", "format_text", "split_message", "chunk_messages", "format_and_chunk",
+    "is_explicit_request", "prepare_group_reply", "split_group_reply",
 ]

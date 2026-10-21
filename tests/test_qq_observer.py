@@ -147,6 +147,31 @@ class ObserverTests(IsolatedAsyncioTestCase):
         self.assertEqual(adapter.attachment_calls, [])
         self.assertEqual(adapter.handled, 0)
 
+    async def test_nested_image_only_103_is_observed_without_leaking_signed_url_metadata(self):
+        for message_type in (103, "103"):
+            with self.subTest(message_type=message_type):
+                records = []
+                adapter = FakeQQAdapter()
+                value = payload("nested-" + str(type(message_type)), text="")
+                value["d"]["attachments"] = []
+                value["d"]["message_type"] = message_type
+                value["d"]["msg_elements"] = [{"msg_elements": [{
+                    "msg_id": "original-quoted-message",
+                    "attachments": [{"content_type": "image/png", "filename": f"{index}.png",
+                                     "url": f"https://signed.invalid/{index}?secret=token"}
+                                    for index in range(7)],
+                }]}]
+                await qq_observer._observe_message(adapter, value, records.append)
+                self.assertEqual(len(records), 1)
+                record = records[0]
+                self.assertEqual(record["media_types"], ["image/png"] * 5)
+                self.assertEqual(record["attachment_status"], "deferred")
+                self.assertEqual(record["reply_to_message_id"], "original-quoted-message")
+                self.assertNotIn("secret=", repr(record["raw"]))
+                self.assertNotIn("secret=", repr(record["msg_elements"]))
+                self.assertIn("secret=", repr(record["_dispatch_payload"]))
+                self.assertEqual(adapter.attachment_calls, [])
+
     async def test_at_message_keeps_original_dispatch_path(self):
 
         records = []

@@ -11,17 +11,36 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024
 IMAGE_TYPES = frozenset({"image", "image_url", "input_image"})
 
 
-def image_attachments(payload):
+def _elements(payload):
+    value = payload.get("msg_elements") if isinstance(payload, Mapping) else None
+    return value if isinstance(value, list) else []
+
+
+def payload_attachments(payload):
+    """Use the same current/quoted attachment view for every QQ ingress path."""
     if not isinstance(payload, Mapping):
         return []
     attachments = []
-    if str(payload.get("message_type")) == "103":
-        for element in payload.get("msg_elements") or []:
+
+    def collect_quoted(node):
+        for element in _elements(node):
             if isinstance(element, Mapping):
-                attachments.extend(element.get("attachments") or [])
-    attachments.extend(payload.get("attachments") or [])
-    return [a for a in attachments if isinstance(a, Mapping)
-            and str(a.get("content_type", "")).lower().startswith("image/")]
+                collect_quoted(element)
+                value = element.get("attachments")
+                if isinstance(value, list):
+                    attachments.extend(value)
+
+    if str(payload.get("message_type")) == "103":
+        collect_quoted(payload)
+    direct = payload.get("attachments")
+    if isinstance(direct, list):
+        attachments.extend(direct)
+    return [item for item in attachments if isinstance(item, Mapping)]
+
+
+def image_attachments(payload):
+    return [a for a in payload_attachments(payload)
+            if str(a.get("content_type", "")).lower().startswith("image/")]
 
 
 def limit_attachments(attachments, limit=MAX_IMAGES):
@@ -41,20 +60,65 @@ def limit_attachments(attachments, limit=MAX_IMAGES):
 
 def limit_payload_images(payload):
     """Share one download budget across direct and quoted attachments."""
-    result = dict(payload)
-    result["attachments"] = limit_attachments(payload.get("attachments"))
-    remaining = MAX_IMAGES - len(image_attachments({"attachments": result["attachments"]}))
-    elements = []
-    for element in reversed(payload.get("msg_elements") or []):
+    if not isinstance(payload, Mapping):
+        return {}
+    remaining = MAX_IMAGES
+
+    def bounded(node):
+        nonlocal remaining
+        result = dict(node)
+        result["attachments"] = limit_attachments(node.get("attachments"), remaining)
+        remaining -= len(image_attachments({"attachments": result["attachments"]}))
+        if "msg_elements" in node:
+            # Visit newer quoted elements first, after this message's images.
+            result["msg_elements"] = list(reversed([
+                bounded(element) if isinstance(element, Mapping) else element
+                for element in reversed(_elements(node))
+            ]))
+        return result
+
+    return bounded(payload)
+
+
+def reply_reference_id(payload):
+    if not isinstance(payload, Mapping):
+        return ""
+    direct = str(payload.get("reply_to_message_id") or "").strip()
+    if direct:
+        return direct
+    for element in _elements(payload):
         if not isinstance(element, Mapping):
-            elements.append(element)
             continue
-        element = dict(element)
-        element["attachments"] = limit_attachments(element.get("attachments"), remaining)
-        remaining -= len(image_attachments({"attachments": element["attachments"]}))
-        elements.append(element)
-    if "msg_elements" in payload:
-        result["msg_elements"] = list(reversed(elements))
+        for key in ("message_id", "msg_id", "id"):
+            value = str(element.get(key) or "").strip()
+            if value:
+                return value
+        nested = reply_reference_id(element)
+        if nested:
+            return nested
+    return ""
+
+
+def attachment_metadata(attachments):
+    """Signed attachment URLs stay in transient dispatch data, never metadata."""
+    return [{key: item[key] for key in ("content_type", "filename", "size")
+             if key in item and item[key] is not None}
+            for item in attachments if isinstance(item, Mapping)]
+
+
+def quoted_metadata(payload):
+    result = []
+    for element in _elements(payload):
+        if not isinstance(element, Mapping):
+            continue
+        item = {key: element[key] for key in ("message_id", "msg_id", "id", "message_type", "content")
+                if key in element}
+        attachments = element.get("attachments")
+        if isinstance(attachments, list):
+            item["attachments"] = attachment_metadata(attachments)
+        if "msg_elements" in element:
+            item["msg_elements"] = quoted_metadata(element)
+        result.append(item)
     return result
 
 

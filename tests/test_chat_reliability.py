@@ -37,34 +37,32 @@ class ChatReliabilityTests(unittest.TestCase):
         registry, _, marker = self.registry()
         self.assertEqual(registry.transform(SILENT_MARKER, marker), SILENT_MARKER)
 
-    def test_screenshot_style_reply_is_short_even_when_mentioned(self):
+    def test_conversation_keeps_model_answer_complete_and_removes_only_canned_closing(self):
         raw = '从《球状闪电》入门挺有意思。忘了细节也没关系。' + '这种书留在脑子里的往往是几个画面。' * 20 + '\n你呢？'
         for direct in (True, False):
             registry, record, marker = self.registry(direct=direct)
             result = registry.transform(json.dumps({'action': 'reply', 'message': raw}), marker)
-            self.assertEqual(result, '从《球状闪电》入门挺有意思。忘了细节也没关系。')
+            self.assertEqual(result, raw)
             self.assertEqual(record.pending_message, result)
-            self.assertLessEqual(len(split_group_reply(result)), 2)
+            self.assertEqual(''.join(split_group_reply(result)), result)
 
     def test_explicit_tasks_and_private_chats_preserve_full_answer(self):
         body = '第一步，检查配置。\n' * 100
         for question, private in [('详细解释这本书', False), ('给我排查步骤', False), ('请写代码', False), ('闲聊', True)]:
             registry, _, marker = self.registry(question=question, private=private)
-            self.assertEqual(registry.transform(json.dumps({'action': 'reply', 'message': body}), marker), body.strip())
+            self.assertEqual(registry.transform(json.dumps({'action': 'reply', 'message': body}), marker), body)
 
     def test_code_and_urls_are_not_cut_by_casual_safeguard(self):
         for text in ('```python\n' + 'print(1)\n' * 100 + '```', 'https://example.com/' + 'a' * 200):
             self.assertEqual(prepare_group_reply(text, '看看这个'), text)
 
-    def test_long_first_sentence_prefers_complete_clause(self):
-        self.assertEqual(prepare_group_reply('忘了细节也正常，' + '记住那些画面就够了' * 40, '我忘了'), '忘了细节也正常。')
-        self.assertLessEqual(len(prepare_group_reply('哈' * 500, '闲聊')), 180)
-        quoted = prepare_group_reply('他说“' + '长句' * 200 + '”。', '闲聊')
-        self.assertLessEqual(len(quoted), 180)
-        self.assertTrue(quoted.endswith('…”'))
+    def test_long_sentences_and_quotes_are_not_truncated(self):
+        for body in ('忘了细节也正常，' + '记住那些画面就够了' * 40,
+                     '哈' * 500, '他说“' + '长句' * 200 + '”。'):
+            self.assertEqual(prepare_group_reply(body, '闲聊'), body)
 
     def test_short_reply_avoids_canned_followup_and_many_bubbles(self):
-        self.assertEqual(prepare_group_reply('终于跑通了。你呢？', '终于跑通'), '终于跑通了。')
+        self.assertEqual(prepare_group_reply('终于跑通了。你呢？', '终于跑通'), '终于跑通了。你呢？')
         self.assertEqual(prepare_group_reply('报错在哪一行？', '我遇到点问题'), '报错在哪一行？')
         self.assertEqual(len(split_group_reply('好。行。收到。可以。知道了。')), 2)
 

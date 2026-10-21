@@ -24,7 +24,7 @@ class FormatterTests(unittest.TestCase):
                          ['他说“你好！”然后离开。', '下一句。'])
 
     def test_group_bubbles_are_short_and_long_requested_answers_survive(self):
-        self.assertEqual(split_group_reply("终于跑通了。\n这次可以歇口气了！"), ["终于跑通了。", "这次可以歇口气了！"])
+        self.assertEqual(split_group_reply("终于跑通了。\n这次可以歇口气了！"), ["终于跑通了。\n", "这次可以歇口气了！"])
         chunks = split_group_reply("分享。" * 100)
         self.assertLessEqual(len(chunks), 3)
         self.assertEqual("".join(chunks), "分享。" * 100)
@@ -71,6 +71,33 @@ class FormatterTests(unittest.TestCase):
         chunks = split_message("a" * 31, max_chars=10)
         self.assertEqual("".join(chunks), "a" * 31)
         self.assertTrue(all(len(item) <= 10 for item in chunks))
+
+    def test_short_bubbles_preserve_every_original_separator(self):
+        for text in ("  好。  收到。 行。  ", "第一句。\n\n第二句。\n第三句。",
+                     "第一行\n  第二行\n\t第三行", "One!  Two? Three!  ",
+                     "  他说：“第一句？\n第二句！” 然后结束。  下一句。"):
+            with self.subTest(text=text):
+                pieces = split_group_reply(text)
+                self.assertLessEqual(len(pieces), 2)
+                self.assertEqual("".join(pieces), format_for_qq(text))
+                self.assertTrue(all(piece.strip() for piece in pieces))
+
+    def test_whitespace_tail_and_internal_runs_are_redistributed_losslessly(self):
+        for text in ("a" * 1499 + "  ", "a" * 1500 + " \n\t",
+                     " " * 1499 + "ab", "AA" + " " * 2998 + "B",
+                     "A" + " " * 2998 + "BB"):
+            with self.subTest(prefix=text[:20], size=len(text)):
+                pieces = split_message(text)
+                self.assertEqual("".join(pieces), text)
+                self.assertTrue(all(0 < len(piece) <= 1500 and piece.strip() for piece in pieces))
+
+    def test_whitespace_only_and_impossible_mixed_content_have_explicit_boundaries(self):
+        for text in ("", " ", "\n\t" * 2000):
+            self.assertEqual(split_message(text), [])
+            self.assertEqual(split_group_reply(text), [])
+        for text in ("a" + " " * 1500, " " * 1500 + "a", "A" + " " * 2999 + "B"):
+            with self.subTest(size=len(text)), self.assertRaisesRegex(ValueError, "non-blank packets"):
+                split_message(text)
 
 
 if __name__ == "__main__":

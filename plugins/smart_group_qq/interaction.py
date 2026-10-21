@@ -44,7 +44,6 @@ NO_ARGS = {
     "reset",
     "clear",
     "status",
-    "summary",
     "rules",
     "值日表",
     "角色",

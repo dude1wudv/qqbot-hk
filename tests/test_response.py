@@ -28,7 +28,7 @@ from smart_group_qq.response import (
 
 class ResponseTests(unittest.TestCase):
     def test_parse_accepts_only_the_two_field_envelope(self):
-        self.assertEqual(parse_reply_decision('{"action":"reply","message":"  先检查超时。 "}'), ("reply", "先检查超时。"))
+        self.assertEqual(parse_reply_decision('{"action":"reply","message":"  先检查超时。 "}'), ("reply", "  先检查超时。 "))
         self.assertEqual(parse_reply_decision('{"action":"ignore","message":"不应发送的解释"}'), ("ignore", None))
 
         for value in (
@@ -139,12 +139,13 @@ class ResponseTests(unittest.TestCase):
         output = registry.transform(raw, "无标记的原生 QQ 请求")
         self.assertEqual(output, "确实，官key便宜了。\n\n**luna** 留给长推理。")
         self.assertEqual(format_for_qq(output), "确实，官key便宜了。\n\nluna 留给长推理。")
-        self.assertEqual(split_group_reply(output)[0], "确实，官key便宜了。")
+        self.assertEqual(split_group_reply(output)[0], "确实，官key便宜了。\n\n")
+        self.assertEqual("".join(split_group_reply(output)), format_for_qq(output))
 
     def test_unmarked_and_private_native_envelopes_are_converted_once(self):
         literal = '{"action":"ignore","message":null}'
         cases = (
-            ('{"action":"reply","message":"  **答案**  "}', "**答案**"),
+            ('{"action":"reply","message":"  **答案**  "}', "  **答案**  "),
             ("{'action':'reply','message':'答案'}", "答案"),
             ('```json\n{"action":"reply","message":"答案"}\n```', "答案"),
             (json.dumps({"action": "reply", "message": literal}), literal),
@@ -264,7 +265,7 @@ class ResponseTests(unittest.TestCase):
         self.assertEqual(registry.transform('{"action":"reply","message":"答案"}', marker), "答案")
         self.assertIs(registry.pending_for_send("group-a", "message-a"), record)
         self.assertTrue(registry.send_allowed(record))
-        registry.finish_send(record, SimpleNamespace(success=False))
+        registry.finish_send(record, SimpleNamespace(success=False), failure_state="failed")
         self.assertEqual(registry.size, 1)
         self.assertEqual(audits[-1][0][0], "reply_failed")
         registry.finish_send(record, SimpleNamespace(success=True))

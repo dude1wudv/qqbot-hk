@@ -9,6 +9,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
+from .llm_policy import REQUEST_TIMEOUT_SECONDS
 
 
 MAX_RULE_TEXT = 1500
@@ -172,7 +173,7 @@ async def semantic_moderation(
     text: Any,
     *,
     enabled: bool = False,
-    timeout_seconds: float = 5,
+    timeout_seconds: float = REQUEST_TIMEOUT_SECONDS,
     min_confidence: float = 0.92,
     notice: str = "此消息未能通过群聊安全审核。",
 ) -> Decision:
@@ -234,7 +235,7 @@ class PolicyEngine:
         )
         semantic = moderation.get("semantic", {})
         self.semantic_enabled = bool(semantic.get("enabled", False))
-        self.semantic_timeout = float(semantic.get("timeout_seconds", 5))
+        self.semantic_timeout = float(semantic.get("timeout_seconds", REQUEST_TIMEOUT_SECONDS))
         self.semantic_min_confidence = float(semantic.get("min_confidence", 0.92))
         self.semantic_notice = str(semantic.get("notice", "此消息未能通过群聊安全审核。"))[:MAX_RULE_TEXT]
         self.keyword_rules, self.keyword_errors = compile_rule_list(

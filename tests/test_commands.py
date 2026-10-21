@@ -104,6 +104,17 @@ class CommandTests(unittest.TestCase):
         self.assertIsNone(parse_command("/unknown"))
         self.assertIsNone(parse_command("普通问题"))
 
+    def test_summary_arguments_are_preserved_instead_of_running_a_forced_refresh(self):
+        for text, argument in (("/summary", ""), ("/summary status", "status"),
+                               ("<@bot> ／SUMMARY retry", "retry"),
+                               ("/summary unexpected input", "unexpected input")):
+            with self.subTest(text=text):
+                command = parse_command(text)
+                self.assertEqual(command.name, "summary")
+                self.assertEqual(command.argument, argument)
+        self.assertIn("/summary status", help_text())
+        self.assertIn("/summary retry", help_text())
+
 
 if __name__ == "__main__":
     unittest.main()

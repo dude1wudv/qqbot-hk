@@ -69,7 +69,8 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
                 count = len(self.calls)
                 if count == cancel_at:
                     registry.cancel_group("g")
-                return SimpleNamespace(success=count != fail_at, message_id=f"bubble-{count}")
+                return SimpleNamespace(success=count != fail_at, message_id=f"bubble-{count}",
+                                       retryable=True, error="QQ Bot API error [429] synthetic")
 
         adapter = Adapter()
         _configure_adapter(adapter, registry)
@@ -82,10 +83,10 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await adapter.send("g", content, reply_to="anchor")).success)
         self.assertEqual(adapter.calls, [
             ("g", "终于跑通了。", "anchor"),
-            ("g", "可以歇口气了！", "anchor"),
-            ("g", "可以歇口气了！", "anchor"),
+            ("g", "可以歇口气了！你呢？", "anchor"),
+            ("g", "可以歇口气了！你呢？", "anchor"),
         ])
-        self.assertEqual(delivered, ["终于跑通了。\n可以歇口气了！"])
+        self.assertEqual(delivered, ["终于跑通了。可以歇口气了！你呢？"])
         self.assertEqual(record.sent_message_ids, ["bubble-1", "bubble-3"])
         self.assertEqual(["message_reference" in body for body in adapter.bodies], [True, False, False])
         self.assertTrue(all(body["msg_id"] == "anchor" for body in adapter.bodies))

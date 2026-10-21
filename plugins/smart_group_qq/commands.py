@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 _MENTION = re.compile(r"^(?:<@!?[^>]+>|@[^\s/／]+)\s*")
-_COMMAND = re.compile(r"^[／/]([A-Za-z]+|值日表)(?:\s+.*)?$")
+_COMMAND = re.compile(r"^[／/]([A-Za-z]+|值日表)(?:\s+(.*))?$", re.DOTALL)
 _PROFILE_COMMAND = re.compile(
     r"^/(我的记忆|记住我|纠正记忆|忘记我|停止记忆)(?:\s+(.*))?$",
     re.DOTALL,
@@ -30,6 +30,7 @@ _NATIVE_GROUP_PASSTHROUGH = frozenset({"commands", "compress", "new"})
 @dataclass(frozen=True)
 class Command:
     name: str
+    argument: str = ""
 
 
 @dataclass(frozen=True)
@@ -70,7 +71,7 @@ def parse_command(value: Any) -> Command | None:
     if not match:
         return None
     name = _ALIASES.get(match.group(1).lower(), match.group(1).lower())
-    return Command(name) if name in _SUPPORTED else None
+    return Command(name, str(match.group(2) or "").strip() if name == "summary" else "") if name in _SUPPORTED else None
 
 
 def parse_profile_command(value: Any) -> ProfileCommand | None:
@@ -134,7 +135,8 @@ def help_text() -> str:
         "/宠物、/喂食、/摸摸、/宠物取名 名字\n/剧情 设定、/投票 1或2、/结束剧情\n/表情库 查看本群分类；/表情 心情 发一张\n"
         "/help 功能说明\n/reset、/clear 或 /new 重置当前会话\n"
         "/compress 立即重试上下文压缩（上下文过大时）\n/approve /cancel /deny 仅私聊可处理工具确认提示\n"
-        "/status 运行状态\n/summary 近期互动摘要\n/rules 已启用规则\n"
+        "/status 运行状态\n/summary 查看或更新近期摘要（无新消息时用缓存）\n"
+        "/summary status 查看整理进度；/summary retry 显式重试失败任务\n/rules 已启用规则\n"
         "/deepseek 切回当前会话的 DeepSeek\n"
         "/low /medium /high /xhigh /max 切换当前会话推理强度（DeepSeek 的 xhigh 实际按 max 请求）\n"
         "/kb 知识库\n/我的记忆 [关键词] 查看或搜索个人记忆，例如 /我的记忆 项目\n/记住我：内容 保存或更新个人信息\n"

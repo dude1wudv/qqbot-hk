@@ -40,6 +40,7 @@ compression:
 providers:
   sub2api_deepseek:
     base_url: http://sub2api:8080/v1
+    request_timeout_seconds: 300
     key_env: SUB2API_DEEPSEEK_API_KEY
     api_mode: chat_completions
     discover_models: false
@@ -60,6 +61,12 @@ auxiliary:
     provider: sub2api_deepseek
     model: deepseek/deepseek-v4.1-flash
     reasoning_effort: low
+    timeout: 300
+  vision:
+    provider: sub2api_deepseek
+    model: deepseek/deepseek-v4.1-flash
+    reasoning_effort: low
+    timeout: 300
 
 voice:
   auto_tts: false
@@ -124,7 +131,7 @@ plugins:
           # Optional narration runs only when a user starts/advances an adventure.
           # The persisted branching state remains usable if the model times out.
           story_narration_enabled: true
-          story_timeout_seconds: 8
+          story_timeout_seconds: 300
           conversation_recall_enabled: true
           recall_cooldown_seconds: 3600
         stickers:
@@ -154,7 +161,7 @@ plugins:
               enabled: true
           semantic:
             enabled: false
-            timeout_seconds: 5
+            timeout_seconds: 300
             min_confidence: 0.92
             notice: 此消息未能通过群聊安全审核。
         memory:
@@ -192,7 +199,7 @@ plugins:
             enabled: true
             cooldown_seconds: 15
             max_age_seconds: 120
-            timeout_seconds: 12
+            timeout_seconds: 300
             min_confidence: 0.70
             # 0 disables local frequency/retreat limits; platform quotas still apply.
             max_interjections_per_minute: 2
