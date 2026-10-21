@@ -60,10 +60,11 @@ class MemberMemoryTests(unittest.IsolatedAsyncioTestCase):
 
         ctx = type("Ctx", (), {"llm": LLM()})()
         self.memory.touch("group-a", "member-a")
-        self.assertEqual(await self.memory.extract(ctx, "group-a", "member-a", "我负责北斗", source_kind="ambient"), 0)
+        self.assertEqual((await self.memory.extract(ctx, "group-a", "member-a", "我负责北斗", source_kind="ambient")).status, "empty")
         self.store.set_member_consent("group-a", "member-a", "opted_in")
         stored = await self.memory.extract(ctx, "group-a", "member-a", "我负责北斗", source_kind="ambient")
-        self.assertEqual(stored, 1)
+        self.assertEqual(stored.stored, 1)
+        self.assertEqual(stored.status, "success")
         self.assertIn("北斗", self.memory.presentation("group-a", "member-a"))
 
     def test_explicit_correction_supersedes_inferred_fact_across_categories(self):
@@ -122,7 +123,7 @@ class MemberMemoryTests(unittest.IsolatedAsyncioTestCase):
             type("Ctx", (), {"llm": LLM()})(), "group-a", "member-a", "我负责北斗",
             source_kind="addressed",
         )
-        self.assertEqual(stored, 1)
+        self.assertEqual(stored.stored, 1)
         self.assertEqual([item["fact_value"] for item in self.memory.facts("group-a", "member-a")], ["北斗"])
 
     async def test_forget_then_reopt_in_blocks_old_extraction(self):
@@ -147,7 +148,7 @@ class MemberMemoryTests(unittest.IsolatedAsyncioTestCase):
         self.memory.forget("group-a", "member-a")
         self.memory.remember("group-a", "member-a", "偏好=保留新授权")
         resume.set()
-        self.assertEqual(await task, 0)
+        self.assertEqual((await task).stored, 0)
         values = [item["fact_value"] for item in self.memory.facts("group-a", "member-a")]
         self.assertIn("保留新授权", values)
         self.assertNotIn("旧提取", values)
@@ -193,7 +194,7 @@ class MemberMemoryTests(unittest.IsolatedAsyncioTestCase):
         await started.wait()
         self.memory.forget("group-a", "member-a")
         resume.set()
-        self.assertEqual(await task, 0)
+        self.assertEqual((await task).stored, 0)
         self.assertIsNone(self.store.get_group_member("group-a", "member-a"))
         self.assertEqual(self.store.list_member_memory_facts("group-a", "member-a"), [])
 

@@ -610,7 +610,11 @@ class KnowledgeBase:
     list_documents = list_knowledge_documents
 
     def remove_knowledge_document(self, group_id: str, doc_id: str) -> bool:
-        return bool(self.store.remove_knowledge_document(str(group_id), _as_nonempty(doc_id, "doc_id")))
+        document_id = _as_nonempty(doc_id, "doc_id")
+        resolver = getattr(self.store, "resolve_legacy_document_id", None)
+        if callable(resolver) and document_id.isdecimal():
+            document_id = str(resolver(str(group_id), int(document_id)))
+        return bool(self.store.remove_knowledge_document(str(group_id), document_id))
 
     remove_document = remove_knowledge_document
 

@@ -8,6 +8,7 @@ import time
 from typing import Any, Mapping
 
 from .store import MAX_COMPACTION_FAILURES
+from .llm_policy import complete as complete_llm
 
 SUMMARY_TIMEOUT_SECONDS = 300
 
@@ -190,8 +191,11 @@ class GroupMemory:
         read_job = getattr(self.store, "get_compaction_job", None)
         job = read_job(group_id) if callable(read_job) else None
         if job is not None:
+            if job["status"] == "paused":
+                return False
             if job["status"] == "running":
-                return job["lease_until"] is not None and float(job["lease_until"]) <= stamp
+                return (int(job["attempt"] or 0) < MAX_COMPACTION_FAILURES
+                        and job["lease_until"] is not None and float(job["lease_until"]) <= stamp)
             if job["status"] in {"pending", "failed"}:
                 return (int(job["attempt"] or 0) < MAX_COMPACTION_FAILURES
                         and float(job["next_retry_at"] or 0) <= stamp)
@@ -236,18 +240,19 @@ class GroupMemory:
             last_id = int(row["id"])
         return "\n".join(lines), last_id, state
 
-    async def refresh_ai(self, ctx: Any, group_id: str, *, force: bool = False) -> dict[str, Any]:
+    async def refresh_ai(self, ctx: Any, group_id: str, *, force: bool = False, max_batches: int | None = None) -> dict[str, Any]:
         lock = self._refresh_locks.setdefault(str(group_id), asyncio.Lock())
         async with lock:
-            return await self._refresh_ai_locked(ctx, group_id, force=force)
+            return await self._refresh_ai_locked(ctx, group_id, force=force, max_batches=max_batches)
 
-    async def _refresh_ai_locked(self, ctx: Any, group_id: str, *, force: bool = False) -> dict[str, Any]:
+    async def _refresh_ai_locked(self, ctx: Any, group_id: str, *, force: bool = False, max_batches: int | None = None) -> dict[str, Any]:
+        batch_limit = self.max_compaction_batches if max_batches is None else max(1, min(self.max_compaction_batches, int(max_batches)))
         epoch = self.store.memory_epoch(group_id)
         state = self.store.memory_payload(group_id)
         previous = state.get("structured") if isinstance(state.get("structured"), Mapping) else {}
         if not force and not self.needs_refresh(group_id):
             return previous
-        source, last_id, state = self._summary_source(group_id, allow_recent_fallback=force)
+        source, last_id, state = self._summary_source(group_id, allow_recent_fallback=False)
         if not source:
             return previous
         cursor = int(state.get("last_history_id", 0))
@@ -272,7 +277,7 @@ class GroupMemory:
             if callable(enqueue) and callable(claim):
                 job_id = int(enqueue(group_id, cursor, last_id) or 0)
                 leased = claim(job_id, force=force,
-                               lease_seconds=SUMMARY_TIMEOUT_SECONDS * self.max_compaction_batches + 30)
+                               lease_seconds=SUMMARY_TIMEOUT_SECONDS * batch_limit + 30)
                 if job_id and leased is None:
                     # Another worker owns this group or the job is in backoff.
                     return previous
@@ -320,7 +325,7 @@ class GroupMemory:
         batches = 0
         while source:
             try:
-                result = await asyncio.wait_for(complete(
+                result = await complete_llm(complete,
                     system_prompt=instructions,
                     instructions="整理以下群记忆与新增消息，按给定结构输出完整 JSON。",
                     input=[
@@ -329,11 +334,10 @@ class GroupMemory:
                     ],
                     json_schema=SUMMARY_SCHEMA,
                     schema_name="qq_group_memory",
-                    timeout=SUMMARY_TIMEOUT_SECONDS,
                     temperature=0.1,
                     purpose="qq_group_memory_compaction",
                     task="compression",
-                ), timeout=SUMMARY_TIMEOUT_SECONDS)
+                )
                 parsed = getattr(result, "parsed", None)
                 if parsed is None and isinstance(result, Mapping):
                     parsed = result.get("parsed", result)
@@ -366,7 +370,7 @@ class GroupMemory:
                     finish(job_id, True)
                 return payload
             last_id = next_id
-            if batches >= self.max_compaction_batches:
+            if batches >= batch_limit:
                 defer = getattr(self.store, "defer_compaction_job", None)
                 if job_id and callable(defer):
                     defer(job_id, from_history_id=current_cursor, to_history_id=self.store.latest_history_id(group_id))
@@ -428,6 +432,58 @@ class GroupMemory:
 
     def summary(self, group_id: str) -> str:
         return self.presentation(group_id)
+
+    def status(self, group_id: str) -> dict[str, Any]:
+        state = self.store.memory_payload(group_id)
+        cursor = int(state.get("last_history_id", 0))
+        with self.store._lock:
+            pending = int(self.store.db.execute(
+                "SELECT COUNT(*) FROM group_history WHERE group_id=? AND id>?", (str(group_id), cursor)
+            ).fetchone()[0])
+        job = self.store.get_compaction_job(group_id)
+        attempt = int(job["attempt"] or 0) if job else 0
+        running = bool(job and job["status"] == "running" and float(job["lease_until"] or 0) > time.time())
+        return {
+            "cursor": cursor, "pending_count": pending, "summary": str(state.get("summary") or ""),
+            "updated_at": float(state.get("updated_at") or 0), "job_status": job["status"] if job else "idle",
+            "attempt": attempt, "retry_at": float(job["next_retry_at"] or 0) if job else 0,
+            "running": running, "blocked": bool(job and not running and (
+                job["status"] == "paused" or attempt >= MAX_COMPACTION_FAILURES)),
+            "paused": bool(job and job["status"] == "paused"),
+            "error": str(job["error"] or "") if job else "",
+        }
+
+    def recall(self, group_id: str, query: str = "", *, char_budget: int = 800, overview_chars: int = 200) -> str:
+        """Select whole relevant facts/tasks instead of truncating the display summary."""
+        budget = max(0, int(char_budget))
+        if not budget:
+            return ""
+        payload = self.store.memory_payload(group_id).get("structured") or {}
+        if not payload:
+            return ""
+        overview = _redact(payload.get("summary", "")).strip()[:min(budget, max(0, int(overview_chars)))]
+        terms = self.store._search_terms(query)
+        candidates = []
+        for key, label, priority in (("decisions", "决定", 3), ("todos", "待办", 2),
+                                     ("facts", "事实", 1), ("open_questions", "待确认", 0)):
+            for index, item in enumerate(_string_list(payload.get(key), limit=20)):
+                score = len(terms & self.store._search_terms(item))
+                if terms and not score and key == "facts":
+                    continue
+                candidates.append((score, priority, -index, f"{label}：{item}"))
+        candidates.sort(reverse=True)
+        lines = [overview] if overview else []
+        seen = set()
+        used = len(overview)
+        for _, _, _, line in candidates:
+            if line in seen:
+                continue
+            extra = len(line) + bool(lines)
+            if used + extra <= budget:
+                lines.append(line)
+                used += extra
+                seen.add(line)
+        return "\n".join(lines)
 
     def background(self, group_id: str, *, include_recent: bool = True) -> str:
         state = self.store.memory_payload(group_id)

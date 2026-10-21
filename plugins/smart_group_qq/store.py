@@ -28,7 +28,11 @@ from .expressions import STICKER_CATEGORIES
 
 PENDING_STALE_SECONDS = 300.0
 MAX_COMPACTION_FAILURES = 3
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+_HISTORY_WITHOUT_PENDING_EXTRACTION = (
+    " AND NOT EXISTS (SELECT 1 FROM member_extraction_jobs j WHERE j.source_history_id=group_history.id "
+    "AND j.status IN ('pending','running','failed') AND j.attempt<3)"
+)
 _SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
     re.compile(r"\bghp_[A-Za-z0-9]{12,}\b"),
@@ -54,6 +58,8 @@ class Store:
         else:
             self.db = database
         self._lock = threading.RLock()
+        self._transaction_depth = 0
+        self._memory_backlog_cursor = ""
         # A plugin_db connection is a sqlite3 connection in Hermes 0.21.0.
         # Keep this setup deliberately narrow so no alternate storage backend
         # is silently invented.
@@ -345,6 +351,39 @@ class Store:
                 "UPDATE character_state SET payload=json_remove(payload,"
                 "'$.next_tick','$.failures','$.proactive','$.platform_blocked') WHERE json_valid(payload)"
             )
+        self._ensure_column("character_commands", "epoch", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("character_commands", "delivery_status", "TEXT NOT NULL DEFAULT 'pending'")
+        self._ensure_column("character_commands", "sent_chunks_json", "TEXT NOT NULL DEFAULT '[]'")
+        self._ensure_column("character_commands", "updated_at", "REAL NOT NULL DEFAULT 0")
+        self._ensure_column("character_commands", "result_prepared", "INTEGER NOT NULL DEFAULT 0")
+        self.db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS member_extraction_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT NOT NULL, member_ref TEXT NOT NULL,
+                source_history_id INTEGER NOT NULL, source_digest TEXT NOT NULL,
+                source_kind TEXT NOT NULL, epoch INTEGER NOT NULL,
+                profile_version INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending', attempt INTEGER NOT NULL DEFAULT 0,
+                next_retry_at REAL NOT NULL DEFAULT 0, lease_until REAL,
+                error TEXT NOT NULL DEFAULT '', stored INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                UNIQUE(group_id,source_history_id,source_digest)
+            );
+            CREATE INDEX IF NOT EXISTS idx_member_extraction_ready
+                ON member_extraction_jobs(status,next_retry_at,id);
+            CREATE TABLE IF NOT EXISTS qq_context_checkpoints (
+                session_key TEXT PRIMARY KEY, scope TEXT NOT NULL, epoch INTEGER NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 1, payload_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_qq_context_scope ON qq_context_checkpoints(scope);
+            """
+        )
+        if stored_schema_version < 7:
+            # A pre-upgrade send may already have reached QQ. Never replay it
+            # automatically merely because its old receipt lacked delivery state.
+            self.db.execute("UPDATE character_commands SET delivery_status='unknown', updated_at=created")
         if stored_schema_version < SCHEMA_VERSION:
             self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.db.commit()
@@ -362,14 +401,28 @@ class Store:
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
+            depth = self._transaction_depth
+            savepoint = f"qq_store_{depth}"
             try:
-                if not self.db.in_transaction:
+                if depth:
+                    self.db.execute(f"SAVEPOINT {savepoint}")
+                elif not self.db.in_transaction:
                     self.db.execute("BEGIN IMMEDIATE")
+                self._transaction_depth += 1
                 yield self.db
-                self.db.commit()
+                if depth:
+                    self.db.execute(f"RELEASE SAVEPOINT {savepoint}")
+                else:
+                    self.db.commit()
             except Exception:
-                self.db.rollback()
+                if depth:
+                    self.db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    self.db.execute(f"RELEASE SAVEPOINT {savepoint}")
+                else:
+                    self.db.rollback()
                 raise
+            finally:
+                self._transaction_depth = depth
 
     def claim_message(
         self,
@@ -677,6 +730,13 @@ class Store:
             "ON CONFLICT(group_id) DO UPDATE SET epoch=epoch+1",
             (str(group_id),),
         )
+        self.db.execute("DELETE FROM member_extraction_jobs WHERE group_id=?", (str(group_id),))
+        self.db.execute("DELETE FROM compaction_jobs WHERE group_id=?", (str(group_id),))
+        self.db.execute("DELETE FROM qq_context_checkpoints WHERE scope=?", (str(group_id),))
+        self.db.execute(
+            "UPDATE character_commands SET delivery_status='cancelled',updated_at=? WHERE scope=?",
+            (time.time(), str(group_id)),
+        )
 
     def clear_group(self, group_id: str) -> None:
         with self.transaction() as db:
@@ -688,6 +748,271 @@ class Store:
             db.execute("DELETE FROM compaction_jobs WHERE group_id=?", (str(group_id),))
 
     reset_group = clear_group
+
+    @staticmethod
+    def _receipt_payload(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["prepared"] = bool(result.pop("result_prepared", 0))
+        try:
+            chunks = json.loads(result.pop("sent_chunks_json", "[]"))
+        except (TypeError, ValueError):
+            chunks = []
+        result["sent_chunks"] = sorted({int(index) for index in chunks if isinstance(index, int) and index >= 0})
+        return result
+
+    def get_command_receipt(self, scope: str, message_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.db.execute(
+                "SELECT * FROM character_commands WHERE scope=? AND message_id=?",
+                (str(scope), str(message_id)),
+            ).fetchone()
+            return self._receipt_payload(row)
+
+    def save_command_receipt(
+        self, scope: str, message_id: str, result: str, *, epoch: int | None = None, prepared: bool = False,
+    ) -> dict[str, Any] | None:
+        if not scope or not message_id:
+            raise ValueError("scope and message_id are required")
+        stamp = time.time()
+        with self.transaction() as db:
+            current_epoch = self.memory_epoch(scope)
+            if epoch is not None and int(epoch) != current_epoch:
+                return None
+            db.execute(
+                "INSERT INTO character_commands(scope,message_id,result,created,epoch,delivery_status,updated_at,result_prepared) "
+                "VALUES(?,?,?,?,?,'pending',?,?) ON CONFLICT(scope,message_id) DO UPDATE SET "
+                "result=excluded.result,created=excluded.created,epoch=excluded.epoch,delivery_status='pending',"
+                "sent_chunks_json='[]',updated_at=excluded.updated_at,result_prepared=excluded.result_prepared "
+                "WHERE character_commands.delivery_status='cancelled' AND character_commands.epoch<>excluded.epoch",
+                (str(scope), str(message_id), str(result), stamp, current_epoch, stamp, int(bool(prepared))),
+            )
+            return self.get_command_receipt(scope, message_id)
+
+    def replace_pending_command_result(
+        self, scope: str, message_id: str, result: str, *, expected_epoch: int, prepared: bool = False,
+    ) -> bool:
+        with self.transaction() as db:
+            row = self.get_command_receipt(scope, message_id)
+            if (row is None or row["epoch"] != int(expected_epoch)
+                    or self.memory_epoch(scope) != int(expected_epoch)
+                    or row["delivery_status"] != "pending" or row["sent_chunks"]):
+                return False
+            db.execute("UPDATE character_commands SET result=?,updated_at=?,result_prepared=? WHERE scope=? AND message_id=?",
+                       (str(result), time.time(), int(bool(prepared)), str(scope), str(message_id)))
+            return True
+
+    def update_command_receipt(
+        self, scope: str, message_id: str, *, delivery_status: str,
+        sent_chunks: list[int] | None = None, expected_epoch: int | None = None,
+    ) -> bool:
+        if delivery_status not in {"pending", "sending", "sent", "failed", "unknown", "cancelled"}:
+            raise ValueError("invalid command delivery status")
+        with self.transaction() as db:
+            row = self.get_command_receipt(scope, message_id)
+            if row is None or row["epoch"] != self.memory_epoch(scope):
+                return False
+            if expected_epoch is not None and row["epoch"] != int(expected_epoch):
+                return False
+            if row["delivery_status"] in {"sent", "cancelled"} and delivery_status != row["delivery_status"]:
+                return False
+            chunks = row["sent_chunks"] if sent_chunks is None else sorted(set(row["sent_chunks"]) | {
+                int(index) for index in sent_chunks if isinstance(index, int) and index >= 0
+            })
+            db.execute(
+                "UPDATE character_commands SET delivery_status=?,sent_chunks_json=?,updated_at=? "
+                "WHERE scope=? AND message_id=?",
+                (delivery_status, json.dumps(chunks), time.time(), str(scope), str(message_id)),
+            )
+            return True
+
+    @staticmethod
+    def _context_payload(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        return {**payload, **{key: row[key] for key in ("session_key", "scope", "epoch", "revision", "updated_at")}}
+
+    def get_context_checkpoint(self, session_key: str) -> dict[str, Any] | None:
+        with self._lock:
+            return self._context_payload(self.db.execute(
+                "SELECT * FROM qq_context_checkpoints WHERE session_key=?", (str(session_key),)
+            ).fetchone())
+
+    def create_context_checkpoint(
+        self, session_key: str, payload: dict[str, Any], *, scope: str, epoch: int, now: float | None = None,
+    ) -> dict[str, Any] | None:
+        if not session_key or not scope:
+            raise ValueError("session_key and scope are required")
+        with self.transaction() as db:
+            if self.memory_epoch(scope) != int(epoch):
+                return None
+            db.execute(
+                "INSERT INTO qq_context_checkpoints(session_key,scope,epoch,payload_json,updated_at) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(session_key) DO NOTHING",
+                (str(session_key), str(scope), int(epoch), json.dumps(payload, ensure_ascii=False),
+                 time.time() if now is None else float(now)),
+            )
+            return self.get_context_checkpoint(session_key)
+
+    def save_context_checkpoint(
+        self, session_key: str, payload: dict[str, Any], *, expected_revision: int,
+        expected_epoch: int, now: float | None = None,
+    ) -> dict[str, Any] | None:
+        with self.transaction() as db:
+            row = db.execute("SELECT * FROM qq_context_checkpoints WHERE session_key=?", (str(session_key),)).fetchone()
+            if (row is None or int(row["revision"]) != int(expected_revision)
+                    or int(row["epoch"]) != int(expected_epoch)
+                    or self.memory_epoch(row["scope"]) != int(expected_epoch)):
+                return None
+            current_payload = json.loads(row["payload_json"])
+            if payload.get("checkpoint_id") != current_payload.get("checkpoint_id"):
+                return None
+            db.execute(
+                "UPDATE qq_context_checkpoints SET payload_json=?,revision=revision+1,updated_at=? WHERE session_key=?",
+                (json.dumps(payload, ensure_ascii=False), time.time() if now is None else float(now), str(session_key)),
+            )
+            return self.get_context_checkpoint(session_key)
+
+    def delete_context_checkpoint(
+        self, session_key: str, *, expected_revision: int | None = None,
+        expected_checkpoint_id: str | None = None,
+    ) -> bool:
+        with self.transaction() as db:
+            if expected_checkpoint_id is not None:
+                row = self.get_context_checkpoint(session_key)
+                if row is None or row.get("checkpoint_id") != expected_checkpoint_id:
+                    return False
+            sql = "DELETE FROM qq_context_checkpoints WHERE session_key=?"
+            params: tuple[Any, ...] = (str(session_key),)
+            if expected_revision is not None:
+                sql += " AND revision=?"
+                params += (int(expected_revision),)
+            return db.execute(sql, params).rowcount > 0
+
+    @staticmethod
+    def history_digest(text: Any) -> str:
+        return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
+
+    def enqueue_member_extraction(
+        self, group_id: str, member_id: str, source_history_id: int, *,
+        source_kind: str = "addressed", now: float | None = None,
+    ) -> int:
+        ref = self.member_ref_for(group_id, member_id)
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            member = self.get_group_member(group_id, member_ref=ref)
+            source = db.execute(
+                "SELECT text FROM group_history WHERE id=? AND group_id=? AND member_id=? AND role='user'",
+                (int(source_history_id), str(group_id), ref),
+            ).fetchone()
+            if member is None or member["consent_status"] != "opted_in" or source is None:
+                return 0
+            digest = self.history_digest(source["text"])
+            db.execute(
+                "INSERT INTO member_extraction_jobs(group_id,member_ref,source_history_id,source_digest,"
+                "source_kind,epoch,profile_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(group_id,source_history_id,source_digest) DO NOTHING",
+                (str(group_id), ref, int(source_history_id), digest, str(source_kind),
+                 self.memory_epoch(group_id), int(member["profile_version"]), stamp, stamp),
+            )
+            return int(db.execute(
+                "SELECT id FROM member_extraction_jobs WHERE group_id=? AND source_history_id=? AND source_digest=?",
+                (str(group_id), int(source_history_id), digest),
+            ).fetchone()["id"])
+
+    def list_member_extraction_jobs(
+        self, *, ready_only: bool = False, limit: int = 100, now: float | None = None,
+    ) -> list[dict[str, Any]]:
+        stamp = time.time() if now is None else float(now)
+        where, params = "", []
+        if ready_only:
+            where = (" WHERE attempt<? AND ((status IN ('pending','failed') AND next_retry_at<=?) "
+                     "OR (status='running' AND lease_until<=?))")
+            params = [MAX_COMPACTION_FAILURES, stamp, stamp]
+        with self._lock:
+            return [dict(row) for row in self.db.execute(
+                "SELECT * FROM member_extraction_jobs" + where + " ORDER BY updated_at,id LIMIT ?",
+                (*params, max(1, int(limit))),
+            ).fetchall()]
+
+    def get_member_extraction(self, job_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.db.execute("SELECT * FROM member_extraction_jobs WHERE id=?", (int(job_id),)).fetchone()
+            return dict(row) if row else None
+
+    def member_extraction_source(self, job: Any) -> dict[str, Any] | None:
+        """Re-read an authenticated source without persisting another raw-text copy."""
+        with self._lock:
+            member = self.get_group_member(job["group_id"], member_ref=job["member_ref"])
+            if (self.memory_epoch(job["group_id"]) != int(job["epoch"])
+                    or member is None or member["consent_status"] != "opted_in"
+                    or int(member["profile_version"]) != int(job["profile_version"])):
+                return None
+            source = self.db.execute(
+                "SELECT * FROM group_history WHERE id=? AND group_id=? AND member_id=? AND role='user'",
+                (int(job["source_history_id"]), job["group_id"], job["member_ref"]),
+            ).fetchone()
+            if source is None or self.history_digest(source["text"]) != job["source_digest"]:
+                return None
+            return dict(source)
+
+    def claim_member_extraction(
+        self, job_id: int | None = None, *, now: float | None = None, lease_seconds: float = 330,
+    ) -> dict[str, Any] | None:
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            candidates = self.list_member_extraction_jobs(ready_only=True, now=stamp)
+            if job_id is not None:
+                row = db.execute("SELECT * FROM member_extraction_jobs WHERE id=?", (int(job_id),)).fetchone()
+                candidates = [dict(row)] if row else []
+            for job in candidates:
+                ready = (job["status"] in {"pending", "failed"} and float(job["next_retry_at"]) <= stamp)
+                expired = job["status"] == "running" and float(job["lease_until"] or 0) <= stamp
+                if int(job["attempt"]) >= MAX_COMPACTION_FAILURES or not (ready or expired):
+                    continue
+                if self.member_extraction_source(job) is None:
+                    db.execute(
+                        "UPDATE member_extraction_jobs SET status='cancelled',lease_until=NULL,updated_at=? WHERE id=?",
+                        (stamp, job["id"]),
+                    )
+                    continue
+                db.execute(
+                    "UPDATE member_extraction_jobs SET status='running',attempt=attempt+1,lease_until=?,updated_at=? WHERE id=?",
+                    (stamp + max(1, float(lease_seconds)), stamp, job["id"]),
+                )
+                return dict(db.execute("SELECT * FROM member_extraction_jobs WHERE id=?", (job["id"],)).fetchone())
+            return None
+
+    def finish_member_extraction(
+        self, job_id: int, *, status: str = "success", stored: int = 0,
+        error: str = "", now: float | None = None, expected_attempt: int | None = None,
+    ) -> bool:
+        if status not in {"success", "empty", "retryable_failure"}:
+            raise ValueError("invalid member extraction outcome")
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            row = db.execute("SELECT * FROM member_extraction_jobs WHERE id=?", (int(job_id),)).fetchone()
+            if row is None or row["status"] != "running":
+                return False
+            if expected_attempt is not None and int(row["attempt"]) != int(expected_attempt):
+                return False
+            if self.member_extraction_source(row) is None:
+                db.execute("DELETE FROM member_extraction_jobs WHERE id=?", (int(job_id),))
+                return False
+            retry = status == "retryable_failure"
+            delay = 60 if int(row["attempt"]) == 1 else 300
+            # Only an exception type/code belongs in durable operational metadata.
+            safe_error = str(error) if retry and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,79}", str(error)) else ""
+            if retry and not safe_error:
+                safe_error = "ExtractionError"
+            db.execute(
+                "UPDATE member_extraction_jobs SET status=?,stored=?,error=?,next_retry_at=?,lease_until=NULL,updated_at=? WHERE id=?",
+                ("failed" if retry else "completed", max(0, int(stored)), safe_error,
+                 stamp + delay if retry else 0, stamp, int(job_id)),
+            )
+            return True
 
     def get_memory(self, group_id: str) -> sqlite3.Row | None:
         with self._lock:
@@ -730,8 +1055,9 @@ class Store:
             # Reset the retry budget atomically with durable progress. A later
             # batch must not inherit failures from a cursor already summarized.
             db.execute(
-                "UPDATE compaction_jobs SET from_history_id=?, attempt=0, error='', next_retry_at=0 "
-                "WHERE group_id=? AND status IN ('pending','running','failed') AND from_history_id<?",
+                "UPDATE compaction_jobs SET from_history_id=?, attempt=0, error='', next_retry_at=0, "
+                "status=CASE WHEN status='paused' THEN 'pending' ELSE status END "
+                "WHERE group_id=? AND status IN ('pending','running','failed','paused') AND from_history_id<?",
                 (max(0, int(last_history_id)), str(group_id), max(0, int(last_history_id))),
             )
         return True
@@ -778,7 +1104,7 @@ class Store:
         with self.transaction() as db:
             active = db.execute(
                 "SELECT id,to_history_id,status FROM compaction_jobs "
-                "WHERE group_id=? AND status IN ('pending','running','failed') "
+                "WHERE group_id=? AND status IN ('pending','running','failed','paused') "
                 "ORDER BY id DESC LIMIT 1",
                 (group,),
             ).fetchone()
@@ -852,9 +1178,11 @@ class Store:
                     "SELECT * FROM compaction_jobs WHERE "
                     "((status IN ('pending','failed') AND (next_retry_at<=? OR ?) "
                     "AND (attempt<? OR ?)) OR "
-                    "(status='running' AND lease_until IS NOT NULL AND lease_until<=?))"
+                    "(status='paused' AND ?) OR "
+                    "(status='running' AND lease_until IS NOT NULL AND lease_until<=? AND (attempt<? OR ?)))"
                     + group_clause + " ORDER BY id ASC LIMIT 1",
-                    (stamp, bool(force), MAX_COMPACTION_FAILURES, bool(force), stamp, *params[1:]),
+                    (stamp, bool(force), MAX_COMPACTION_FAILURES, bool(force), bool(force), stamp,
+                     MAX_COMPACTION_FAILURES, bool(force), *params[1:]),
                 ).fetchone()
             if row is None:
                 return None
@@ -863,7 +1191,9 @@ class Store:
                 force or (int(row["attempt"] or 0) < MAX_COMPACTION_FAILURES
                           and float(row["next_retry_at"] or 0) <= stamp)
             )
-            expired = status == "running" and row["lease_until"] is not None and float(row["lease_until"]) <= stamp
+            ready = ready or (status == "paused" and force)
+            expired = (status == "running" and row["lease_until"] is not None and float(row["lease_until"]) <= stamp
+                       and (force or int(row["attempt"] or 0) < MAX_COMPACTION_FAILURES))
             if not (ready or expired):
                 return None
             lease_until = stamp + max(1.0, float(lease_seconds))
@@ -873,6 +1203,19 @@ class Store:
                 (lease_until, stamp, int(row["id"])),
             )
             return db.execute("SELECT * FROM compaction_jobs WHERE id=?", (int(row["id"]),)).fetchone()
+
+    def pause_compaction(self, group_id: str, *, now: float | None = None) -> bool:
+        """Pause a failed explicit retry without fabricating its attempt count."""
+        stamp = time.time() if now is None else float(now)
+        with self.transaction() as db:
+            row = self.get_compaction_job(group_id)
+            if row is None or row["status"] not in {"pending", "failed", "paused"}:
+                return False
+            db.execute(
+                "UPDATE compaction_jobs SET status='paused',lease_until=NULL,next_retry_at=0,updated_at=? WHERE id=?",
+                (stamp, int(row["id"])),
+            )
+            return True
 
     def finish_compaction_job(
         self,
@@ -942,7 +1285,7 @@ class Store:
                 "DELETE FROM group_history WHERE group_id=? "
                 "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=?),0) "
                 "AND id NOT IN "
-                "(SELECT id FROM group_history WHERE group_id=? ORDER BY id DESC LIMIT ?)",
+                "(SELECT id FROM group_history WHERE group_id=? ORDER BY id DESC LIMIT ?)" + _HISTORY_WITHOUT_PENDING_EXTRACTION,
                 (str(group_id), str(group_id), str(group_id), keep),
             )
             return max(0, int(cursor.rowcount))
@@ -961,13 +1304,13 @@ class Store:
             if group_id is None:
                 cursor = db.execute(
                     "DELETE FROM group_history WHERE created_at<? AND id<=COALESCE("
-                    "(SELECT last_history_id FROM group_memories WHERE group_id=group_history.group_id),0)",
+                    "(SELECT last_history_id FROM group_memories WHERE group_id=group_history.group_id),0)" + _HISTORY_WITHOUT_PENDING_EXTRACTION,
                     (cutoff,),
                 )
             else:
                 cursor = db.execute(
                     "DELETE FROM group_history WHERE group_id=? AND created_at<? "
-                    "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=?),0)",
+                    "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=?),0)" + _HISTORY_WITHOUT_PENDING_EXTRACTION,
                     (str(group_id), cutoff, str(group_id)),
                 )
             return max(0, int(cursor.rowcount))
@@ -990,13 +1333,13 @@ class Store:
             if group_id is None:
                 cursor = db.execute(
                     "DELETE FROM group_history WHERE source_kind=? AND created_at<? "
-                    "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=group_history.group_id),0)",
+                    "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=group_history.group_id),0)" + _HISTORY_WITHOUT_PENDING_EXTRACTION,
                     (source, cutoff),
                 )
             else:
                 cursor = db.execute(
                     "DELETE FROM group_history WHERE group_id=? AND source_kind=? AND created_at<? "
-                    "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=?),0)",
+                    "AND id<=COALESCE((SELECT last_history_id FROM group_memories WHERE group_id=?),0)" + _HISTORY_WITHOUT_PENDING_EXTRACTION,
                     (str(group_id), source, cutoff, str(group_id)),
                 )
             return max(0, int(cursor.rowcount))
@@ -1021,26 +1364,36 @@ class Store:
                 "AND status<>'pending'",
                 (stamp - max(0.0, float(claim_age_seconds)),),
             )
+            db.execute(
+                "DELETE FROM member_extraction_jobs WHERE updated_at<? "
+                "AND (status IN ('completed','cancelled') OR attempt>=?) "
+                "AND NOT EXISTS(SELECT 1 FROM group_history WHERE id=member_extraction_jobs.source_history_id)",
+                (stamp - max(0.0, float(claim_age_seconds)), MAX_COMPACTION_FAILURES),
+            )
         return {
             "audit_events": max(0, int(audits.rowcount)),
             "message_claims": max(0, int(claims.rowcount)),
         }
 
     def list_memory_backlog_groups(self, limit: int = 100) -> list[dict[str, Any]]:
-        """List groups whose history cursor is behind their latest row."""
+        """Round-robin backlog scans cannot be pinned by paused/quiet groups."""
 
         with self._lock:
-            rows = self.db.execute(
+            query = (
                 "SELECT h.group_id, MAX(h.id) AS latest_history_id, "
                 "COALESCE(m.last_history_id,0) AS memory_cursor, "
                 "SUM(CASE WHEN h.id>COALESCE(m.last_history_id,0) THEN 1 ELSE 0 END) AS pending_count, "
                 "MIN(CASE WHEN h.id>COALESCE(m.last_history_id,0) THEN h.created_at END) AS oldest_pending_at "
                 "FROM group_history h LEFT JOIN group_memories m ON m.group_id=h.group_id "
+                "WHERE h.group_id>? "
                 "GROUP BY h.group_id "
                 "HAVING MAX(h.id)>COALESCE(m.last_history_id,0) "
-                "ORDER BY MAX(h.id) DESC LIMIT ?",
-                (max(1, int(limit)),),
-            ).fetchall()
+                "ORDER BY h.group_id ASC LIMIT ?"
+            )
+            rows = self.db.execute(query, (self._memory_backlog_cursor, max(1, int(limit)))).fetchall()
+            if not rows and self._memory_backlog_cursor:
+                rows = self.db.execute(query, ("", max(1, int(limit)))).fetchall()
+            self._memory_backlog_cursor = str(rows[-1]["group_id"]) if rows else ""
         return [dict(row) for row in rows]
 
     @staticmethod
@@ -1153,6 +1506,142 @@ class Store:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def migrate_private_member(
+        self, chat_id: str, member_id: str, *, evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Move an exclusively proven legacy DM; never guess from identifier syntax.
+
+        ``evidence`` is assembled by the authenticated gateway from durable
+        Hermes route metadata, never from user text or an attachment.
+        """
+        legacy, scope = str(chat_id), "dm:" + str(chat_id)
+        result = {"scope": scope, "status": "ambiguous", "migrated_facts": 0}
+        if not legacy or not member_id or not isinstance(evidence, dict) or evidence.get("authenticated_private") is not True:
+            return result
+        old_ref, _ = self._member_identity(legacy, member_id)
+        new_ref, new_digest = self._member_identity(scope, member_id)
+        with self.transaction() as db:
+            target = self.get_group_member(scope, member_ref=new_ref)
+            try:
+                metadata = json.loads(target["metadata_json"] or "{}") if target else {}
+            except (TypeError, ValueError):
+                metadata = {}
+            marker = metadata.get("legacy_dm_migration") or {}
+            if marker.get("scope") == legacy and marker.get("member_ref") == old_ref:
+                return {**result, "status": "already_migrated"}
+            source = self.get_group_member(legacy, member_ref=old_ref)
+            if source is None:
+                return {**result, "status": "absent"}
+            routes = [item for item in evidence.get("sessions", []) if isinstance(item, dict)
+                      and str(item.get("source", "")) == "qqbot" and str(item.get("chat_id", "")) == legacy]
+            private = any(str(item.get("chat_type", "")) in {"dm", "private"}
+                          and str(item.get("user_id", "")) == str(member_id) for item in routes)
+            conflicting_route = any(str(item.get("chat_type", "")) not in {"dm", "private"} for item in routes)
+            others = db.execute("SELECT 1 FROM group_members WHERE group_id=? AND member_ref<>? LIMIT 1",
+                                (legacy, old_ref)).fetchone()
+            group_history = db.execute(
+                "SELECT 1 FROM group_history WHERE group_id=? AND (source_kind='ambient' "
+                "OR (role='user' AND COALESCE(member_id,'') NOT IN ('',?))) LIMIT 1", (legacy, old_ref)
+            ).fetchone()
+            poll = db.execute("SELECT 1 FROM group_polls WHERE group_id=? LIMIT 1", (legacy,)).fetchone()
+            group_audit = db.execute(
+                "SELECT 1 FROM audit_events WHERE chat_id=? AND (event_type IN "
+                "('ambient_ingest','ambient_blocked','group_access_pending') OR source IN ('official','nonmention','fast_path')) LIMIT 1",
+                (legacy,),
+            ).fetchone()
+            if not private or conflicting_route or others or group_history or poll or group_audit:
+                if not db.execute("SELECT 1 FROM audit_events WHERE event_type='legacy_scope_ambiguous' AND chat_id=? LIMIT 1", (scope,)).fetchone():
+                    self.record_audit("legacy_scope_ambiguous", chat_id=scope, source="scope_migration")
+                return result
+
+            stamp = time.time()
+            # Scope changes invalidate every in-flight derived write on both sides.
+            self._advance_memory_epoch(legacy)
+            self._advance_memory_epoch(scope)
+            metadata["legacy_dm_migration"] = {"version": 1, "scope": legacy, "member_ref": old_ref}
+            consent = target["consent_status"] if target and target["consent_status"] != "unknown" else source["consent_status"]
+            db.execute(
+                "INSERT INTO group_members(group_id,member_ref,member_digest,display_name,consent_status,"
+                "first_seen_at,last_seen_at,message_count,metadata_json,profile_version,deleted_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(group_id,member_ref) DO UPDATE SET "
+                "display_name=excluded.display_name,consent_status=excluded.consent_status,"
+                "first_seen_at=excluded.first_seen_at,last_seen_at=excluded.last_seen_at,"
+                "message_count=excluded.message_count,metadata_json=excluded.metadata_json,"
+                "profile_version=excluded.profile_version,deleted_at=NULL",
+                (scope, new_ref, new_digest, (target or {}).get("display_name") or source["display_name"], consent,
+                 min(float(source["first_seen_at"]), float((target or source)["first_seen_at"])),
+                 max(float(source["last_seen_at"]), float((target or source)["last_seen_at"])),
+                 int(source["message_count"]) + int((target or {}).get("message_count", 0)),
+                 json.dumps(metadata, ensure_ascii=False),
+                 max(int(source["profile_version"]), int((target or {}).get("profile_version", 0))) + 1),
+            )
+            target_ids = {int(row[0]) for row in db.execute(
+                "SELECT id FROM member_memory_facts WHERE group_id=? AND member_ref=?", (scope, new_ref))}
+            moved = db.execute(
+                "UPDATE member_memory_facts SET group_id=?,member_ref=? WHERE group_id=? AND member_ref=?",
+                (scope, new_ref, legacy, old_ref),
+            ).rowcount
+            # Preserve provenance row ids, while removing legacy namespace reads.
+            db.execute("UPDATE group_history SET group_id=?,member_id=CASE WHEN member_id=? THEN ? ELSE member_id END WHERE group_id=?",
+                       (scope, old_ref, new_ref, legacy))
+            active = db.execute(
+                "SELECT * FROM member_memory_facts WHERE group_id=? AND member_ref=? AND status='active' "
+                "AND (expires_at IS NULL OR expires_at>?)", (scope, new_ref, stamp)
+            ).fetchall()
+            winners: dict[str, sqlite3.Row] = {}
+            def rank(row: sqlite3.Row) -> tuple[Any, ...]:
+                return row["explicitness"] == "explicit", float(row["updated_at"]), int(row["id"]) in target_ids, int(row["id"])
+            for row in active:
+                key = self._normalize_fact_key(row["fact_key"])
+                prior = winners.get(key)
+                if prior is None or rank(row) > rank(prior):
+                    winners[key] = row
+            winner_ids = {int(row["id"]) for row in winners.values()}
+            for row in active:
+                if int(row["id"]) not in winner_ids:
+                    db.execute("UPDATE member_memory_facts SET status='superseded' WHERE id=?", (row["id"],))
+            aliases: dict[str, int] = {}
+            migrated_documents = 0
+            for document in db.execute("SELECT id,content_hash FROM knowledge_documents WHERE group_id=?", (legacy,)).fetchall():
+                duplicate = db.execute(
+                    "SELECT id FROM knowledge_documents WHERE group_id=? AND content_hash=?", (scope, document["content_hash"])
+                ).fetchone()
+                if duplicate is not None:
+                    # Preserve the historical duplicate in its legacy scope;
+                    # explicit aliases keep old doc references usable privately.
+                    aliases[str(document["id"])] = int(duplicate["id"])
+                    continue
+                db.execute("UPDATE knowledge_documents SET group_id=? WHERE id=?", (scope, document["id"]))
+                db.execute("UPDATE knowledge_chunks SET group_id=? WHERE document_id=?", (scope, document["id"]))
+                migrated_documents += 1
+            metadata["legacy_dm_migration"]["document_aliases"] = aliases
+            db.execute("UPDATE group_members SET metadata_json=? WHERE group_id=? AND member_ref=?",
+                       (json.dumps(metadata, ensure_ascii=False), scope, new_ref))
+            # Old summaries may embed obsolete member references; rebuild from
+            # the retained source rows rather than copying unverifiable text.
+            db.execute("DELETE FROM group_memories WHERE group_id IN (?,?)", (legacy, scope))
+            db.execute("DELETE FROM compaction_jobs WHERE group_id IN (?,?)", (legacy, scope))
+            db.execute("DELETE FROM group_members WHERE group_id=? AND member_ref=?", (legacy, old_ref))
+            self.record_audit("legacy_dm_migrated", chat_id=scope, source="scope_migration", confidence=1.0)
+            return {**result, "status": "migrated", "migrated_facts": max(0, moved),
+                    "migrated_documents": migrated_documents, "document_aliases": aliases}
+
+    def resolve_legacy_document_id(self, scope: str, document_id: int) -> int:
+        """Resolve only aliases produced by a proven private-scope migration."""
+        wanted = int(document_id)
+        if not str(scope).startswith("dm:"):
+            return wanted
+        with self._lock:
+            for row in self.db.execute("SELECT metadata_json FROM group_members WHERE group_id=?", (str(scope),)):
+                try:
+                    marker = json.loads(row["metadata_json"]).get("legacy_dm_migration", {})
+                    mapped = marker.get("document_aliases", {}).get(str(wanted))
+                    if marker.get("version") == 1 and mapped is not None:
+                        return int(mapped)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+        return wanted
+
     def set_member_consent(
         self,
         group_id: str,
@@ -1174,6 +1663,7 @@ class Store:
             )
             if value == "opted_out":
                 self._remove_member_stickers(db, str(group_id), ref)
+                self._advance_memory_epoch(group_id)
             row = db.execute(
                 "SELECT * FROM group_members WHERE group_id=? AND member_ref=?",
                 (str(group_id), ref),
@@ -1459,6 +1949,8 @@ class Store:
         evidence: str = "",
         expected_epoch: int | None = None,
         expected_profile_version: int | None = None,
+        member_ref: str | None = None,
+        expected_source_digest: str | None = None,
     ) -> dict[str, Any]:
         """Apply a sourced fact without undoing explicit corrections or newer evidence."""
         category_text = self._bounded_text(category, 80)
@@ -1473,7 +1965,9 @@ class Store:
         if not math.isfinite(score):
             raise ValueError("confidence must be finite")
         score = min(1.0, max(0.0, score))
-        ref, _ = self._member_identity(group_id, member_id)
+        ref = str(member_ref or self.member_ref_for(group_id, member_id))
+        if not re.fullmatch(r"m-[a-f0-9]{20}", ref):
+            raise ValueError("invalid member reference")
         stamp = time.time() if now is None else float(now)
         normalized_key = self._normalize_fact_key(key_text)
         evidence_text = self._bounded_text(evidence, 400)
@@ -1492,11 +1986,13 @@ class Store:
             source = None
             if source_history_id is not None:
                 source = db.execute(
-                    "SELECT id,created_at FROM group_history WHERE id=? AND group_id=? AND member_id=? AND role='user'",
+                    "SELECT id,created_at,text FROM group_history WHERE id=? AND group_id=? AND member_id=? AND role='user'",
                     (int(source_history_id), str(group_id), ref),
                 ).fetchone()
                 if source is None:
                     raise ValueError("member fact source does not belong to this member")
+                if expected_source_digest is not None and self.history_digest(source["text"]) != expected_source_digest:
+                    raise ValueError("member fact source changed during extraction")
             rows = db.execute(
                 "SELECT * FROM member_memory_facts WHERE group_id=? AND member_ref=? AND status='active' "
                 "AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC",

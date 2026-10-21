@@ -144,7 +144,7 @@ class MemoryRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     cancelled.set()
 
-        with patch("smart_group_qq.memory.SUMMARY_TIMEOUT_SECONDS", 0.01):
+        with patch("smart_group_qq.llm_policy.REQUEST_TIMEOUT_SECONDS", 0.01):
             await asyncio.wait_for(memory.refresh_ai(SimpleNamespace(llm=SlowLLM()), "g", force=True), 1)
         self.assertTrue(cancelled.is_set())
         self.assertEqual(self.store.memory_payload("g")["last_history_id"], 0)

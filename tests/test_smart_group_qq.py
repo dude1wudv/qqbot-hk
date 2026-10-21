@@ -393,7 +393,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("【小栖 · 常驻 AI 角色】" in content for content in replies))
         self.assertIn("该功能仅群聊可用。", replies)
 
-    async def test_keyword_send_failure_fails_open_and_can_retry(self):
+    async def test_keyword_unknown_send_result_is_not_replayed(self):
         self.adapter.success = False
         settings = {"keyword_replies": [{"id": "hello", "match": "exact", "pattern": "hi", "reply": "hello"}]}
         handler = build_handler(FakeContext(settings), self.store)
@@ -404,7 +404,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         second = await handler(self.make_event("hi"), self.gateway)
         self.assertEqual(second["action"], "skip")
         await asyncio.sleep(0.01)
-        self.assertEqual(len(self.adapter.sent), 2)
+        self.assertEqual(len(self.adapter.sent), 1)
+        self.assertEqual(self.store.get_command_receipt("group-a", "msg-1")["delivery_status"], "unknown")
 
     async def test_audit_does_not_store_message_or_reply_body(self):
         settings = {"keyword_replies": [{"id": "secret-rule", "match": "contains", "pattern": "needle-secret", "reply": "reply-secret"}]}
