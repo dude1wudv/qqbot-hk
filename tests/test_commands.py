@@ -65,7 +65,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(config["agent"]["reasoning_effort"], "low")
         compression = config["auxiliary"]["compression"]
         self.assertEqual(compression["reasoning_effort"], "low")
-        self.assertEqual(compression["extra_body"]["thinking"], {"type": "disabled"})
+        self.assertNotIn("extra_body", compression)
 
     def test_model_aliases_rewrite_to_session_scoped_native_commands(self):
         self.assertIsNone(model_alias_rewrite("<@bot> /gemini"))

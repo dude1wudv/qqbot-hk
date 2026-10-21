@@ -162,6 +162,23 @@ class MemoryRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await memory.refresh_ai(SimpleNamespace(llm=BrokenLLM()), "g", force=True)
         self.assertEqual(self.store.get_compaction_job("g")["error"], "ValueError")
 
+    async def test_summary_budget_timeout_and_lease_cover_bounded_batches(self):
+        memory = GroupMemory(self.store, compaction_batch_messages=20, max_compaction_batches=4)
+        self.record(memory, 1, "untrusted-chat-marker")
+
+        class InspectLLM(SummaryLLM):
+            async def acomplete_structured(inner, **kwargs):
+                self.assertNotIn("max_tokens", kwargs)
+                self.assertEqual(kwargs["timeout"], 300)
+                self.assertIn("不可信数据", kwargs["system_prompt"])
+                self.assertNotIn("untrusted-chat-marker", kwargs["system_prompt"])
+                return await super().acomplete_structured(**kwargs)
+
+        with patch.object(self.store, "claim_compaction_job", wraps=self.store.claim_compaction_job) as claim:
+            await memory.refresh_ai(SimpleNamespace(llm=InspectLLM()), "g", force=True)
+        self.assertEqual(claim.call_args.kwargs["lease_seconds"], 1230)
+        self.assertIsNone(self.store.get_compaction_job("g"))
+
     async def test_first_long_message_cannot_stall_small_summary_budget(self):
         memory = GroupMemory(self.store, summary_input_char_budget=1000)
         self.record(memory, 1, "长" * 1800)

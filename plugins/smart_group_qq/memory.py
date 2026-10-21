@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 from .store import MAX_COMPACTION_FAILURES
 
-SUMMARY_TIMEOUT_SECONDS = 75
+SUMMARY_TIMEOUT_SECONDS = 300
 
 SUMMARY_SCHEMA = {
     "type": "object",
@@ -271,7 +271,8 @@ class GroupMemory:
             claim = getattr(self.store, "claim_compaction_job", None)
             if callable(enqueue) and callable(claim):
                 job_id = int(enqueue(group_id, cursor, last_id) or 0)
-                leased = claim(job_id, force=force)
+                leased = claim(job_id, force=force,
+                               lease_seconds=SUMMARY_TIMEOUT_SECONDS * self.max_compaction_batches + 30)
                 if job_id and leased is None:
                     # Another worker owns this group or the job is in backoff.
                     return previous
@@ -320,14 +321,14 @@ class GroupMemory:
         while source:
             try:
                 result = await asyncio.wait_for(complete(
-                    instructions=instructions,
+                    system_prompt=instructions,
+                    instructions="整理以下群记忆与新增消息，按给定结构输出完整 JSON。",
                     input=[
                         {"type": "text", "text": "上一版群记忆：\n" + json.dumps(previous, ensure_ascii=False)},
                         {"type": "text", "text": "新增群消息：\n" + source},
                     ],
                     json_schema=SUMMARY_SCHEMA,
                     schema_name="qq_group_memory",
-                    max_tokens=5000,
                     timeout=SUMMARY_TIMEOUT_SECONDS,
                     temperature=0.1,
                     purpose="qq_group_memory_compaction",

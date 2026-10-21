@@ -254,17 +254,15 @@ if compression_route.get("provider") != "sub2api_deepseek":
     raise SystemExit("auxiliary.compression.provider must be sub2api_deepseek")
 if compression_route.get("model") != "deepseek/deepseek-v4.1-flash":
     raise SystemExit("auxiliary.compression.model must be deepseek/deepseek-v4.1-flash")
-if set(compression_route) != {"provider", "model", "reasoning_effort", "extra_body"}:
+if set(compression_route) != {"provider", "model", "reasoning_effort"}:
     raise SystemExit("auxiliary.compression must not define a duplicate custom provider")
 if compression_route.get("reasoning_effort") != "low":
     raise SystemExit("auxiliary.compression.reasoning_effort must be low")
-if compression_route.get("extra_body") != {"thinking": {"type": "disabled"}}:
-    raise SystemExit("compression thinking must be disabled")
 if auxiliary.get("vision"):
     raise SystemExit("auxiliary vision fallback must be disabled")
 print(
     "COMPRESSION_CONFIG=async THRESHOLD_TOKENS=80000 RECENT_MESSAGES=10 MAX_IMAGES=5 "
-    "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions THINKING=disabled"
+    "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
 )
 session_db = sqlite3.connect("file:/opt/data/state.db?mode=ro", uri=True)
 try:
@@ -366,6 +364,8 @@ if not isinstance(section_chars, Mapping) or {
     raise SystemExit("smart_group_qq memory.context_section_chars is invalid")
 if int(memory_config.get("compact_after_messages", 0)) != 40:
     raise SystemExit("smart_group_qq memory.compact_after_messages must be 40")
+if int(memory_config.get("compaction_batch_messages", 0)) != 20:
+    raise SystemExit("smart_group_qq memory.compaction_batch_messages must be 20")
 ambient_config = plugin_settings.get("ambient")
 if not isinstance(ambient_config, Mapping):
     raise SystemExit("smart_group_qq ambient config is missing")

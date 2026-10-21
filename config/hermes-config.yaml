@@ -60,9 +60,6 @@ auxiliary:
     provider: sub2api_deepseek
     model: deepseek/deepseek-v4.1-flash
     reasoning_effort: low
-    extra_body:
-      thinking:
-        type: disabled
 
 voice:
   auto_tts: false
@@ -168,6 +165,7 @@ plugins:
           summary_min_interval_seconds: 300
           idle_min_pending_messages: 4
           summary_input_char_budget: 12000
+          compaction_batch_messages: 20
           max_compaction_batches: 4
           max_history_rows: 2000
           recent_context_messages: 12

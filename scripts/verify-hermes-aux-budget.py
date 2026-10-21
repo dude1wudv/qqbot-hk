@@ -6,17 +6,17 @@ from agent.auxiliary_client import _build_call_kwargs, _is_max_tokens_rejection
 
 def main():
     for model in ("deepseek/deepseek-v4.1-flash",):
-        for budget in (180, 5000, 8192):
+        for budget in (None, 180, 5000, 8192):
             kwargs = _build_call_kwargs(
                 provider="sub2api_deepseek", model=model,
                 messages=[{"role": "user", "content": "offline synthetic input"}],
-                max_tokens=budget, timeout=75, task="compression",
+                max_tokens=budget, timeout=300, task="compression",
                 base_url="http://sub2api:8080/v1/",
                 reasoning_config={"enabled": True, "effort": "low"},
-                extra_body={"thinking": {"type": "disabled"}},
             )
             assert kwargs.get("max_tokens", kwargs.get("max_completion_tokens")) == budget, kwargs.keys()
-            assert kwargs.get("extra_body", {}).get("thinking") == {"type": "disabled"}
+            if budget is None:
+                assert "max_tokens" not in kwargs and "max_completion_tokens" not in kwargs
     client = SimpleNamespace(base_url="http://sub2api:8080/v1/")
     assert not _is_max_tokens_rejection(ValueError("unsupported_parameter max_tokens"), client)
     print("HERMES_AUX_BUDGET=passed EXPLICIT_CAP=preserved UNBOUNDED_RETRY=disabled")
