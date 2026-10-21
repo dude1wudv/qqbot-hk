@@ -107,25 +107,6 @@ if "OK" not in deepseek_text.upper():
     raise SystemExit("deepseek/deepseek-v4.1-flash: unexpected response")
 print("MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions EFFORT=low RESULT=OK")
 
-mimo = post(
-    "/v1/chat/completions",
-    {
-        "model": "xiaomi/mimo-v2.6-flash",
-        "messages": [{"role": "user", "content": "Reply only OK"}],
-        "reasoning_effort": "low",
-        "stream": False,
-        "max_tokens": 128,
-    },
-    deepseek_key,
-)
-mimo_choices = mimo.get("choices") or []
-mimo_text = (
-    ((mimo_choices[0] if mimo_choices else {}).get("message") or {}).get("content") or ""
-).strip()
-if not mimo_text:
-    raise SystemExit("xiaomi/mimo-v2.6-flash: empty response")
-print("MODEL=xiaomi/mimo-v2.6-flash API_MODE=chat_completions EFFORT=low RESULT=OK")
-
 image_buffer = io.BytesIO()
 Image.new("RGB", (16, 16), (0, 120, 255)).save(image_buffer, format="PNG")
 image_base64 = base64.b64encode(image_buffer.getvalue()).decode("ascii")
@@ -231,13 +212,12 @@ if deepseek_provider.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
 if deepseek_provider.get("api_mode") != "chat_completions":
     raise SystemExit("DeepSeek provider must use chat_completions")
 if set(deepseek_provider.get("models") or {}) != {
-    "deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"
+    "deepseek/deepseek-v4.1-flash"
 }:
-    raise SystemExit("DeepSeek and MiMo model registrations are required on the shared key")
+    raise SystemExit("Only DeepSeek may be registered")
 commands = config.get("quick_commands") or {}
-if ((commands.get("mimo") or {}).get("target")
-        != "/model xiaomi/mimo-v2.6-flash --session"):
-    raise SystemExit("MiMo session switch command is missing")
+if "mimo" in commands:
+    raise SystemExit("Retired MiMo alias remains enabled")
 agent_config = config.get("agent")
 if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
     raise SystemExit("image input must use native content parts")
@@ -246,10 +226,8 @@ if agent_config.get("reasoning_effort") != "low":
 reasoning_overrides = agent_config.get("reasoning_overrides") or {}
 if reasoning_overrides.get("deepseek/deepseek-v4.1-flash") != "low":
     raise SystemExit("DeepSeek reasoning override must be low")
-if reasoning_overrides.get("xiaomi/mimo-v2.6-flash") != "low":
-    raise SystemExit("MiMo reasoning override must be low")
-if set(reasoning_overrides) != {"deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"}:
-    raise SystemExit("reasoning overrides must only cover DeepSeek and MiMo")
+if set(reasoning_overrides) != {"deepseek/deepseek-v4.1-flash"}:
+    raise SystemExit("reasoning overrides must only cover DeepSeek")
 if config.get("fallback_providers"):
     raise SystemExit("automatic fallback providers must be disabled")
 if (config.get("display") or {}).get("busy_ack_enabled") is not False:
@@ -276,15 +254,17 @@ if compression_route.get("provider") != "sub2api_deepseek":
     raise SystemExit("auxiliary.compression.provider must be sub2api_deepseek")
 if compression_route.get("model") != "deepseek/deepseek-v4.1-flash":
     raise SystemExit("auxiliary.compression.model must be deepseek/deepseek-v4.1-flash")
-if set(compression_route) != {"provider", "model", "reasoning_effort"}:
+if set(compression_route) != {"provider", "model", "reasoning_effort", "extra_body"}:
     raise SystemExit("auxiliary.compression must not define a duplicate custom provider")
 if compression_route.get("reasoning_effort") != "low":
     raise SystemExit("auxiliary.compression.reasoning_effort must be low")
+if compression_route.get("extra_body") != {"thinking": {"type": "disabled"}}:
+    raise SystemExit("compression thinking must be disabled")
 if auxiliary.get("vision"):
     raise SystemExit("auxiliary vision fallback must be disabled")
 print(
     "COMPRESSION_CONFIG=async THRESHOLD_TOKENS=80000 RECENT_MESSAGES=10 MAX_IMAGES=5 "
-    "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
+    "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions THINKING=disabled"
 )
 session_db = sqlite3.connect("file:/opt/data/state.db?mode=ro", uri=True)
 try:
@@ -295,12 +275,12 @@ try:
         override = (json.loads(raw).get("model_override") or {})
         if override and (
             override.get("provider") not in (None, "sub2api_deepseek")
-            or override.get("model") not in {"deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"}
+            or override.get("model") not in {"deepseek/deepseek-v4.1-flash"}
         ):
             raise SystemExit("retired QQ model override remains after session rotation")
     stale = session_db.execute(
         "SELECT COUNT(*) FROM sessions WHERE source='qqbot' AND ended_at IS NULL "
-        "AND model IS NOT NULL AND model NOT IN ('deepseek/deepseek-v4.1-flash','xiaomi/mimo-v2.6-flash')"
+        "AND model IS NOT NULL AND model NOT IN ('deepseek/deepseek-v4.1-flash')"
     ).fetchone()[0]
     if stale:
         raise SystemExit("retired QQ model sessions remain active after rotation")

@@ -40,7 +40,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("【小栖 · 常驻 AI 角色】", menu)
         for command in (
             "/help", "/reset", "/new", "/compress", "/status", "/summary", "/rules",
-            "/deepseek", "/mimo",
+            "/deepseek",
             "/群投票", "/我的记忆", "/记住我", "/纠正记忆",
             "/忘记我", "/停止记忆",
         ):
@@ -48,11 +48,24 @@ class CommandTests(unittest.TestCase):
         self.assertIn("/值日表 查看本周轮值安排（仅群聊）", menu)
         self.assertIn("/approve /cancel /deny 仅私聊可处理工具确认提示", menu)
         self.assertIn("DeepSeek 的 xhigh 实际按 max 请求", menu)
+        self.assertNotIn("mimo", menu.lower())
 
     def test_new_model_aliases_and_xhigh_rewrite(self):
-        self.assertEqual(model_alias_rewrite("<@bot> /mimo"), "/model xiaomi/mimo-v2.6-flash --session")
+        self.assertIsNone(model_alias_rewrite("<@bot> /mimo"))
         self.assertIsNone(model_alias_rewrite("／ muse"))
         self.assertEqual(reasoning_alias_rewrite("<@bot> ／ XHIGH"), "/reasoning xhigh")
+
+    def test_only_deepseek_is_registered_in_deployment_config(self):
+        import yaml
+        config = yaml.safe_load((ROOT / "config/hermes-config.yaml").read_text(encoding="utf-8"))
+        self.assertNotIn("mimo", config["quick_commands"])
+        models = config["providers"]["sub2api_deepseek"]["models"]
+        self.assertEqual(set(models), {"deepseek/deepseek-v4.1-flash"})
+        self.assertEqual(set(config["agent"]["reasoning_overrides"]), set(models))
+        self.assertEqual(config["agent"]["reasoning_effort"], "low")
+        compression = config["auxiliary"]["compression"]
+        self.assertEqual(compression["reasoning_effort"], "low")
+        self.assertEqual(compression["extra_body"]["thinking"], {"type": "disabled"})
 
     def test_model_aliases_rewrite_to_session_scoped_native_commands(self):
         self.assertIsNone(model_alias_rewrite("<@bot> /gemini"))

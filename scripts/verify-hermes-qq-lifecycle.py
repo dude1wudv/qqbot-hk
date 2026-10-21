@@ -80,14 +80,14 @@ async def verify(home: Path) -> None:
         key = runner._session_key_for_source(source)
         entry = runner.session_store.get_or_create_session(source)
         # Real native model/reasoning handlers must persist per-session overrides.
-        for command, method in [("/model xiaomi/mimo-v2.6-flash --session", runner._handle_model_command),
+        for command, method in [("/model deepseek/deepseek-v4.1-flash --session", runner._handle_model_command),
                                 ("/reasoning high", runner._handle_reasoning_command)]:
             result = method(MessageEvent(text=command, source=source, message_id=command))
             if inspect.isawaitable(result):
                 result = await result
             require(result is not None, "Native session command did not execute")
         route = runner.session_store.get_or_create_session(source)
-        require("mimo-v2.6-flash" in json.dumps(route.to_dict()), "Model override not persisted")
+        require(route.to_dict().get("model_override", {}).get("model") == "deepseek/deepseek-v4.1-flash", "Model override not persisted")
         reasoning = runner._resolve_session_reasoning_config(source=source, session_key=key)
         require(reasoning == {"enabled": True, "effort": "high"},
                 "Native current-session reasoning selection did not take effect")

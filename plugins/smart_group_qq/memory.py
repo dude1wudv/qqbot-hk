@@ -263,6 +263,7 @@ class GroupMemory:
             "使用简洁中文，参与者只能使用输入中的匿名成员标签。"
             "只整理群公共事项；个人偏好和画像交给成员专属记忆，不复制进群摘要。"
             "机器人的猜测不算成员事实，明确更正优先于旧记录。"
+            "输出必须是完整 JSON，无信息的字段使用空数组。不要逐条复述聊天，优先保留重要决定和待办。"
         )
         job_id = 0
         if last_id > cursor:
@@ -326,7 +327,7 @@ class GroupMemory:
                     ],
                     json_schema=SUMMARY_SCHEMA,
                     schema_name="qq_group_memory",
-                    max_tokens=1400,
+                    max_tokens=5000,
                     timeout=SUMMARY_TIMEOUT_SECONDS,
                     temperature=0.1,
                     purpose="qq_group_memory_compaction",

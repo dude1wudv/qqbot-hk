@@ -20,7 +20,6 @@ class ParsingTests(unittest.TestCase):
         for raw in (
             "切到 DeepSeek",
             "切到DeepSeek吧",
-            "切到MiMo吧",
             "请把模型切换到 DeepSeek",
             "/deepseek",
             "／ ＤＥＥＰＳＥＥＫ",
@@ -31,7 +30,7 @@ class ParsingTests(unittest.TestCase):
         ):
             with self.subTest(raw=raw):
                 result = resolve_interaction(raw, wake_words=("小栖",))
-                self.assertEqual(result.text, "/mimo" if "MiMo" in raw else "/deepseek")
+                self.assertEqual(result.text, "/deepseek")
                 self.assertFalse(result.error)
         for raw in (
             "推理调高",
@@ -56,6 +55,17 @@ class ParsingTests(unittest.TestCase):
         self.assertTrue(resolve_interaction(raw).error)
         self.assertTrue(resolve_interaction("/配置 不存在 true").error)
         self.assertTrue(resolve_interaction("/reasoning high --global").error)
+
+    def test_retired_mimo_commands_never_reach_native_model_selection(self):
+        for private in (False, True):
+            for raw in ("/mimo", "／ ＭＩＭＯ", "切到MiMo吧", "/模型 MiMo",
+                        "/配置 模型 xiaomi", "/model xiaomi/mimo-v2.6-flash --session",
+                        "/model xiaomi/mimo-v2.6-flash --provider sub2api_deepseek"):
+                with self.subTest(private=private, raw=raw):
+                    result = resolve_interaction(raw, private=private)
+                    self.assertIn("已下线", result.error)
+                    self.assertFalse(result.native)
+                    self.assertEqual(result.text, "")
 
     def test_chat_never_changes_configuration(self):
         for text in (
@@ -125,7 +135,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_models_full_ids_aliases_and_effort_in_both_scopes(self):
         for chat_type in ("group", "dm"):
-            for alias, model in (("DeepSeek", "deepseek/deepseek-v4.1-flash"), ("MiMo", "xiaomi/mimo-v2.6-flash")):
+            for alias, model in (("DeepSeek", "deepseek/deepseek-v4.1-flash"),):
                 for raw in (f"/{alias}", f"<@bot>/{alias}", f"\u200b/{alias}", f"/model {model}", f"/配置 模型 {model}"):
                     with self.subTest(chat_type=chat_type, raw=raw):
                         result = await self.send(raw, chat_type + raw, chat_type=chat_type)
@@ -136,6 +146,16 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.send(payload, "native-payload", chat_type="dm"))["text"], payload)
         raw = "\u200b<@bot>/记住我：项目叫 MyProject ＡＢＣ"
         self.assertEqual(parse_profile_command(raw).argument, "项目叫 MyProject ＡＢＣ")
+
+    async def test_retired_mimo_replies_locally_in_both_scopes(self):
+        for chat_type in ("group", "dm"):
+            for index, raw in enumerate(("<@bot>/mimo", "切到MiMo吧", "/模型 MiMo",
+                                         "/model xiaomi/mimo-v2.6-flash --session")):
+                with self.subTest(chat_type=chat_type, raw=raw):
+                    result = await self.send(raw, f"retired-{chat_type}-{index}", chat_type=chat_type)
+                    self.assertEqual(result["action"], "skip")
+                    self.assertIn("已下线", self.adapter.sent[-1][1])
+        self.assertEqual(self.store.get_history("group-a"), [])
 
     async def test_natural_configuration_uses_native_session_scope(self):
         for index, raw in enumerate(

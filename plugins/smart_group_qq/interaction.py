@@ -20,10 +20,9 @@ MODELS = {
     "deepseek/deepseek-v4.1-flash": "deepseek",
     "deepseek-v4.1-flash": "deepseek",
     "深度求索": "deepseek",
-    "mimo": "mimo",
-    "xiaomi": "mimo",
-    "xiaomi/mimo-v2.6-flash": "mimo",
 }
+RETIRED_MODELS = frozenset({"mimo", "xiaomi", "mimo-v2.6-flash", "xiaomi/mimo-v2.6-flash"})
+RETIRED_MODEL_ERROR = "MiMo 已下线，QQ bot 仅启用 DeepSeek。请发送 /deepseek 使用当前可用模型。"
 EFFORTS = {
     "low": "low",
     "低": "low",
@@ -76,7 +75,7 @@ REQUIRES_ARG = {
     "纠正记忆",
     "安静",
 }
-CONFIG_ERROR = "默认 DeepSeek V4.1 Flash，可切换到 MiMo V2.6 Flash。推理强度支持 low、medium、high、xhigh、max（低、中、高、超高、最高）；DeepSeek 的 xhigh 实际按 max 请求。例如：切换到 MiMo、推理强度调到低，或 /配置 模型 DeepSeek。配置只作用于当前会话。"
+CONFIG_ERROR = "当前仅启用 DeepSeek V4.1 Flash。推理强度支持 low、medium、high、xhigh、max（低、中、高、超高、最高）；DeepSeek 的 xhigh 实际按 max 请求。例如：切到 DeepSeek、推理强度调到低，或 /配置 模型 DeepSeek。配置只作用于当前会话。"
 
 
 @dataclass(frozen=True)
@@ -89,6 +88,11 @@ class Interaction:
 
 def _key(value: str) -> str:
     return unicodedata.normalize("NFKC", value).strip().casefold()
+
+
+def _retired_model(value: str) -> bool:
+    return any(token in RETIRED_MODELS or token.startswith("xiaomi/mimo-")
+               for token in _key(value).split())
 
 
 def strip_address(text: str, wake_words: Sequence[str]) -> str:
@@ -109,6 +113,8 @@ def _config(kind: str, arg: str, *, natural=False, private=False) -> Interaction
         return Interaction(
             "/model" if kind == "model" else "/reasoning", natural, native=True
         )
+    if kind == "model" and _retired_model(value):
+        return Interaction("", natural, RETIRED_MODEL_ERROR)
     mapping = MODELS if kind == "model" else EFFORTS
     alias = mapping.get(_key(value))
     if alias:
@@ -131,6 +137,8 @@ def resolve_interaction(
     value = normalize_command_text(raw)
     if value.startswith("/"):
         head, _, arg = value[1:].partition(" ")
+        if _retired_model(head):
+            return Interaction("", error=RETIRED_MODEL_ERROR)
         if head in ("配置", "设置", "config"):
             if not arg:
                 return Interaction("/配置")
@@ -240,7 +248,7 @@ def resolve_interaction(
     )
     if match:
         result = _config("model", match[1], natural=True)
-        return result if not result.error or "模型" in value else None
+        return result if not result.error or result.error == RETIRED_MODEL_ERROR or "模型" in value else None
     match = re.fullmatch(
         r"(?:把)?(?:推理强度|推理档位|思考强度|思考档位|推理)\s*(?:设置为|设为|调到|调成|改成|改为|切到|用|调)\s*(low|medium|high|max|低档|低|中等|中|高档|高|最高|最大)(?:吧)?",
         value,
