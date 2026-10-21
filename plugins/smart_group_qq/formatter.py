@@ -120,10 +120,21 @@ _DETAIL_REQUEST = re.compile(
     r"\b(?:code|debug|explain|translate|detailed|steps)\b", re.IGNORECASE,
 )
 
+_ARTIFACT_REQUEST = re.compile(
+    r"(?:^|[，,。！？!?；;\n])\s*(?:请|再|重新|继续|直接)?\s*"
+    r"(?:把[^，,。！？!?；;\n]{1,40})?"
+    r"(?:"
+    r"画(?:一[张幅个]|[张幅个]|出|一下)|绘制|设计|做成|"
+    r"(?:发(?:送)?|传|提供|导出|保存|打包)(?:给我|我)?\s*(?:成|为)?\s*"
+    r"(?:一[个份]|[个份])?\s*(?:文件|附件|(?:html|svg|pdf)(?![a-z0-9_])|网页)"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def is_explicit_request(text: str) -> bool:
     """A local hint for one slow-task notice, never a content truncation rule."""
-    return bool(_DETAIL_REQUEST.search(text) or re.search(
+    return bool(_DETAIL_REQUEST.search(text) or _ARTIFACT_REQUEST.search(text) or re.search(
         r"帮我|请(?:帮|查|找|写|做|给|生成|推荐)|能否|能不能|麻烦|"
         r"写(?:封|首|句|则|条|信|诗)|推荐|查询|搜索|查找|生成|整理|制作|"
         r"为什么|怎么办|怎么做|如何|(?i:\b(?:please|help|write|find|search|summarize)\b)",

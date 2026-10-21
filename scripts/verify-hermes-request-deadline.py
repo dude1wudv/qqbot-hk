@@ -131,6 +131,39 @@ async def auxiliary_close_check():
     require(stream.closed, "auxiliary cancellation did not close the native async stream")
 
 
+def inline_abort_check():
+    aborted = []
+    agent = SimpleNamespace(platform="qqbot", _interrupt_requested=False,
+                            _abort_request_openai_client=lambda client, reason: aborted.append(reason))
+    request = helpers._InlineRequest(agent, {}, 300, time.time())
+    request._qq_request_started = time.monotonic() - 301
+    request.client = object()
+    native_abort = request.abort
+    abort_returns = []
+
+    def record_native_abort(reason):
+        result = native_abort(reason)
+        abort_returns.append(result)
+        return result
+
+    with patch.object(request, "abort", side_effect=record_native_abort):
+        request._on_stale()
+    # Native abort's boolean means newly STALE, not successfully cancelled.
+    require(abort_returns == [False] and request.cancelled,
+            "inline check did not execute the native interrupt-abort return-False path")
+    require(aborted == ["qq_request_deadline"] and agent._qq_deadline_exceeded and agent._interrupt_requested,
+            "inline abort failed to preserve the deadline outcome")
+    for terminal_state in ("done", "cancelled"):
+        agent = SimpleNamespace(platform="qqbot", _interrupt_requested=False)
+        request = helpers._InlineRequest(agent, {}, 300, time.time())
+        setattr(request, terminal_state, True)
+        # Simulate completion/cancellation winning after the timer's first check.
+        with patch.object(deadline, "request_expired", return_value=True):
+            request._on_stale()
+        require(not getattr(agent, "_qq_deadline_exceeded", False),
+                "late inline timer overwrote a completed or cancelled request")
+
+
 def wire_check():
     raw = {"model": "synthetic", "max_tokens": 8192, "max_completion_tokens": 4000,
            "extra_body": {"max_tokens": 8000}, "reasoning_effort": "high"}
@@ -147,5 +180,6 @@ def wire_check():
 if __name__ == "__main__":
     wire_check()
     native_abort_checks()
+    inline_abort_check()
     asyncio.run(auxiliary_close_check())
-    print("QQ_REQUEST_DEADLINE=300s STREAM_AND_NONSTREAM_ABORT=passed AUX_STREAM_CLOSE=passed SESSION_REASONING=preserved OUTPUT_CAP=absent")
+    print("QQ_REQUEST_DEADLINE=300s STREAM_AND_NONSTREAM_ABORT=passed INLINE_ABORT=passed AUX_STREAM_CLOSE=passed SESSION_REASONING=preserved OUTPUT_CAP=absent")

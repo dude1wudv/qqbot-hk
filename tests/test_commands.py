@@ -46,7 +46,7 @@ class CommandTests(unittest.TestCase):
         ):
             self.assertIn(command, menu)
         self.assertIn("/值日表 查看本周轮值安排（仅群聊）", menu)
-        self.assertIn("/approve /cancel /deny 仅私聊可处理工具确认提示", menu)
+        self.assertIn("工具执行无需额外审批", menu)
         self.assertIn("DeepSeek 的 xhigh 实际按 max 请求", menu)
         self.assertNotIn("mimo", menu.lower())
 

@@ -138,6 +138,7 @@ docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/de
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-aux-budget.py
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-context.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-request-deadline.py >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-approvals.py
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-commands.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-output.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-recovery.py >/dev/null
@@ -313,6 +314,8 @@ if qq_extra.get("voice_input_enabled") is not False:
     raise SystemExit("QQ voice input must be disabled")
 if qq_extra.get("voice_output_enabled") is not False:
     raise SystemExit("QQ voice output must be disabled")
+if config.get("approvals", {}).get("mode") != "off":
+    raise SystemExit("QQ tool approvals must be disabled")
 if not isinstance(qq_extra.get("stt"), Mapping) or qq_extra["stt"].get("enabled") is not False:
     raise SystemExit("QQ STT must be explicitly disabled")
 if config.get("tts"):

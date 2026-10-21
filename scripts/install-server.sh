@@ -30,6 +30,7 @@ for path in \
   "$project_dir/runtime/qqbot_request_deadline.py" \
   "$project_dir/plugins/smart_group_qq/llm_policy.py" \
   "$project_dir/scripts/verify-hermes-request-deadline.py" \
+  "$project_dir/scripts/verify-hermes-qq-approvals.py" \
   "$project_dir/plugins/smart_group_qq/media.py" \
   "$project_dir/scripts/patch-hermes-qq-help.py" \
   "$project_dir/scripts/verify-hermes-qq-commands.py" \

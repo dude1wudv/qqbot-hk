@@ -25,7 +25,7 @@ Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，�
 - QQ 工具集启用 `web`、`vision`、`skills`、`todo`、`terminal`、`file`；其中 `terminal` 提供 shell 能力，`tts`、`code`、`computer` 不暴露。文件写入受 `HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp` 限制，Hermes credential/project env 路径仍由内置防护拦截。
 - QQ 语音输入与输出均关闭：语音附件不进入 STT/模型，`send_voice` 在媒体上传前失败关闭，配置不包含 TTS provider 或音频密钥。普通文本与图片功能不受影响。
 - `smart_group_qq` 插件提供静态审核、关键词短路、幂等审计、长期记忆、群知识库和中文 `/help`。模型快捷命令为 `/deepseek`；推理强度为 `/low`、`/medium`、`/high`、`/xhigh`、`/max`，均只修改当前会话。DeepSeek 将 `xhigh` 映射为实际请求的 `max`。MiMo 已下线，旧快捷命令及明确模型切换请求会本地提示不可用，不触发模型调用。
-- 支持 `/` 打开帮助、全角斜杠、斜杠后空格、QQ mention 紧接命令。已明确 @ 机器人的全量群消息也走命令入口；非定向旁听仍不能执行管理命令。忙碌群会话的 `/值日表`、`/all` 等本地命令不再并入聊天队列，原生模型/推理切换沿用 Hermes 的忙碌提示与权限控制；`/reset`、`/new` 保留原生生命周期。群共享会话的待审批操作无法绑定发起成员，因此群内不透传 `/approve`、`/cancel`、`/deny`，需确认的操作请改在私聊执行；私聊 `/help` 优先显示中文菜单，`/值日表` 仅群聊可用。
+- 支持 `/` 打开帮助、全角斜杠、斜杠后空格、QQ mention 紧接命令。已明确 @ 机器人的全量群消息也走命令入口；非定向旁听仍不能执行管理命令。忙碌群会话的 `/值日表`、`/all` 等本地命令不再并入聊天队列，原生模型/推理切换沿用 Hermes 的忙碌提示与权限控制；`/reset`、`/new` 保留原生生命周期。QQ 服务按操作员要求使用 `approvals.mode: "off"`，工具执行不调用审批模型或等待人工审批。群内仍不透传会话级 `/approve`、`/cancel`、`/deny`；私聊 `/help` 优先显示中文菜单，`/值日表` 仅群聊可用。
 - `@机器人 /值日表` 按北京时间即时计算本周日到周六的轮值安排；2026 年 9 月 13 日开始，每周日轮换一次，开始前显示首轮预告。该功能不依赖主动群发或模型调用。
 - `/summary` 返回已保存摘要；有新增记录时整理，同一会话的并发请求合并，无新增时不调用模型。`/summary status` 只读查看进度，`/summary retry` 显式恢复一次，未推进又失败则保持暂停。失败明确显示上次有效摘要。`/reset` 清理会话与记忆，不删除知识库。
 - `/kb add 标题 | 正文` 添加资料；`/kb list`、`/kb search 关键词`、`/kb remove 文档ID`、`/kb clear confirm` 管理本群知识。支持缓存目录中的 TXT/Markdown/CSV/JSON/YAML/XML/TOML/DOCX，PDF 需镜像提供 `pypdf`。

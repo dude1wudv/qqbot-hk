@@ -1,11 +1,12 @@
 import asyncio
 import importlib.util
 import sys
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from test_qq_context import ROOT, POLICY
+from test_qq_context import ROOT, POLICY, PATCH
 
 SPEC = importlib.util.spec_from_file_location("qqbot_request_deadline", ROOT / "runtime/qqbot_request_deadline.py")
 DEADLINE = importlib.util.module_from_spec(SPEC)
@@ -14,6 +15,38 @@ SPEC.loader.exec_module(DEADLINE)
 
 
 class RequestDeadlineTests(unittest.IsolatedAsyncioTestCase):
+    def test_inline_patch_marks_deadline_when_native_interrupt_abort_returns_false(self):
+        source = ('def on_stale(self):\n'
+                  '        if not self.abort("stale_call_kill"):\n'
+                  '            return\n'
+                  '        raise AssertionError("unexpected stale request")\n')
+        replacements = PATCH.PATCHES["agent/chat_completion_helpers.py"][1]
+        anchor, replacement = next(item for item in replacements if 'if not self.abort("stale_call_kill")' in item[0])
+        namespace = {}
+        exec(source.replace(anchor, replacement), namespace)
+        request = SimpleNamespace(agent=SimpleNamespace(platform="qqbot", _interrupt_requested=False),
+                                  done=False, cancelled=False, lock=threading.Lock())
+        abort_reasons = []
+
+        def abort(reason):
+            abort_reasons.append(reason)
+            request.cancelled = True
+            return False  # Hermes reports newly-stale, not cancellation success.
+
+        request.abort = abort
+        with patch.object(DEADLINE, "request_expired", return_value=True):
+            namespace["on_stale"](request)
+        self.assertEqual(abort_reasons, ["qq_request_deadline"])
+        self.assertTrue(request.agent._qq_deadline_exceeded)
+        self.assertTrue(request.agent._interrupt_requested)
+        for terminal_state in ("done", "cancelled"):
+            request = SimpleNamespace(agent=SimpleNamespace(platform="qqbot", _interrupt_requested=False),
+                                      done=terminal_state == "done", cancelled=terminal_state == "cancelled",
+                                      lock=threading.Lock(), abort=lambda _: self.fail("late timer aborted request"))
+            with patch.object(DEADLINE, "request_expired", return_value=True):
+                namespace["on_stale"](request)
+            self.assertFalse(getattr(request.agent, "_qq_deadline_exceeded", False))
+
     def test_qq_wire_omits_caps_preserves_reasoning_and_leaves_other_platforms_unchanged(self):
         original = {"max_tokens": 42, "max_completion_tokens": 42, "max_output_tokens": 42,
                     "extra_body": {"max_tokens": 42, "retain": True}, "reasoning_effort": "high"}

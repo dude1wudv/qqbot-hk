@@ -44,6 +44,23 @@ class CompleteOutputTests(unittest.TestCase):
         self.assertEqual(format_for_qq(payload), payload)
         self.assertEqual(split_group_reply(payload, direct=True), [payload])
 
+    def test_drawing_html_and_file_delivery_requests_are_eligible_for_one_wait_notice(self):
+        requests = (
+            "再画一个北极熊骑秦始皇的html，直接发文件",
+            "画张北极熊",
+            "绘制北极熊骑秦始皇的 HTML",
+            "把这个页面导出为HTML文件",
+            "直接发文件",
+            "发我 PDF 文件",
+        )
+        for request in requests:
+            with self.subTest(request=request):
+                self.assertTrue(is_explicit_request(request))
+        for chatter in ("这个html挺有意思", "这幅画真好看", "画面很清楚",
+                        "刚刚把文件发给他了", "北极熊骑秦始皇真好玩", "收到附件了，谢谢"):
+            with self.subTest(chatter=chatter):
+                self.assertFalse(is_explicit_request(chatter))
+
 
 class ProgressLifecycleTests(unittest.IsolatedAsyncioTestCase):
     def registry(self, *, direct=True, eligible=True):

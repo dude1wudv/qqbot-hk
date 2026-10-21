@@ -62,6 +62,7 @@ COPY --chmod=0755 scripts/verify-hermes-chat-reasoning.py /opt/hermes/verify-her
 COPY --chmod=0755 scripts/verify-hermes-aux-budget.py /opt/hermes/verify-hermes-aux-budget.py
 COPY --chmod=0755 scripts/verify-hermes-qq-context.py /opt/hermes/verify-hermes-qq-context.py
 COPY --chmod=0755 scripts/verify-hermes-request-deadline.py /opt/hermes/verify-hermes-request-deadline.py
+COPY --chmod=0755 scripts/verify-hermes-qq-approvals.py /opt/hermes/verify-hermes-qq-approvals.py
 COPY --chmod=0755 scripts/verify-hermes-qq-commands.py /opt/hermes/verify-hermes-qq-commands.py
 COPY --chmod=0755 scripts/verify-hermes-qq-recovery.py /opt/hermes/verify-hermes-qq-recovery.py
 COPY --chmod=0755 scripts/verify-hermes-qq-output.py /opt/hermes/verify-hermes-qq-output.py
@@ -75,6 +76,7 @@ RUN python /opt/hermes/verify-hermes-audio.py \
     && python /opt/hermes/verify-hermes-aux-budget.py \
     && python /opt/hermes/verify-hermes-qq-context.py \
     && python /opt/hermes/verify-hermes-request-deadline.py \
+    && python /opt/hermes/verify-hermes-qq-approvals.py \
     && python /opt/hermes/verify-hermes-qq-commands.py \
     && python /opt/hermes/verify-hermes-qq-output.py \
     && python /opt/hermes/verify-hermes-qq-recovery.py \

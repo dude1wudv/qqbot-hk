@@ -134,7 +134,7 @@ def help_text() -> str:
         "/群投票 创建 题目 | 选项A | 选项B；/群投票 查看或选择/结束投票\n"
         "/宠物、/喂食、/摸摸、/宠物取名 名字\n/剧情 设定、/投票 1或2、/结束剧情\n/表情库 查看本群分类；/表情 心情 发一张\n"
         "/help 功能说明\n/reset、/clear 或 /new 重置当前会话\n"
-        "/compress 立即重试上下文压缩（上下文过大时）\n/approve /cancel /deny 仅私聊可处理工具确认提示\n"
+        "/compress 立即重试上下文压缩（上下文过大时）\n工具执行无需额外审批。\n"
         "/status 运行状态\n/summary 查看或更新近期摘要（无新消息时用缓存）\n"
         "/summary status 查看整理进度；/summary retry 显式重试失败任务\n/rules 已启用规则\n"
         "/deepseek 切回当前会话的 DeepSeek\n"

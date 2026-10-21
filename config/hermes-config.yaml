@@ -5,6 +5,9 @@ timezone: Asia/Hong_Kong
 gateway:
   group_sessions_per_user: false
 
+approvals:
+  mode: "off"
+
 quick_commands:
   low:
     type: alias

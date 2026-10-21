@@ -59,7 +59,7 @@ PATCHES = {
             "        self.stale_timeout = stale_timeout\n        self.call_start = call_start\n        from qqbot_request_deadline import start_request\n        start_request(self)\n",
         ), (
             "        if not self.abort(\"stale_call_kill\"):\n",
-            "        from qqbot_request_deadline import request_expired, mark_expired\n        if request_expired(self, mark=False):\n            if self.abort('qq_request_deadline'):\n                mark_expired(self)\n            return\n        if not self.abort(\"stale_call_kill\"):\n",
+            "        from qqbot_request_deadline import request_expired, mark_expired\n        if request_expired(self, mark=False):\n            with self.lock:\n                if self.done or self.cancelled:\n                    return\n                mark_expired(self)\n            self.abort('qq_request_deadline')\n            return\n        if not self.abort(\"stale_call_kill\"):\n",
         ), (
             "    stale_timeout = _resolve_direct_stale_timeout(agent, api_kwargs)\n",
             "    from qqbot_request_deadline import bound_inline_timeout\n    stale_timeout = bound_inline_timeout(agent, _resolve_direct_stale_timeout(agent, api_kwargs))\n",
