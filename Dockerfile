@@ -3,9 +3,9 @@ FROM nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375c
 LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.hermes-base-digest="sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7" \
       io.qqbot-hk.audio-patch="v2" \
-      io.qqbot-hk.chat-reasoning-patch="v5" \
+      io.qqbot-hk.chat-reasoning-patch="v6" \
       io.qqbot-hk.aux-budget-patch="v1" \
-      io.qqbot-hk.qq-context-patch="v1" \
+      io.qqbot-hk.qq-context-patch="v2" \
       io.qqbot-hk.qq-help-patch="v1" \
       io.qqbot-hk.qq-output-patch="v1" \
       io.qqbot-hk.qq-recovery-patch="v1" \
@@ -49,6 +49,8 @@ RUN python /tmp/patch-hermes-qq-recovery.py \
     && rm -f /tmp/patch-hermes-qq-recovery.py
 
 COPY --chmod=0644 runtime/qqbot_context.py /opt/hermes/qqbot_context.py
+COPY --chmod=0644 runtime/qqbot_request_deadline.py /opt/hermes/qqbot_request_deadline.py
+COPY --chmod=0644 plugins/smart_group_qq/llm_policy.py /opt/hermes/qqbot_llm_policy.py
 COPY --chmod=0644 plugins/smart_group_qq/media.py /opt/hermes/qqbot_hk_media.py
 COPY --chmod=0755 scripts/patch-hermes-qq-context.py /tmp/patch-hermes-qq-context.py
 RUN python /tmp/patch-hermes-qq-context.py \
@@ -59,6 +61,7 @@ COPY --chmod=0755 scripts/verify-hermes-audio.py /opt/hermes/verify-hermes-audio
 COPY --chmod=0755 scripts/verify-hermes-chat-reasoning.py /opt/hermes/verify-hermes-chat-reasoning.py
 COPY --chmod=0755 scripts/verify-hermes-aux-budget.py /opt/hermes/verify-hermes-aux-budget.py
 COPY --chmod=0755 scripts/verify-hermes-qq-context.py /opt/hermes/verify-hermes-qq-context.py
+COPY --chmod=0755 scripts/verify-hermes-request-deadline.py /opt/hermes/verify-hermes-request-deadline.py
 COPY --chmod=0755 scripts/verify-hermes-qq-commands.py /opt/hermes/verify-hermes-qq-commands.py
 COPY --chmod=0755 scripts/verify-hermes-qq-recovery.py /opt/hermes/verify-hermes-qq-recovery.py
 COPY --chmod=0755 scripts/verify-hermes-qq-output.py /opt/hermes/verify-hermes-qq-output.py
@@ -71,6 +74,7 @@ RUN python /opt/hermes/verify-hermes-audio.py \
     && python /opt/hermes/verify-hermes-chat-reasoning.py \
     && python /opt/hermes/verify-hermes-aux-budget.py \
     && python /opt/hermes/verify-hermes-qq-context.py \
+    && python /opt/hermes/verify-hermes-request-deadline.py \
     && python /opt/hermes/verify-hermes-qq-commands.py \
     && python /opt/hermes/verify-hermes-qq-output.py \
     && python /opt/hermes/verify-hermes-qq-recovery.py \

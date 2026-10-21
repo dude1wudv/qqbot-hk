@@ -9,7 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-MARKER = '# QQBOT_HK_CONTEXT_PATCH = "v1"'
+MARKER = '# QQBOT_HK_CONTEXT_PATCH = "v2"'
 
 
 def require(condition: bool, message: str) -> None:
@@ -19,11 +19,15 @@ def require(condition: bool, message: str) -> None:
 
 def check_patched_source(root: Path) -> None:
     seams = {
-        "gateway/run_turn.py": ("context_boundary", "after_turn"),
+        "gateway/run_turn.py": ("context_boundary", "after_turn", "await notify_turn(self, 'started'", "await notify_turn(self, 'finished'"),
         "gateway/run_turn_runner.py": ("agent.compression_enabled = False", "_micro_compact_enabled = False"),
         "agent/conversation_loop.py": ("trim_images(s.messages)", "trim_images(s.api_messages)"),
         "gateway/platforms/qqbot/adapter.py": ("limit_attachments(attachments)", "image_urls[-5:]"),
         "hermes_state_compression.py": ("expected_parent_watermark", "QQ compression parent changed"),
+        "gateway/slash_commands_session.py": ("return await manual_compress", "await cancel_context_scope(self, source, session_key)"),
+        "agent/chat_completion_helpers.py": ("kwargs = request_policy(agent, kwargs)", "start_request(self)"),
+        "agent/chat_completion_stream_monitor.py": ("if request_expired(self)",),
+        "agent/chat_completion_nonstream.py": ("if request_expired(self)",),
     }
     for relative, tokens in seams.items():
         source = (root / relative).read_text(encoding="utf-8")
@@ -146,6 +150,9 @@ def check_runtime_publication(root: Path, db) -> None:
     sys.modules["qqbot_context"] = context
     context_spec.loader.exec_module(context)
     from gateway.session import SessionStore
+    sys.path.insert(0, str(media_path.parents[1]))
+    from smart_group_qq.store import Store
+    memory_store = Store(":memory:", member_secret="offline-context-checkpoint-secret")
 
     parent_id = "runtime-parent"
     route_key = "synthetic:runtime-group"
@@ -190,20 +197,24 @@ def check_runtime_publication(root: Path, db) -> None:
         _is_session_run_current=lambda quick_key, generation: True,
         _rebind_turn_lease=lambda quick_key, generation, sid: events.append(("rebind", sid)),
         _evict_cached_agent=lambda key: events.append(("evict", key)),
+        _qq_memory_store=memory_store,
     )
     compactor = context.Compactor(
-        summarizer=lambda *_: asyncio.sleep(0, result="synthetic summary")
+        summarizer=lambda *_: asyncio.sleep(0, result="synthetic summary"), store=memory_store,
     )
     async def run_boundary():
-        compactor.start(route_key, parent_id, transcript)
+        compactor.start(route_key, parent_id, transcript, scope="synthetic-runtime-group")
         await compactor.jobs[route_key].task
         runner._qq_context_compactor = compactor
         return await context.context_boundary(
-            runner, types.SimpleNamespace(platform="qqbot"), entry,
+            runner, types.SimpleNamespace(platform="qqbot", chat_type="group", chat_id="synthetic-runtime-group"), entry,
             transcript, "synthetic-quick-key", 7,
         )
 
-    result = asyncio.run(run_boundary())
+    try:
+        result = asyncio.run(run_boundary())
+    finally:
+        memory_store.close()
     child_id = entry.session_id
     require(child_id != parent_id, "runtime.publish did not rotate the session id")
     require(store._entries[route_key].session_id == child_id,

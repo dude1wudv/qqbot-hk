@@ -37,3 +37,31 @@ jobs:
       # Hermes image verification scripts need real upstream source and are separate.
       - name: Test local behavior
         run: python -m unittest discover -s tests -q
+
+  image-compatibility:
+    name: Fixed Hermes compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Detect runtime changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          if [ "$MANUAL" = true ] || [ -z "$BASE_SHA" ] || [[ "$BASE_SHA" =~ ^0+$ ]]; then
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE_SHA" HEAD | grep -Eq '^(Dockerfile|runtime/|plugins/|hooks/|config/|overrides/|scripts/(patch-|verify-)|\.github/workflows/quality\.yml)'; then
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build and verify pinned image
+        if: steps.changes.outputs.build == 'true'
+        run: docker build --progress=plain -t qqbot-hk/offline-compat:${{ github.sha }} .

@@ -45,9 +45,9 @@ doctor_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-
 dependency_pins_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.dependency-pins"}}' "$image_id")"
 test "$base_digest_label" = "sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7"
 test "$audio_patch_label" = "v2"
-test "$chat_reasoning_patch_label" = "v5"
+test "$chat_reasoning_patch_label" = "v6"
 test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.aux-budget-patch"}}' "$image_id")" = "v1"
-test "$qq_context_patch_label" = "v1"
+test "$qq_context_patch_label" = "v2"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
 test "$qq_recovery_patch_label" = "v1"
@@ -82,7 +82,7 @@ def post(path, body, api_key):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:
+        with urllib.request.urlopen(request, timeout=300) as response:
             return json.load(response)
     except urllib.error.HTTPError as exc:
         raise SystemExit(f"{body.get('model')}: HTTP {exc.code}") from exc
@@ -95,7 +95,6 @@ deepseek = post(
         "messages": [{"role": "user", "content": "Reply only OK"}],
         "reasoning_effort": "low",
         "stream": False,
-        "max_tokens": 256,
     },
     deepseek_key,
 )
@@ -120,7 +119,6 @@ deepseek_vision = post(
         ]}],
         "reasoning_effort": "low",
         "stream": False,
-        "max_tokens": 128,
     },
     deepseek_key,
 )
@@ -139,6 +137,7 @@ docker exec hermes-qqbot python /opt/hermes/verify-hermes-audio.py --config /opt
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-aux-budget.py
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-context.py >/dev/null
+docker exec hermes-qqbot python /opt/hermes/verify-hermes-request-deadline.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-commands.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-output.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-recovery.py >/dev/null
@@ -254,12 +253,16 @@ if compression_route.get("provider") != "sub2api_deepseek":
     raise SystemExit("auxiliary.compression.provider must be sub2api_deepseek")
 if compression_route.get("model") != "deepseek/deepseek-v4.1-flash":
     raise SystemExit("auxiliary.compression.model must be deepseek/deepseek-v4.1-flash")
-if set(compression_route) != {"provider", "model", "reasoning_effort"}:
+if set(compression_route) != {"provider", "model", "reasoning_effort", "timeout"}:
     raise SystemExit("auxiliary.compression must not define a duplicate custom provider")
 if compression_route.get("reasoning_effort") != "low":
     raise SystemExit("auxiliary.compression.reasoning_effort must be low")
-if auxiliary.get("vision"):
-    raise SystemExit("auxiliary vision fallback must be disabled")
+if compression_route.get("timeout") != 300:
+    raise SystemExit("compression request timeout must be 300 seconds")
+if auxiliary.get("vision") != compression_route:
+    raise SystemExit("vision must use the same explicit DeepSeek low policy")
+if (config.get("providers", {}).get("sub2api_deepseek", {}).get("request_timeout_seconds")) != 300:
+    raise SystemExit("main model request timeout must be 300 seconds")
 print(
     "COMPRESSION_CONFIG=async THRESHOLD_TOKENS=80000 RECENT_MESSAGES=10 MAX_IMAGES=5 "
     "MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions REASONING_EFFORT=low"
@@ -487,7 +490,7 @@ with sqlite3.connect(db_path) as connection:
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise SystemExit("plugin database integrity check failed")
     schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-    if schema_version != 6:
+    if schema_version != 7:
         raise SystemExit("plugin database schema version does not match this release")
     foreign_key_errors = list(connection.execute("PRAGMA foreign_key_check"))
     if foreign_key_errors:
@@ -505,6 +508,7 @@ with sqlite3.connect(db_path) as connection:
         "character_relations", "character_commands", "group_polls",
         "group_poll_options", "group_poll_votes",
         "group_stickers", "group_sticker_sources", "group_sticker_delivery",
+        "member_extraction_jobs", "qq_context_checkpoints",
     }
     if not required_tables.issubset(tables):
         raise SystemExit("plugin memory/knowledge schema is incomplete")

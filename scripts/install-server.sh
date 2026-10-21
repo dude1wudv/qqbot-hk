@@ -27,6 +27,9 @@ for path in \
   "$project_dir/scripts/patch-hermes-qq-context.py" \
   "$project_dir/scripts/verify-hermes-qq-context.py" \
   "$project_dir/runtime/qqbot_context.py" \
+  "$project_dir/runtime/qqbot_request_deadline.py" \
+  "$project_dir/plugins/smart_group_qq/llm_policy.py" \
+  "$project_dir/scripts/verify-hermes-request-deadline.py" \
   "$project_dir/plugins/smart_group_qq/media.py" \
   "$project_dir/scripts/patch-hermes-qq-help.py" \
   "$project_dir/scripts/verify-hermes-qq-commands.py" \
@@ -73,10 +76,15 @@ PY
 fi
 stage_dir="$(mktemp -d "$data_dir/.smart-group-install.XXXXXX")"
 restart_stopped_service=false
+deployment_files_changed=false
 cleanup() {
   result=$?
   if test "$restart_stopped_service" = true && test "$(docker inspect -f '{{.State.Status}}' "$service" 2>/dev/null || true)" = exited; then
-    docker start "$service" >/dev/null || true
+    if test "$deployment_files_changed" = false; then
+      docker start "$service" >/dev/null || true
+    else
+      echo "ERROR: release files changed; preserve current data and restore the matching snapshot before starting an older image" >&2
+    fi
   fi
   rm -rf "$stage_dir"
   exit "$result"
@@ -214,6 +222,7 @@ done
 cp -a "$project_dir/docker-compose.yml" "$config_backup_dir/"
 docker inspect -f '{{.Image}}' "$service" > "$config_backup_dir/previous-image-id"
 echo "ROLLBACK_SNAPSHOT=$session_backup_stamp"
+deployment_files_changed=true
 install -d -o 10000 -g 10000 -m 0755 "$data_dir/hooks/smart_group_qq"
 install -o 10000 -g 10000 -m 0644 "$project_dir/hooks/smart_group_qq/HOOK.yaml" "$data_dir/hooks/smart_group_qq/HOOK.yaml"
 install -o 10000 -g 10000 -m 0644 "$project_dir/hooks/smart_group_qq/handler.py" "$data_dir/hooks/smart_group_qq/handler.py"

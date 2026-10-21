@@ -9,6 +9,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+POLICY_SPEC = importlib.util.spec_from_file_location(
+    "qqbot_llm_policy", ROOT / "plugins" / "smart_group_qq" / "llm_policy.py")
+POLICY = importlib.util.module_from_spec(POLICY_SPEC)
+sys.modules[POLICY_SPEC.name] = POLICY
+POLICY_SPEC.loader.exec_module(POLICY)
 MEDIA_SPEC = importlib.util.spec_from_file_location(
     "qqbot_hk_media", ROOT / "plugins" / "smart_group_qq" / "media.py"
 )
@@ -35,6 +40,9 @@ def history(count):
 
 class ContextTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        retry_patch = patch.object(CONTEXT, "RETRY_DELAYS", (0, 0))
+        retry_patch.start()
+        self.addCleanup(retry_patch.stop)
         self.metadata = types.ModuleType("agent.model_metadata")
         self.metadata.estimate_messages_tokens_rough = lambda messages: 0
         sys.modules["agent"] = types.ModuleType("agent")

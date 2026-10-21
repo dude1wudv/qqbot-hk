@@ -36,6 +36,7 @@ async def verify(home: Path) -> None:
     from gateway.platforms.qqbot.adapter import QQAdapter
     from gateway.run import GatewayRunner
     from gateway.session import SessionStore
+    from qqbot_context import Compactor
 
     settings = raw_config["plugins"]["entries"]["smart_group_qq"]["settings"]
 
@@ -100,6 +101,38 @@ async def verify(home: Path) -> None:
                 "Session route changed after reopening durable store")
         require(restored.to_dict().get("model_override") == route.to_dict().get("model_override"),
                 "Session model override disappeared on reopen")
+        runner._qq_memory_store = store
+        for command in ("/new", "/reset"):
+            entered, closed = asyncio.Event(), asyncio.Event()
+
+            async def blocked_summary(*args):
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    closed.set()
+
+            compactor = runner._qq_context_compactor = Compactor(store=store, chunk_summarizer=blocked_summary)
+            before = runner.session_store.get_or_create_session(source).session_id
+            compactor.start(key, before, [{"role": "user", "content": "synthetic pending context"}],
+                            scope=source.chat_id)
+            pending = compactor.jobs[key].task
+            await asyncio.wait_for(entered.wait(), 1)
+            original_cleanup = runner._cleanup_old_agent_for_reset
+
+            async def assert_cancelled_before_cleanup(reset_key):
+                require(closed.is_set() and pending.cancelled(),
+                        "Native reset reached agent cleanup while the QQ compactor was still running")
+                require(store.get_context_checkpoint(key) is None,
+                        "Native reset left a resumable checkpoint for the retired conversation")
+                await original_cleanup(reset_key)
+
+            with patch.object(runner, "_cleanup_old_agent_for_reset", side_effect=assert_cancelled_before_cleanup):
+                await runner._handle_reset_command(MessageEvent(text=command, source=source, message_id=command))
+            require(runner.session_store.get_or_create_session(source).session_id != before,
+                    "Native reset did not rotate the route after cancelling compression")
+            require(runner.session_store.get_or_create_session(groups[1]).session_id == untouched,
+                    "Native reset crossed group isolation while cancelling compression")
         handler.knowledge.add_document(source.chat_id, "retention", "synthetic-retention-marker")
         for index, command in enumerate(("/reset", "/纠正记忆：偏好=测试", "/停止记忆", "/忘记我")):
             before = runner.session_store.get_or_create_session(source).session_id
@@ -118,7 +151,7 @@ async def verify(home: Path) -> None:
             await asyncio.sleep(0)
         require(len(sends) == 4, "Native reset/privacy confirmations not delivered once")
         print("QQ_NATIVE_LIFECYCLE=passed AUTH=real PAIRING=fail-closed RESET=real "
-              "PRIVACY=retired-generation MODEL=durable REASONING=session GROUPS=isolated NETWORK=unused")
+              "PRIVACY=retired-generation CONTEXT=cancelled MODEL=durable REASONING=session GROUPS=isolated NETWORK=unused")
     finally:
         # Scheduled send-completion callbacks must finish before closing their Store.
         await asyncio.sleep(0)

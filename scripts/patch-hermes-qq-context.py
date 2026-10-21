@@ -7,7 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 
-MARKER = '# QQBOT_HK_CONTEXT_PATCH = "v1"'
+MARKER = '# QQBOT_HK_CONTEXT_PATCH = "v2"'
 
 PATCHES = {
     "gateway/run_turn.py": (
@@ -18,6 +18,12 @@ PATCHES = {
         ), (
             "            return await self._hmwa_deliver_turn_response(\n",
             "            from qqbot_context import after_turn\n            if not agent_failed_early and not is_context_overflow_failure:\n                await after_turn(self, source, session_entry, _quick_key, run_generation)\n            return await self._hmwa_deliver_turn_response(\n",
+        ), (
+            "            event._heartbeat_execution_started = True\n",
+            "            event._heartbeat_execution_started = True\n            from qqbot_context import notify_turn\n            await notify_turn(self, 'started', event, _quick_key, run_generation)\n",
+        ), (
+            "            # Restore session context variables to their pre-handler state\n",
+            "            from qqbot_context import notify_turn\n            await notify_turn(self, 'finished', event, _quick_key, run_generation)\n            # Restore session context variables to their pre-handler state\n",
         )],
     ),
     "gateway/run_turn_runner.py": (
@@ -25,6 +31,58 @@ PATCHES = {
         [(
             "        self._wire_turn_agent_callbacks(agent, turn_route, reasoning_config, stream_delta_cb, interim_cb, want_interim)\n",
             "        if platform_key == 'qqbot':\n            # QQ owns async compaction; disable native preflight, idle and micro compaction.\n            agent.compression_enabled = False\n            _qq_compressor = getattr(agent, 'context_compressor', None)\n            if _qq_compressor is not None:\n                _qq_compressor._micro_compact_enabled = False\n        self._wire_turn_agent_callbacks(agent, turn_route, reasoning_config, stream_delta_cb, interim_cb, want_interim)\n",
+        ), (
+            "        result = self._run_conversation_with_approval(agent, agent_history, observed_group_context, persist_msg, persist_ts)\n",
+            "        if platform_key == 'qqbot':\n            agent._qq_deadline_exceeded = False\n        result = self._run_conversation_with_approval(agent, agent_history, observed_group_context, persist_msg, persist_ts)\n        from qqbot_request_deadline import finish_turn_result\n        result = finish_turn_result(agent, result)\n",
+        )],
+    ),
+    "gateway/slash_commands_session.py": (
+        "b7cdb1be5aa153b84d9cff3aa7c35c7ad2cce3c931dbebfca7738fa2ef6b4ee4",
+        [(
+            "        self._invalidate_session_run_generation(session_key, reason=\"session_reset\")\n",
+            "        self._invalidate_session_run_generation(session_key, reason=\"session_reset\")\n        from qqbot_context import cancel_context_scope\n        await cancel_context_scope(self, source, session_key)\n",
+        ), (
+            "        from agent.conversation_compression import finalize_context_engine_compression_notification\n",
+            "        from qqbot_context import is_qq, manual_compress\n        if is_qq(source):\n            return await manual_compress(self, source, session_entry, history, request)\n        from agent.conversation_compression import finalize_context_engine_compression_notification\n",
+        )],
+    ),
+    "agent/chat_completion_helpers.py": (
+        "5231a0e674806db6ad7be60e2d40a19a4157f7d2baa238aaa9af66f61e0eea4c",
+        [(
+            "    kwargs = _build_api_kwargs_for_mode(agent, api_messages, tools_for_api)\n",
+            "    kwargs = _build_api_kwargs_for_mode(agent, api_messages, tools_for_api)\n    from qqbot_request_deadline import request_policy\n    kwargs = request_policy(agent, kwargs)\n",
+        ), (
+            "        self.on_first_delta = on_first_delta\n        self.worker = None",
+            "        self.on_first_delta = on_first_delta\n        from qqbot_request_deadline import start_request\n        start_request(self)\n        self.worker = None",
+        ), (
+            "        self.stale_timeout = stale_timeout\n        self.call_start = call_start\n",
+            "        self.stale_timeout = stale_timeout\n        self.call_start = call_start\n        from qqbot_request_deadline import start_request\n        start_request(self)\n",
+        ), (
+            "        if not self.abort(\"stale_call_kill\"):\n",
+            "        from qqbot_request_deadline import request_expired, mark_expired\n        if request_expired(self, mark=False):\n            if self.abort('qq_request_deadline'):\n                mark_expired(self)\n            return\n        if not self.abort(\"stale_call_kill\"):\n",
+        ), (
+            "    stale_timeout = _resolve_direct_stale_timeout(agent, api_kwargs)\n",
+            "    from qqbot_request_deadline import bound_inline_timeout\n    stale_timeout = bound_inline_timeout(agent, _resolve_direct_stale_timeout(agent, api_kwargs))\n",
+        ), (
+            "            lambda request: summary_client.chat.completions.create(**bypass_chat_sdk_request_transform(request, summary_client)),\n",
+            "            lambda request: (interruptible_api_call(agent, request) if getattr(agent, 'platform', None) == 'qqbot'\n                else summary_client.chat.completions.create(**bypass_chat_sdk_request_transform(request, summary_client))),\n",
+        )],
+    ),
+    "agent/chat_completion_stream_monitor.py": (
+        "8c232eb9e90335ce599b5c8d403c6e369e3fb9e01e78d4a178c517b62da420c5",
+        [(
+            "            _hb_now = time.time()\n",
+            "            _hb_now = time.time()\n            from qqbot_request_deadline import request_expired\n            if request_expired(self):\n                self._abort_for_interrupt(_hb_now - self.last_chunk_time['t'])\n                return\n",
+        )],
+    ),
+    "agent/chat_completion_nonstream.py": (
+        "e56a634360d4f4400740966916427210ac86310a6c57ae6ba778b997e2fd6bc5",
+        [(
+            "        self.agent = agent\n",
+            "        self.agent = agent\n        from qqbot_request_deadline import start_request\n        start_request(self)\n",
+        ), (
+            "            elapsed = now - self.call_start\n",
+            "            elapsed = now - self.call_start\n            from qqbot_request_deadline import request_expired\n            if request_expired(self):\n                self._interrupt(elapsed)\n",
         )],
     ),
     "agent/conversation_loop.py": (

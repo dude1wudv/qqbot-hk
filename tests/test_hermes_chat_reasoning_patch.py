@@ -37,7 +37,7 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
         digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
         patched = PATCH.patch_source(source, digest)
         self.assertIn(PATCH.PATCH_MARKER, patched)
-        self.assertEqual(PATCH.PATCH_MARKER, '# QQBOT_HK_CHAT_REASONING_PATCH = "v5"')
+        self.assertEqual(PATCH.PATCH_MARKER, '# QQBOT_HK_CHAT_REASONING_PATCH = "v6"')
         self.assertIn("DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES", patched)
         self.assertEqual(patched.count("is_sub2api_deepseek ="), 1)
         self.assertEqual(patched.count("is_sub2api_mimo ="), 1)

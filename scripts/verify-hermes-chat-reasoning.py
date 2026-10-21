@@ -43,8 +43,8 @@ def verify_behavior_matrix(route: str, provider_profile=None) -> None:
     for model in (MODEL, "xiaomi/mimo-v2.6-flash"):
         default = build(None, model, provider_profile=provider_profile)
         require(
-            default.get("reasoning_effort") == "medium",
-            f"{route} {model}: transport fallback effort is not medium",
+            default.get("reasoning_effort") == ("low" if model == MODEL else "medium"),
+            f"{route} {model}: transport fallback effort does not match policy",
         )
         levels = ("low", "medium", "high", "max") if model == MODEL else ("low", "medium", "high", "xhigh", "max")
         for effort in levels:

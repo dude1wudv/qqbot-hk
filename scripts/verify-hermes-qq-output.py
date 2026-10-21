@@ -120,11 +120,82 @@ async def verify_first_bubble_quote() -> None:
             "QQ continuation repeated the visible quote")
 
 
+async def verify_native_receipt_delivery() -> None:
+    from gateway.config import PlatformConfig
+    from gateway.platforms.qqbot.adapter import QQAdapter
+    from smart_group_qq.store import Store
+    from smart_group_qq.response import ReplyRegistry
+    from smart_group_qq.delivery import LocalReplies
+    from smart_group_qq.formatter import format_for_qq
+
+    store = Store(":memory:", member_secret="offline-synthetic-member-secret")
+    adapter = QQAdapter(PlatformConfig(enabled=True, extra={"markdown_support": False}))
+    adapter._chat_type_map["group-smoke"] = "group"
+    registry = ReplyRegistry(store.memory_epoch, lambda *_a, **_k: None, lambda *_a: None)
+    replies = LocalReplies(store, registry)
+    smart_group_qq._configure_adapter(adapter, registry)
+    bodies, failures = [], []
+
+    async def connected():
+        return True
+
+    async def request(method, path, body, **kwargs):
+        bodies.append(body.copy())
+        if failures:
+            value = failures.pop(0)
+            if value:
+                raise value
+        return {"id": str(len(bodies))}
+
+    async def drain():
+        await asyncio.gather(*tuple(replies.tasks.values()))
+
+    adapter._ensure_connected = connected
+    adapter._api_request = request
+    raw = '```python\n    print("**literal**")\n' + '    # retain  spaces\n' * 90 + '```'
+    prepared = format_for_qq(raw)
+    replies.schedule("group-smoke", "code", adapter, "group-smoke", text=raw)
+    await drain()
+    require("".join(body["content"] for body in bodies) == prepared,
+            "native formatting changed prepared code or packet whitespace")
+    require(all(body["content"].strip() and len(body["content"]) <= 1500 for body in bodies),
+            "native packets empty or exceed transport limit")
+
+    bodies.clear()
+    store.save_command_receipt("group-smoke", "restart", prepared, prepared=True)
+    require(replies.replay("group-smoke", "restart", adapter, "group-smoke"), "pending receipt not resumed")
+    await drain()
+    require("".join(body["content"] for body in bodies) == prepared, "cached final body formatted twice")
+
+    bodies.clear()
+    failures.extend([None, RuntimeError("QQ Bot API error [429] synthetic")])
+    replies.schedule("group-smoke", "refused", adapter, "group-smoke", text="x" * 1700)
+    await drain()
+    receipt = store.get_command_receipt("group-smoke", "refused")
+    require(receipt["delivery_status"] == "failed" and receipt["sent_chunks"] == [0],
+            "known failure did not preserve successful prefix")
+    require(len(bodies) == 2, "native layer retried before receipt decided")
+    require(replies.replay("group-smoke", "refused", adapter, "group-smoke"), "known failure cannot resume")
+    await drain()
+    require(len(bodies) == 3 and len(bodies[-1]["content"]) == 200, "successful prefix was resent")
+
+    bodies.clear()
+    failures.append(TimeoutError("synthetic ambiguous delivery"))
+    replies.schedule("group-smoke", "unknown", adapter, "group-smoke", text="hello")
+    await drain()
+    require(store.get_command_receipt("group-smoke", "unknown")["delivery_status"] == "unknown",
+            "ambiguous send incorrectly marked safe to retry")
+    require(len(bodies) == 1 and not replies.replay("group-smoke", "unknown", adapter, "group-smoke"),
+            "unknown outcome resent automatically")
+    store.close()
+
+
 def main() -> None:
     verify_auto_media_boundary()
     asyncio.run(verify_normal_delivery_boundary())
     asyncio.run(verify_queued_followup_boundary())
     asyncio.run(verify_first_bubble_quote())
+    asyncio.run(verify_native_receipt_delivery())
     print("HERMES_QQ_OUTPUT=passed SILENT_MEDIA=blocked FAILED=blocked QUEUED=blocked NEXT_REPLY=deliverable")
 
 
