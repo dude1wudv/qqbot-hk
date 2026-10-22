@@ -54,8 +54,35 @@ test "$qq_output_patch_label" = "v1"
 test "$qq_recovery_patch_label" = "v1"
 test "$doctor_patch_label" = "v3"
 test "$dependency_pins_label" = "2026-10-22"
+test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.plugin-scope-patch"}}' "$image_id")" = "v1"
+test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.playwright"}}' "$image_id")" = "1.64.0"
 test "$(docker image inspect -f '{{index .Config.Labels "security.emudhra.mitigated"}}' "$image_id")" = "2026-10-22"
 docker exec hermes-qqbot python /opt/hermes/patch-hermes-trust-store.py --check
+docker run --rm --init --network none --entrypoint python "$image_id" /opt/hermes/verify-hermes-plugin-scope.py
+docker exec --user 10000:10000 hermes-qqbot python /opt/hermes/verify-hermes-playwright.py
+
+# Exercise the exact CLI healthcheck without exporting logs or profile values.
+docker exec -i --user 10000:10000 hermes-qqbot python - <<'PY'
+from pathlib import Path
+import subprocess
+
+log = Path("/opt/data/logs/errors.log")
+offset = log.stat().st_size if log.exists() else 0
+for _ in range(2):
+    result = subprocess.run(["hermes", "gateway", "status"],
+                            capture_output=True, text=True, timeout=45)
+    if result.returncode:
+        raise SystemExit("QQ CLI healthcheck returned failure")
+    if "UnscopedSecretError" in result.stdout + result.stderr:
+        raise SystemExit("QQ CLI emitted an unscoped credential error")
+if log.exists():
+    with log.open("rb") as handle:
+        handle.seek(offset)
+        added = handle.read().decode("utf-8", errors="replace")
+    if "UnscopedSecretError" in added or "smart_group_qq storage initialization failed" in added:
+        raise SystemExit("QQ CLI healthcheck logged a plugin credential-scope failure")
+print("QQ_CLI_HEALTH=passed CALLS=2 UNSCOPED_SECRET_ERRORS=0")
+PY
 
 docker exec hermes-qqbot python /opt/hermes/verify-live-models.py
 

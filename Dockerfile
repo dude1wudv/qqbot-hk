@@ -12,6 +12,8 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.qq-output-patch="v1" \
       io.qqbot-hk.qq-recovery-patch="v1" \
       io.qqbot-hk.doctor-patch="v3" \
+      io.qqbot-hk.plugin-scope-patch="v1" \
+      io.qqbot-hk.playwright="1.64.0" \
       io.qqbot-hk.dependency-pins="2026-10-22"
 
 # Preserve the CA/Node remediation already applied to the live QQ container.
@@ -19,6 +21,18 @@ COPY --from=trusted-node /usr/local/bin/node /usr/local/bin/node
 COPY --chmod=0755 scripts/patch-hermes-trust-store.py /opt/hermes/patch-hermes-trust-store.py
 RUN python /opt/hermes/patch-hermes-trust-store.py
 LABEL security.emudhra.mitigated="2026-10-22"
+
+# Python terminal tasks need their own Playwright package, alongside Hermes'
+# existing Node browser tools. Keep both browser revisions and the trusted Node.
+ENV PLAYWRIGHT_NODEJS_PATH=/usr/local/bin/node \
+    PLAYWRIGHT_SKIP_BROWSER_GC=1
+COPY --chmod=0644 overrides/hermes-playwright-requirements.txt /tmp/hermes-playwright-requirements.txt
+RUN uv pip install --python /opt/hermes/.venv/bin/python --no-deps -r /tmp/hermes-playwright-requirements.txt \
+    && python -c "from pathlib import Path; import playwright; p = Path(playwright.__file__).parent / 'driver/node'; p.unlink(); p.symlink_to('/usr/local/bin/node')" \
+    && umask 022 && python -m playwright install --with-deps chromium --only-shell \
+    && chmod -R a+rX /opt/hermes/.playwright \
+    && python /opt/hermes/patch-hermes-trust-store.py \
+    && rm -f /tmp/hermes-playwright-requirements.txt
 
 COPY --chmod=0755 scripts/patch-hermes-dependencies.py /tmp/patch-hermes-dependencies.py
 COPY --chmod=0644 overrides/hermes-package-lock.json /tmp/hermes-package-lock.json
@@ -30,6 +44,9 @@ COPY --chmod=0755 scripts/patch-hermes-doctor.py /tmp/patch-hermes-doctor.py
 RUN python /tmp/patch-hermes-doctor.py \
     && rm -f /tmp/patch-hermes-doctor.py
 
+COPY --chmod=0755 scripts/patch-hermes-plugin-scope.py /tmp/patch-hermes-plugin-scope.py
+RUN python /tmp/patch-hermes-plugin-scope.py \
+    && rm -f /tmp/patch-hermes-plugin-scope.py
 
 COPY --chmod=0755 scripts/patch-hermes-audio.py /tmp/patch-hermes-audio.py
 RUN python /tmp/patch-hermes-audio.py \
@@ -83,11 +100,14 @@ COPY --chmod=0755 scripts/verify-hermes-qq-recovery.py /opt/hermes/verify-hermes
 COPY --chmod=0755 scripts/verify-hermes-qq-output.py /opt/hermes/verify-hermes-qq-output.py
 COPY --chmod=0755 scripts/verify-hermes-qq-lifecycle.py /opt/hermes/verify-hermes-qq-lifecycle.py
 COPY --chmod=0755 scripts/verify-hermes-dependencies.py /opt/hermes/verify-hermes-dependencies.py
+COPY --chmod=0755 scripts/verify-hermes-plugin-scope.py /opt/hermes/verify-hermes-plugin-scope.py
+COPY --chmod=0755 scripts/verify-hermes-playwright.py /opt/hermes/verify-hermes-playwright.py
 COPY --chmod=0644 plugins/smart_group_qq /opt/hermes/qqbot-hk/plugins/smart_group_qq
 COPY --chmod=0644 config/hermes-config.yaml /opt/hermes/qqbot-hk/hermes-config.yaml
 
 RUN python /opt/hermes/verify-hermes-audio.py \
     && python /opt/hermes/patch-hermes-trust-store.py --check \
+    && python /opt/hermes/verify-hermes-plugin-scope.py \
     && python /opt/hermes/verify-hermes-chat-reasoning.py \
     && python /opt/hermes/verify-hermes-model-routing.py \
     && python /opt/hermes/verify-hermes-aux-budget.py \
@@ -100,3 +120,5 @@ RUN python /opt/hermes/verify-hermes-audio.py \
     && python /opt/hermes/verify-hermes-qq-lifecycle.py \
     && python /opt/hermes/verify-hermes-dependencies.py \
     && QQ_CLIENT_SECRET=offline-synthetic-member-secret python -m hermes_cli.main plugins doctor /opt/hermes/qqbot-hk/plugins/smart_group_qq --ci
+
+RUN python -c "import os, runpy; os.setgroups([]); os.setgid(10000); os.setuid(10000); runpy.run_path('/opt/hermes/verify-hermes-playwright.py', run_name='__main__')"

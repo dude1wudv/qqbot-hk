@@ -1,0 +1,4 @@
+# Add only the Python browser stack; preserve the pinned Hermes environment.
+playwright==1.64.0
+pyee==13.0.0
+greenlet==3.5.3
