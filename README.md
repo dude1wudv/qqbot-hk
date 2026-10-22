@@ -168,6 +168,8 @@ Hermes 只注册 `sub2api_deepseek` 一个供应商，两个完整模型 ID 共�
 
 升级验收可运行 `python -m unittest discover -s tests -q`、`python scripts/compare-social-scenarios.py`；镜像构建执行固定 Hermes 的原生兼容检查。服务器 `scripts/verify-server.sh` 调用 `verify-live-models.py`，以同一 key 完成双模型的合成文本、无副作用 echo 工具闭环和蓝色图片识别，记录长度、延迟和 token。组件对比与模型可调用不能单独证明智能提升；真实 QQ 送达以 `reply_sent` 为准。
 
+镜像同时保留 2026-10-22 线上已完成的 CA/Node 修复：精确匹配原有四张证书的 DER 指纹，检查系统、certifi、botocore 与 Node 默认根；Node 使用同一已验证镜像摘要。构建和服务器验收都会检查，避免本次重建恢复旧信任。
+
 部署保留现有会话、历史和持久的会话级模型设置，不为升级执行批量 `/new`。Hermes 原生 `/reasoning` 是会话运行状态，不写入 SessionStore 路由；重启后按模型配置恢复档位，不宣称跨重启持久化。`/model`、`/reasoning` 查询实际设置。图片保持原生内容块，不配置自动模型回退。群聊不发送 “Interrupting current task” 忙碌确认。打断后模型若仍输出 `action`/`message` 信封，发送前取出正文并做 QQ 纯文本清洗。
 
 QQ 自动压缩由独立协调器接管，完成后在下一轮持有会话锁的安全边界，通过 Hermes 原子事务建立新会话，仅带入一条摘要和最新 10 条历史。工具协议转换为历史文字，避免孤立 tool call；新增尾部先增量归纳，不丢弃未摘要内容。每块成功立即保存检查点，重启后从未完成块继续；同块失败按 60/300 秒退避，第三次停止，新增消息不重置失败计数。历史前缀、父会话、策略版本或隐私 epoch 变化使候选失效。手动 `/compress` 复用同一协调器与检查点。80000 是触发阈值；最新 10 条本身过大时保留原会话，不强行截断。

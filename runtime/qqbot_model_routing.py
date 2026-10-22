@@ -129,7 +129,7 @@ def configure_turn(agent, runner, *, source, session_key):
     primary = getattr(agent, "_primary_runtime", None)
     if isinstance(primary, dict):
         primary["reasoning_config"] = deepcopy(state.reasoning)
-    logger.info("QQ_MODEL_ROUTE mode=%s model=%s", "manual" if manual else "auto",
+    logger.info("QQ_MODEL_ROUTE mode=%s selected=%s", "manual" if manual else "auto",
                 getattr(agent, "model", "") if getattr(agent, "model", "") in {FAST_MODEL, FLASH_MODEL} else "other")
 
 
@@ -140,6 +140,13 @@ def note_progress(agent, reason, *, state=_CURRENT):
     if state is None or current is not state:
         return
     with state.lock:
+        if not state.progressed:
+            model = getattr(agent, "model", "")
+            effort = state.reasoning or {}
+            effort = ("off" if isinstance(effort, Mapping) and effort.get("enabled") is False
+                      else effort.get("effort", "high") if isinstance(effort, Mapping) else "high")
+            logger.info("QQ_MODEL_ROUTE actual=%s effort=%s progress=%s",
+                        model if model in {FAST_MODEL, FLASH_MODEL} else "other", effort, reason)
         state.progressed = True
         state.progress_reason = state.progress_reason or reason
         agent._fallback_index = len(getattr(agent, "_fallback_chain", ()) or ())

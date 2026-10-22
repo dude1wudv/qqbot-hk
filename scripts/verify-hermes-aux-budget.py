@@ -5,7 +5,7 @@ from agent.auxiliary_client import _build_call_kwargs, _is_max_tokens_rejection
 
 
 def main():
-    for model in ("deepseek/deepseek-v4.1-flash",):
+    for model in ("deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-fast"):
         for budget in (None, 180, 5000, 8192):
             kwargs = _build_call_kwargs(
                 provider="sub2api_deepseek", model=model,

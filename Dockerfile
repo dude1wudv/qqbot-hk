@@ -1,3 +1,4 @@
+FROM node@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS trusted-node
 FROM nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
 
 LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
@@ -5,13 +6,19 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.audio-patch="v2" \
       io.qqbot-hk.chat-reasoning-patch="v7" \
       io.qqbot-hk.model-routing-patch="v1" \
-      io.qqbot-hk.aux-budget-patch="v1" \
+      io.qqbot-hk.aux-budget-patch="v2" \
       io.qqbot-hk.qq-context-patch="v2" \
       io.qqbot-hk.qq-help-patch="v1" \
       io.qqbot-hk.qq-output-patch="v1" \
       io.qqbot-hk.qq-recovery-patch="v1" \
       io.qqbot-hk.doctor-patch="v3" \
       io.qqbot-hk.dependency-pins="2026-10-21"
+
+# Preserve the CA/Node remediation already applied to the live QQ container.
+COPY --from=trusted-node /usr/local/bin/node /usr/local/bin/node
+COPY --chmod=0755 scripts/patch-hermes-trust-store.py /opt/hermes/patch-hermes-trust-store.py
+RUN python /opt/hermes/patch-hermes-trust-store.py
+LABEL security.emudhra.mitigated="2026-10-22"
 
 COPY --chmod=0755 scripts/patch-hermes-dependencies.py /tmp/patch-hermes-dependencies.py
 COPY --chmod=0644 overrides/hermes-package-lock.json /tmp/hermes-package-lock.json
@@ -80,6 +87,7 @@ COPY --chmod=0644 plugins/smart_group_qq /opt/hermes/qqbot-hk/plugins/smart_grou
 COPY --chmod=0644 config/hermes-config.yaml /opt/hermes/qqbot-hk/hermes-config.yaml
 
 RUN python /opt/hermes/verify-hermes-audio.py \
+    && python /opt/hermes/patch-hermes-trust-store.py --check \
     && python /opt/hermes/verify-hermes-chat-reasoning.py \
     && python /opt/hermes/verify-hermes-model-routing.py \
     && python /opt/hermes/verify-hermes-aux-budget.py \

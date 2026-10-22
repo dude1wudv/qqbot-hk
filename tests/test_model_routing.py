@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +82,14 @@ def configure(value=None, runner=None):
 
 
 class ModelRoutingTests(unittest.TestCase):
+    def test_actual_route_log_is_once_and_contains_no_model_content(self):
+        value = configure()
+        with patch.object(routing.logger, "info") as info:
+            routing.note_stream_chunk(value, {"choices": [{"delta": {"reasoning_content": "private synthetic reasoning"}}]})
+            routing.note_progress(value, "tools")
+        info.assert_called_once_with("QQ_MODEL_ROUTE actual=%s effort=%s progress=%s",
+                                     routing.FAST_MODEL, "high", "stream")
+
     def test_auto_falls_back_once_and_preserves_this_turn_reasoning(self):
         for effort in ({"enabled": True, "effort": "high"}, {"enabled": True, "effort": "low"}, {"enabled": False}):
             with self.subTest(effort=effort):

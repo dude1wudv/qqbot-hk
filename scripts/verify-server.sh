@@ -47,13 +47,15 @@ test "$base_digest_label" = "sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca3
 test "$audio_patch_label" = "v2"
 test "$chat_reasoning_patch_label" = "v7"
 test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.model-routing-patch"}}' "$image_id")" = "v1"
-test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.aux-budget-patch"}}' "$image_id")" = "v1"
+test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.aux-budget-patch"}}' "$image_id")" = "v2"
 test "$qq_context_patch_label" = "v2"
 test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
 test "$qq_recovery_patch_label" = "v1"
 test "$doctor_patch_label" = "v3"
 test "$dependency_pins_label" = "2026-10-21"
+test "$(docker image inspect -f '{{index .Config.Labels "security.emudhra.mitigated"}}' "$image_id")" = "2026-10-22"
+docker exec hermes-qqbot python /opt/hermes/patch-hermes-trust-store.py --check
 
 docker exec hermes-qqbot python /opt/hermes/verify-live-models.py
 

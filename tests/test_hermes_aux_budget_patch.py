@@ -2,7 +2,8 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import unittest
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "patch-hermes-aux-budget.py"
@@ -45,6 +46,28 @@ def fixture_source() -> str:
         "    if max_tokens is not None and _forwards_max_tokens(provider, provider_norm, model, effective_base, task):\n"
         "        kwargs.update(auxiliary_max_tokens_param(max_tokens, model=model))\n"
         "    return kwargs\n\n"
+        "def clamp_reasoning_config(config):\n"
+        "    return config\n\n"
+        "def known_reasoning_floor(config, provider, base, model, task):\n"
+        "    return config or {'enabled': True, 'effort': 'medium'}\n\n"
+        "def merge_session_affinity_headers(kwargs, *args):\n"
+        "    return kwargs\n\n"
+        "def _runtime_main_value(key):\n"
+        "    return None\n\n"
+        "def _build_call_kwargs(provider, model, messages, reasoning_config=None, extra_body=None, base_url=None, task='compression', max_tokens=None, timeout=300):\n"
+        "    effective_base, provider_norm = base_url, provider.lower()\n"
+        "    kwargs = build_kwargs(provider, provider_norm, model, effective_base, task, max_tokens)\n"
+        "    kwargs.update(messages=messages, timeout=timeout)\n"
+        "    extra_body = dict(extra_body or {})\n"
+        "    task_reasoning = extra_body.pop('reasoning', None)\n"
+        "    if reasoning_config is None and isinstance(task_reasoning, dict):\n"
+        "        reasoning_config = task_reasoning\n"
+        "    reasoning_config = clamp_reasoning_config(\n"
+        "        known_reasoning_floor(reasoning_config, provider_norm, effective_base, model, task))\n"
+        "    kwargs['reasoning_effort'] = 'medium'\n"
+        "    extra_body['reasoning'] = reasoning_config\n"
+        "    kwargs['extra_body'] = extra_body\n"
+        "    return merge_session_affinity_headers(kwargs, provider, base_url, _runtime_main_value(\"session_id\") or None)\n\n"
         "def _without_max_tokens(kwargs):\n"
         "    return {k: v for k, v in kwargs.items() if k not in ('max_tokens', 'max_completion_tokens')}\n\n"
         "def _is_unsupported_parameter_error(exc, name):\n"
@@ -61,6 +84,15 @@ def fixture_source() -> str:
 
 
 class HermesAuxBudgetPatchTests(unittest.TestCase):
+    def setUp(self):
+        effort = ModuleType("agent.reasoning_effort")
+        effort.DEEPSEEK_V4_EFFORTS = ("low", "high", "max")
+        effort.DEEPSEEK_V4_OVERRIDES = {"xhigh": "max"}
+        effort.clamp_effort = lambda value, levels, aliases: aliases.get(value, value)
+        self.modules = patch.dict("sys.modules", {"agent": ModuleType("agent"), "agent.reasoning_effort": effort})
+        self.modules.start()
+        self.addCleanup(self.modules.stop)
+
     def _load_patched(self):
         source = fixture_source()
         patched = PATCH.patch_source(source, hashlib.sha256(source.encode("utf-8")).hexdigest())
@@ -120,6 +152,62 @@ class HermesAuxBudgetPatchTests(unittest.TestCase):
     def test_wrong_sha_fails_closed(self):
         with self.assertRaisesRegex(PATCH.PatchError, "SHA mismatch"):
             PATCH.patch_source(fixture_source(), "0" * 64)
+
+    def test_explicit_low_high_off_and_default_low_on_both_deepseek_models(self):
+        build = self._load_patched()["_build_call_kwargs"]
+        for model in ("deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-fast"):
+            for config, expected in ((None, "low"), ({"enabled": True, "effort": "low"}, "low"),
+                                     ({"enabled": True, "effort": "high"}, "high"), ({"enabled": False}, None)):
+                for cap in (None, 180, 5000, 8192):
+                    with self.subTest(model=model, config=config, cap=cap):
+                        extra = {"reasoning": {"enabled": True, "effort": "low"}, "keep": {"value": 1}}
+                        kwargs = build("sub2api_deepseek", model, ["keep message"], reasoning_config=config,
+                                       extra_body=extra, base_url="http://sub2api:8080/v1/", max_tokens=cap)
+                        self.assertEqual(kwargs.get("reasoning_effort"), expected)
+                        if expected is None:
+                            self.assertNotIn("reasoning_effort", kwargs)
+                        self.assertEqual(kwargs["extra_body"], {"keep": {"value": 1}})
+                        self.assertEqual(kwargs.get("max_tokens"), cap)
+                        self.assertEqual(kwargs["messages"], ["keep message"])
+                        self.assertEqual(kwargs["timeout"], 300)
+                        self.assertIn("reasoning", extra, "caller-owned body was mutated")
+
+    def test_absent_reasoning_defaults_low_and_task_high_is_preserved(self):
+        build = self._load_patched()["_build_call_kwargs"]
+        for body, expected in ((None, "low"), ({"reasoning": {"enabled": True, "effort": "high"}}, "high"),
+                               ({"reasoning": {"enabled": False}}, None)):
+            result = build("sub2api_deepseek", "deepseek/deepseek-v4.1-flash", [],
+                           base_url="http://sub2api:8080/v1", extra_body=body)
+            self.assertEqual(result.get("reasoning_effort"), expected)
+            self.assertNotIn("extra_body", result)
+            self.assertNotIn("max_tokens", result)
+
+    def test_non_target_models_and_urls_keep_original_reasoning_projection(self):
+        build = self._load_patched()["_build_call_kwargs"]
+        for model, base in (("other-model", "http://sub2api:8080/v1"),
+                            ("deepseek/deepseek-v4.1-flash-new", "http://sub2api:8080/v1"),
+                            ("deepseek/deepseek-v4.1-flash", "https://other.invalid/v1"),
+                            ("deepseek/deepseek-v4.1-flash", "http://sub2api:8080/v1.evil"),
+                            ("deepseek/deepseek-v4.1-flash-fast", "https://sub2api:8080/v1")):
+            with self.subTest(model=model, base=base):
+                config = {"enabled": True, "effort": "high"}
+                result = build("custom", model, [], reasoning_config=config, base_url=base)
+                self.assertEqual(result["reasoning_effort"], "medium")
+                self.assertEqual(result["extra_body"], {"reasoning": config})
+
+    def test_v1_upgrade_restores_original_hash_then_applies_v2(self):
+        source = fixture_source()
+        digest = hashlib.sha256(source.encode()).hexdigest()
+        legacy = source
+        for old, new in PATCH.BUDGET_PATCHES:
+            legacy = legacy.replace(old, new, 1)
+        legacy += "\n" + PATCH.LEGACY_MARKER + "\n"
+        upgraded = PATCH.patch_source(legacy, digest)
+        self.assertEqual(upgraded, PATCH.patch_source(source, digest))
+        self.assertNotIn(PATCH.LEGACY_MARKER, upgraded)
+        self.assertIn('QQBOT_HK_AUX_BUDGET_PATCH = "v2"', upgraded)
+        with self.assertRaisesRegex(PATCH.PatchError, "SHA mismatch"):
+            PATCH.patch_source(legacy + "# unrelated drift\n", digest)
 
     def test_corrupted_already_patched_source_is_rejected(self):
         source = fixture_source()

@@ -26,6 +26,7 @@ for path in \
   "$project_dir/scripts/patch-hermes-model-routing.py" \
   "$project_dir/scripts/verify-hermes-model-routing.py" \
   "$project_dir/scripts/verify-live-models.py" \
+  "$project_dir/scripts/patch-hermes-trust-store.py" \
   "$project_dir/scripts/patch-hermes-aux-budget.py" \
   "$project_dir/scripts/verify-hermes-aux-budget.py" \
   "$project_dir/scripts/patch-hermes-qq-context.py" \
