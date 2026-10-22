@@ -27,7 +27,13 @@ LABEL security.emudhra.mitigated="2026-10-22"
 ENV PLAYWRIGHT_NODEJS_PATH=/usr/local/bin/node \
     PLAYWRIGHT_SKIP_BROWSER_GC=1
 COPY --chmod=0644 overrides/hermes-playwright-requirements.txt /tmp/hermes-playwright-requirements.txt
-RUN uv pip install --python /opt/hermes/.venv/bin/python --no-deps -r /tmp/hermes-playwright-requirements.txt \
+# The base's 14-day cutoff hides the reviewed 1.64.0 release; scope the fixed
+# cutoff exception to these three exact pins rather than the whole environment.
+RUN uv pip install --python /opt/hermes/.venv/bin/python --no-deps \
+        --exclude-newer-package playwright=2026-10-22 \
+        --exclude-newer-package pyee=2026-10-22 \
+        --exclude-newer-package greenlet=2026-10-22 \
+        -r /tmp/hermes-playwright-requirements.txt \
     && python -c "from pathlib import Path; import playwright; p = Path(playwright.__file__).parent / 'driver/node'; p.unlink(); p.symlink_to('/usr/local/bin/node')" \
     && umask 022 && python -m playwright install --with-deps chromium --only-shell \
     && chmod -R a+rX /opt/hermes/.playwright \
