@@ -46,7 +46,9 @@ class LocalQQAdapter(BusyParent):
         self.gateway = SimpleNamespace(adapters={"qqbot": self},
             _is_user_authorized_for_source=lambda source: self.allowed,
             _check_slash_access=lambda source, name: None,
-            _session_key_for_source=lambda source: source.chat_id)
+            _session_key_for_source=lambda source: source.chat_id,
+            _resolve_session_reasoning_config=lambda **kwargs: {"enabled": True, "effort": "high"},
+            _peek_session_state=lambda key: None)
 
     @staticmethod
     def _strip_at_mention(text):

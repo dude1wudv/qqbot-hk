@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from typing import Any, Awaitable, Callable, Mapping
 
 from .formatter import prepare_group_reply
+from .expressions import STICKER_CATEGORIES
 
 
 SILENT_MARKER = "[SILENT]"
@@ -83,25 +84,33 @@ def _reply_object(response_text: str) -> dict[str, Any]:
     return objects[0]
 
 
-def parse_reply_decision(response_text: str) -> tuple[str, str | None]:
-    """Parse the only accepted group final-output envelope."""
+def parse_reply_envelope(response_text: str) -> tuple[str, str | None, str | None, bool]:
+    """Reaction is optional metadata; an invalid reaction never spoils valid text."""
     try:
         value = _reply_object(response_text)
     except ValueError as exc:
         raise ValueError("invalid_json") from exc
-    if set(value) != {"action", "message"}:
+    if not {"action", "message"} <= set(value) or set(value) - {"action", "message", "reaction"}:
         raise ValueError("invalid_fields")
+    reaction = value.get("reaction")
+    reaction = reaction if isinstance(reaction, str) and reaction in STICKER_CATEGORIES else None
     action = value.get("action")
     message = value.get("message")
     if action == "ignore":
         if message is not None and not isinstance(message, str):
             raise ValueError("invalid_ignore_message")
-        return "ignore", None
+        return "ignore", None, None, "reaction" in value
     if action != "reply":
         raise ValueError("invalid_action")
     if not isinstance(message, str) or not message.strip():
         raise ValueError("invalid_reply_message")
-    return "reply", message
+    return "reply", message, reaction, "reaction" in value
+
+
+def parse_reply_decision(response_text: str) -> tuple[str, str | None]:
+    """Retain the two-field API used by renderers and older callers."""
+    action, message, _, _ = parse_reply_envelope(response_text)
+    return action, message
 
 
 def render_reply_envelope(response_text: Any) -> str | None:
@@ -152,6 +161,12 @@ class ReplyRequest:
     transport_chat_id: str = ""
     pending_message: str | None = None
     model: str = ""
+    topic_id: str | None = None
+    reference_id: str | None = None
+    focus_message_ids: tuple[str, ...] = ()
+    mode_hint: str = "auto"
+    reaction: str | None = None
+    reaction_explicit: bool = False
     record_on_success: bool = True
     consumed: bool = False
     sent_chunks: list[str] = field(default_factory=list)
@@ -373,13 +388,14 @@ class ReplyRegistry:
             if record is None or not self._valid_locked(record):
                 return SILENT_MARKER
             self.finish_progress(record)
+            record.reaction, record.reaction_explicit = None, False
             try:
                 if record.source_kind == "private":
                     rendered = render_reply_envelope(response_text)
                     message = str(response_text or "") if rendered is None else rendered
                     action = "reply" if message.strip() and message.strip() != SILENT_MARKER else "ignore"
                 else:
-                    action, message = parse_reply_decision(str(response_text or ""))
+                    action, message, record.reaction, record.reaction_explicit = parse_reply_envelope(str(response_text or ""))
             except ValueError as exc:
                 self._audit(
                     "output_invalid", chat_id=record.group_id, message_id=record.message_id,
@@ -496,5 +512,5 @@ class ReplyRegistry:
 
 __all__ = [
     "INVALID_REPLY_MESSAGE", "PROGRESS_MESSAGE", "OUTBOUND_KIND", "ReplyRegistry", "ReplyRequest", "SILENT_MARKER",
-    "message_text_parts", "parse_reply_decision",
+    "message_text_parts", "parse_reply_decision", "parse_reply_envelope",
 ]

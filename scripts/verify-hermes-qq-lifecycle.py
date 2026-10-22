@@ -82,7 +82,7 @@ async def verify(home: Path) -> None:
         entry = runner.session_store.get_or_create_session(source)
         # Real native model/reasoning handlers must persist per-session overrides.
         for command, method in [("/model deepseek/deepseek-v4.1-flash --session", runner._handle_model_command),
-                                ("/reasoning high", runner._handle_reasoning_command)]:
+                                ("/reasoning low", runner._handle_reasoning_command)]:
             result = method(MessageEvent(text=command, source=source, message_id=command))
             if inspect.isawaitable(result):
                 result = await result
@@ -90,10 +90,10 @@ async def verify(home: Path) -> None:
         route = runner.session_store.get_or_create_session(source)
         require(route.to_dict().get("model_override", {}).get("model") == "deepseek/deepseek-v4.1-flash", "Model override not persisted")
         reasoning = runner._resolve_session_reasoning_config(source=source, session_key=key)
-        require(reasoning == {"enabled": True, "effort": "high"},
+        require(reasoning == {"enabled": True, "effort": "low"},
                 "Native current-session reasoning selection did not take effect")
         other_reasoning = runner._resolve_session_reasoning_config(source=groups[1])
-        require(other_reasoning == {"enabled": True, "effort": "low"},
+        require(other_reasoning == {"enabled": True, "effort": "high"},
                 "Reasoning selection crossed the group isolation boundary")
         reopened = SessionStore(config.sessions_dir, config)
         restored = reopened.get_or_create_session(source)

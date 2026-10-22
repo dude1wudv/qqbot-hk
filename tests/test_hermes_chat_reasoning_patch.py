@@ -37,7 +37,7 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
         digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
         patched = PATCH.patch_source(source, digest)
         self.assertIn(PATCH.PATCH_MARKER, patched)
-        self.assertEqual(PATCH.PATCH_MARKER, '# QQBOT_HK_CHAT_REASONING_PATCH = "v6"')
+        self.assertEqual(PATCH.PATCH_MARKER, '# QQBOT_HK_CHAT_REASONING_PATCH = "v7"')
         self.assertIn("DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES", patched)
         self.assertEqual(patched.count("is_sub2api_deepseek ="), 1)
         self.assertEqual(patched.count("is_sub2api_mimo ="), 1)
@@ -59,7 +59,7 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
         with patch.dict(sys.modules, {"agent": ModuleType("agent"), "agent.reasoning_effort": effort}):
             exec(compile(patched, "fixture_chat.py", "exec"), namespace)
 
-        for model in ("deepseek/deepseek-v4.1-flash", "DEEPSEEK/DEEPSEEK-V4.1-FLASH"):
+        for model in ("deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-fast", "DEEPSEEK/DEEPSEEK-V4.1-FLASH"):
             for enabled in (True, False):
                 for supports in (True, False):
                     with self.subTest(route="deepseek", model=model, enabled=enabled, supports=supports):

@@ -3,7 +3,8 @@ FROM nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375c
 LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.hermes-base-digest="sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7" \
       io.qqbot-hk.audio-patch="v2" \
-      io.qqbot-hk.chat-reasoning-patch="v6" \
+      io.qqbot-hk.chat-reasoning-patch="v7" \
+      io.qqbot-hk.model-routing-patch="v1" \
       io.qqbot-hk.aux-budget-patch="v1" \
       io.qqbot-hk.qq-context-patch="v2" \
       io.qqbot-hk.qq-help-patch="v1" \
@@ -56,9 +57,16 @@ COPY --chmod=0755 scripts/patch-hermes-qq-context.py /tmp/patch-hermes-qq-contex
 RUN python /tmp/patch-hermes-qq-context.py \
     && rm -f /tmp/patch-hermes-qq-context.py
 
+COPY --chmod=0644 runtime/qqbot_model_routing.py /opt/hermes/qqbot_model_routing.py
+COPY --chmod=0755 scripts/patch-hermes-model-routing.py /tmp/patch-hermes-model-routing.py
+RUN python /tmp/patch-hermes-model-routing.py \
+    && rm -f /tmp/patch-hermes-model-routing.py
+
 
 COPY --chmod=0755 scripts/verify-hermes-audio.py /opt/hermes/verify-hermes-audio.py
 COPY --chmod=0755 scripts/verify-hermes-chat-reasoning.py /opt/hermes/verify-hermes-chat-reasoning.py
+COPY --chmod=0755 scripts/verify-hermes-model-routing.py /opt/hermes/verify-hermes-model-routing.py
+COPY --chmod=0755 scripts/verify-live-models.py /opt/hermes/verify-live-models.py
 COPY --chmod=0755 scripts/verify-hermes-aux-budget.py /opt/hermes/verify-hermes-aux-budget.py
 COPY --chmod=0755 scripts/verify-hermes-qq-context.py /opt/hermes/verify-hermes-qq-context.py
 COPY --chmod=0755 scripts/verify-hermes-request-deadline.py /opt/hermes/verify-hermes-request-deadline.py
@@ -73,6 +81,7 @@ COPY --chmod=0644 config/hermes-config.yaml /opt/hermes/qqbot-hk/hermes-config.y
 
 RUN python /opt/hermes/verify-hermes-audio.py \
     && python /opt/hermes/verify-hermes-chat-reasoning.py \
+    && python /opt/hermes/verify-hermes-model-routing.py \
     && python /opt/hermes/verify-hermes-aux-budget.py \
     && python /opt/hermes/verify-hermes-qq-context.py \
     && python /opt/hermes/verify-hermes-request-deadline.py \

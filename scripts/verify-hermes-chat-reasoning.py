@@ -40,13 +40,13 @@ def require(condition: bool, message: str) -> None:
 
 
 def verify_behavior_matrix(route: str, provider_profile=None) -> None:
-    for model in (MODEL, "xiaomi/mimo-v2.6-flash"):
+    for model in (MODEL, MODEL + "-fast", "xiaomi/mimo-v2.6-flash"):
         default = build(None, model, provider_profile=provider_profile)
         require(
-            default.get("reasoning_effort") == ("low" if model == MODEL else "medium"),
+            default.get("reasoning_effort") == ("high" if model.startswith(MODEL) else "medium"),
             f"{route} {model}: transport fallback effort does not match policy",
         )
-        levels = ("low", "medium", "high", "max") if model == MODEL else ("low", "medium", "high", "xhigh", "max")
+        levels = ("low", "medium", "high", "max") if model.startswith(MODEL) else ("low", "medium", "high", "xhigh", "max")
         for effort in levels:
             request = build(effort, model, provider_profile=provider_profile)
             require(request.get("reasoning_effort") == effort, f"{route} {model}: Chat request did not carry {effort}")

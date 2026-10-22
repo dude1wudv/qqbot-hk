@@ -60,12 +60,15 @@ class CommandTests(unittest.TestCase):
         config = yaml.safe_load((ROOT / "config/hermes-config.yaml").read_text(encoding="utf-8"))
         self.assertNotIn("mimo", config["quick_commands"])
         models = config["providers"]["sub2api_deepseek"]["models"]
-        self.assertEqual(set(models), {"deepseek/deepseek-v4.1-flash"})
+        self.assertEqual(set(models), {"deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-fast"})
         self.assertEqual(set(config["agent"]["reasoning_overrides"]), set(models))
-        self.assertEqual(config["agent"]["reasoning_effort"], "low")
+        self.assertEqual(config["agent"]["reasoning_effort"], "high")
+        self.assertEqual(config["model"]["default"], "deepseek/deepseek-v4.1-flash-fast")
+        self.assertEqual(set(config["agent"]["reasoning_overrides"].values()), {"high"})
         compression = config["auxiliary"]["compression"]
         self.assertEqual(compression["reasoning_effort"], "low")
         self.assertNotIn("extra_body", compression)
+        self.assertEqual(config["auxiliary"]["vision"], compression)
 
     def test_model_aliases_rewrite_to_session_scoped_native_commands(self):
         self.assertIsNone(model_alias_rewrite("<@bot> /gemini"))

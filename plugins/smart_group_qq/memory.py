@@ -11,6 +11,10 @@ from .store import MAX_COMPACTION_FAILURES
 from .llm_policy import complete as complete_llm
 
 SUMMARY_TIMEOUT_SECONDS = 300
+CONCEPT_INDEX_LIMIT = 24
+CONCEPTS_PER_ITEM = 6
+CONCEPT_CHARS = 32
+_CONCEPT_SECTIONS = ("facts", "decisions", "todos", "open_questions")
 
 SUMMARY_SCHEMA = {
     "type": "object",
@@ -22,6 +26,14 @@ SUMMARY_SCHEMA = {
         "todos": {"type": "array", "items": {"type": "string"}},
         "open_questions": {"type": "array", "items": {"type": "string"}},
         "participants": {"type": "array", "items": {"type": "string"}},
+        "concept_index": {
+            # PluginLlm validates this schema before returning parsed JSON.
+            # Optional index mistakes must not reject otherwise valid memory;
+            # their shape, references and limits are enforced locally below.
+            "description": "可选检索索引数组，最多24项；section 为 facts/decisions/todos/open_questions，"
+                           "index 为本次对应数组从0开始的序号，concepts 为最多6个32字内概念词。",
+            "examples": [[{"section": "facts", "index": 0, "concepts": ["晨练", "exercise"]}]],
+        },
     },
     "required": ["summary", "topics", "facts", "decisions", "todos", "open_questions", "participants"],
     "additionalProperties": False,
@@ -65,11 +77,86 @@ def _string_list(value: Any, *, limit: int = 12, item_chars: int = 240) -> list[
     return result
 
 
+def _concept_list(value: Any) -> list[str]:
+    """Keep short index terms, never secret-bearing text or arbitrary objects."""
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value[:CONCEPTS_PER_ITEM * 8]:
+        if not isinstance(item, str):
+            continue
+        term = item.strip()
+        if (not term or len(term) > CONCEPT_CHARS or _redact(term) != term
+                or any(ord(char) < 32 or ord(char) == 127 for char in term)
+                or not any(char.isalnum() for char in term)):
+            continue
+        identity = term.casefold()
+        if identity not in seen:
+            seen.add(identity)
+            result.append(term)
+        if len(result) == CONCEPTS_PER_ITEM:
+            break
+    return result
+
+
+def _normalize_concept_index(
+    value: Any, source: Mapping[str, Any], normalized: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Resolve indices through normalization so blanks/duplicates cannot retarget tags."""
+    if not isinstance(value, list):
+        return []
+    result: dict[tuple[str, int], dict[str, Any]] = {}
+    for entry in value[:CONCEPT_INDEX_LIMIT * 4]:
+        if not isinstance(entry, Mapping):
+            continue
+        section, index = entry.get("section"), entry.get("index")
+        if section not in _CONCEPT_SECTIONS or type(index) is not int or index < 0:
+            continue
+        source_items, target_items = source.get(section), normalized.get(section)
+        if not isinstance(source_items, list) or not isinstance(target_items, list) or index >= len(source_items):
+            continue
+        original = source_items[index]
+        if not isinstance(original, str):
+            continue
+        item = _redact(original).strip()[:240]
+        # A fact removed by limits, correction, or normalization has no index.
+        if not item or item not in target_items:
+            continue
+        concepts = _concept_list(entry.get("concepts"))
+        if not concepts:
+            continue
+        target = (section, target_items.index(item))
+        if target in result:
+            result[target]["concepts"] = _concept_list(result[target]["concepts"] + concepts)
+        elif len(result) < CONCEPT_INDEX_LIMIT:
+            result[target] = {"section": target[0], "index": target[1], "concepts": concepts}
+    return list(result.values())
+
+
+def _carry_forward_concepts(payload: dict[str, Any], previous: Mapping[str, Any]) -> None:
+    """Retain optional tags only when the exact corresponding item survives."""
+    prior = normalize_summary_payload(previous)
+    combined = list(payload.get("concept_index") or [])
+    present = {(entry["section"], entry["index"]) for entry in combined}
+    for entry in prior.get("concept_index", []):
+        section = entry["section"]
+        item = prior[section][entry["index"]]
+        if item not in payload[section]:
+            continue
+        target = (section, payload[section].index(item))
+        if target not in present and len(combined) < CONCEPT_INDEX_LIMIT:
+            combined.append({"section": section, "index": target[1], "concepts": entry["concepts"]})
+            present.add(target)
+    if combined:
+        payload["concept_index"] = combined
+
+
 def normalize_summary_payload(value: Any, *, summary_chars: int = 1200) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
     summary = _redact(value.get("summary", "")).strip()[:max(200, int(summary_chars))]
-    return {
+    payload: dict[str, Any] = {
         "summary": summary,
         "topics": _string_list(value.get("topics"), limit=10, item_chars=100),
         "facts": _string_list(value.get("facts"), limit=20),
@@ -78,6 +165,10 @@ def normalize_summary_payload(value: Any, *, summary_chars: int = 1200) -> dict[
         "open_questions": _string_list(value.get("open_questions"), limit=12),
         "participants": _string_list(value.get("participants"), limit=20, item_chars=40),
     }
+    concepts = _normalize_concept_index(value.get("concept_index"), value, payload)
+    if concepts:
+        payload["concept_index"] = concepts
+    return payload
 
 
 class GroupMemory:
@@ -268,6 +359,10 @@ class GroupMemory:
             "使用简洁中文，参与者只能使用输入中的匿名成员标签。"
             "只整理群公共事项；个人偏好和画像交给成员专属记忆，不复制进群摘要。"
             "机器人的猜测不算成员事实，明确更正优先于旧记录。"
+            "可为 facts、decisions、todos、open_questions 中重要条目附 concept_index："
+            "每项用 section 和从0开始的 index 指向本次输出里的真实条目，concepts 只放该条目的"
+            "少量概念词、同义说法或明确别名（每项最多6个、每词最多32字、总共最多24项）。"
+            "标签只帮助换个说法检索，不增加事实，不记录成员画像或秘密，不为无关条目添加泛词。"
             "输出必须是完整 JSON，无信息的字段使用空数组。不要逐条复述聊天，优先保留重要决定和待办。"
         )
         job_id = 0
@@ -344,6 +439,7 @@ class GroupMemory:
                 payload = normalize_summary_payload(parsed, summary_chars=self.summary_chars)
                 if not payload or not payload.get("summary"):
                     raise ValueError("AI summary returned no usable summary")
+                _carry_forward_concepts(payload, previous)
                 model = str(getattr(result, "model", "") or "")
             except Exception as exc:
                 return failed_payload(source, previous, current_cursor, type(exc).__name__)
@@ -394,6 +490,7 @@ class GroupMemory:
                 "todos": list(prior.get("todos") or []),
                 "open_questions": list(prior.get("open_questions") or []),
                 "participants": list(prior.get("participants") or []),
+                "concept_index": prior.get("concept_index"),
             },
             summary_chars=self.summary_chars,
         )
@@ -463,11 +560,19 @@ class GroupMemory:
             return ""
         overview = _redact(payload.get("summary", "")).strip()[:min(budget, max(0, int(overview_chars)))]
         terms = self.store._search_terms(query)
+        concept_terms = {
+            (entry["section"], entry["index"]): self.store._search_terms(" ".join(entry["concepts"]))
+            for entry in normalize_summary_payload(payload).get("concept_index", [])
+        }
         candidates = []
         for key, label, priority in (("decisions", "决定", 3), ("todos", "待办", 2),
                                      ("facts", "事实", 1), ("open_questions", "待确认", 0)):
             for index, item in enumerate(_string_list(payload.get(key), limit=20)):
-                score = len(terms & self.store._search_terms(item))
+                literal = terms & self.store._search_terms(item)
+                aliases = terms & concept_terms.get((key, index), set())
+                # Literal evidence keeps its weight; aliases may also retrieve
+                # a whole fact without becoming model-visible factual content.
+                score = len(literal) * 2 + len(aliases - literal)
                 if terms and not score and key == "facts":
                     continue
                 candidates.append((score, priority, -index, f"{label}：{item}"))

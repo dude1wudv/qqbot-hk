@@ -32,10 +32,13 @@ _NO_STICKERS = re.compile(r"(?:不要|别|不用|不想|停止|少发).{0,8}(?:�
 _SERIOUS = re.compile(r"```|https?://|知识库|(?i:\b(?:sql|code|traceback|api[_-]?key|password)\b)|代码|报错|诊断|部署|命令|病情|自伤|去世")
 
 
-def reply_category(question: str, reply: str) -> str | None:
+def reply_category(question: str, reply: str, *, reaction: str | None = None,
+                   explicit: bool = False) -> str | None:
     """Prefer one relevant reaction over random decoration; serious work stays plain."""
     if not reply or len(reply) > 180 or _NO_STICKERS.search(question) or _SERIOUS.search(question + "\n" + reply):
         return None
+    if explicit:
+        return reaction if isinstance(reaction, str) and reaction in STICKER_CATEGORIES else None
     return next((category for category, pattern in _CATEGORY_SIGNALS if re.search(pattern, reply)), None)
 
 
@@ -287,7 +290,9 @@ class StickerService:
         if (not self.auto_send or len(self.tasks) >= 20 or not record.record_on_success
                 or record.source_kind not in {"official", "nonmention"} or record.cancelled or not record.message_id):
             return False
-        category = reply_category(record.question, record.pending_message or "")
+        category = reply_category(record.question, record.pending_message or "",
+                                  reaction=getattr(record, "reaction", None),
+                                  explicit=getattr(record, "reaction_explicit", False))
         if category is None or not self._allowed(record.sticker_guard):
             return False
         member = self.store.get_group_member(record.group_id, member_ref=record.member_ref)

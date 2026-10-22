@@ -11,7 +11,7 @@ import sys
 
 
 EXPECTED_ORIGINAL_SHA256 = "63fb637d702c77f924f599df5624be7ff3813b4b2d8d60583330b9f10614d01a"
-PATCH_MARKER = '# QQBOT_HK_CHAT_REASONING_PATCH = "v6"'
+PATCH_MARKER = '# QQBOT_HK_CHAT_REASONING_PATCH = "v7"'
 SUB2API_BASE_URL = "http://sub2api:8080/v1"
 
 
@@ -41,7 +41,7 @@ PATCHES = (
         "            api_kwargs.pop(\"reasoning_effort\", None)\n"
         "        elif is_sub2api_deepseek:\n"
         "            api_kwargs[\"reasoning_effort\"] = clamp_effort(\n"
-        "                _e or \"low\", DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES\n"
+        "                _e or \"high\", DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES\n"
         "            )\n"
         "        else:\n"
         "            api_kwargs[\"reasoning_effort\"] = _e or \"medium\"\n"

@@ -27,12 +27,15 @@ quick_commands:
   deepseek:
     type: alias
     target: /model deepseek/deepseek-v4.1-flash --session
+  fast:
+    type: alias
+    target: /model deepseek/deepseek-v4.1-flash-fast --session
 
 model:
   provider: sub2api_deepseek
-  default: deepseek/deepseek-v4.1-flash
+  default: deepseek/deepseek-v4.1-flash-fast
   api_mode: chat_completions
-  # DeepSeek is the only enabled dialogue model.
+  # Main replies use Fast; structured background tasks use the original Flash.
   context_length: 1000000
   streaming: true
 
@@ -50,14 +53,17 @@ providers:
     models:
       deepseek/deepseek-v4.1-flash:
         context_length: 1000000
+      deepseek/deepseek-v4.1-flash-fast:
+        context_length: 1000000
 
 
 agent:
-  reasoning_effort: low
+  reasoning_effort: high
   # Hermes passes attached images natively and translates them for the provider protocol.
   image_input_mode: native
   reasoning_overrides:
-    deepseek/deepseek-v4.1-flash: low
+    deepseek/deepseek-v4.1-flash: high
+    deepseek/deepseek-v4.1-flash-fast: high
 
 auxiliary:
   compression:
@@ -145,8 +151,8 @@ plugins:
           send_cooldown_seconds: 60
           max_per_group: 64
           retention_days: 30
-        status_model: deepseek/deepseek-v4.1-flash
-        status_reasoning: low
+        status_model: deepseek/deepseek-v4.1-flash-fast
+        status_reasoning: high
         auto_pair:
           enabled: false
         keyword_replies:

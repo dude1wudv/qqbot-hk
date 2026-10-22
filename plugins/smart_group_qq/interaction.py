@@ -20,6 +20,13 @@ MODELS = {
     "deepseek/deepseek-v4.1-flash": "deepseek",
     "deepseek-v4.1-flash": "deepseek",
     "深度求索": "deepseek",
+    "fast": "fast",
+    "deepseek-fast": "fast",
+    "deepseek/deepseek-v4.1-flash-fast": "fast",
+    "deepseek-v4.1-flash-fast": "fast",
+    "auto": "自动模型",
+    "自动": "自动模型",
+    "自动模型": "自动模型",
 }
 RETIRED_MODELS = frozenset({"mimo", "xiaomi", "mimo-v2.6-flash", "xiaomi/mimo-v2.6-flash"})
 RETIRED_MODEL_ERROR = "MiMo 已下线，QQ bot 仅启用 DeepSeek。请发送 /deepseek 使用当前可用模型。"
@@ -58,6 +65,7 @@ NO_ARGS = {
     "结束剧情",
     "忘记我",
     "停止记忆",
+    "回答简短",
 }
 REQUIRES_ARG = {
     "记梗",
@@ -73,8 +81,10 @@ REQUIRES_ARG = {
     "记住我",
     "纠正记忆",
     "安静",
+    "避称呼",
+    "避梗",
 }
-CONFIG_ERROR = "当前仅启用 DeepSeek V4.1 Flash。推理强度支持 low、medium、high、xhigh、max（低、中、高、超高、最高）；DeepSeek 的 xhigh 实际按 max 请求。例如：切到 DeepSeek、推理强度调到低，或 /配置 模型 DeepSeek。配置只作用于当前会话。"
+CONFIG_ERROR = "默认自动路由：主回复 DeepSeek V4.1 Flash Fast / high，后台原 Flash / low。/fast 或 /deepseek 固定主会话模型；/model auto 或 /自动模型 恢复自动路由并保留聊天历史。推理强度支持 low、medium、high、xhigh、max；DeepSeek 的 xhigh 实际按 max 请求。例如：切到 Fast、推理调高，或 /配置 模型 DeepSeek。手动配置只作用于当前会话。"
 
 
 @dataclass(frozen=True)
@@ -202,6 +212,11 @@ def resolve_interaction(
         "恢复聊天": "恢复聊天",
         "可以说话了": "恢复聊天",
         "少说一点": "少说一点",
+        "少说点": "少说一点",
+        "回答短一点": "/回答简短",
+        "回复短一点": "/回答简短",
+        "以后回答短一点": "/回答简短",
+        "以后回复短一点": "/回答简短",
         "看看宠物": "/宠物",
         "看看小电团": "/宠物",
         "查看我的目标": "/目标",
@@ -234,6 +249,22 @@ def resolve_interaction(
         return Interaction(
             canonical, True, native=canonical in ("/model", "/reasoning")
         )
+    if value in {"别这样叫", "别这样叫我", "不要这样叫我", "别这么叫我"}:
+        return Interaction("", True, "你不想让我用哪个称呼？可以直接说“别叫我某个称呼”。")
+    if value in {"这个梗别用了", "这个梗别用", "对我别用这个梗", "对我别用这个梗了"}:
+        return Interaction("", True, "你指的是哪个梗？可以说“对我别用某个内容这个梗”，我只调整对你的表达。")
+    for pattern, prefix in (
+        (r"(?:以后)?(?:别|不要)(?:再)?(?:叫我|称呼我)\s*(.+?)(?:了|吧)?", "/避称呼 "),
+        (r"(?:以后)?(?:对我|跟我|和我)(?:别|不要)(?:再)?(?:用|玩|提)\s*(.+?)(?:这个梗|这个表达)(?:了|吧)?", "/避梗 "),
+    ):
+        match = re.fullmatch(pattern, value)
+        if match:
+            target = _unquote(match[1]).strip()
+            if not target or target in {"这个", "那个", "这样", "这么", "这个称呼", "那个称呼", "这个梗", "那个梗", "这个表达", "那个表达"}:
+                return Interaction("", True, "请说清具体的称呼或梗，我不会猜测要改哪一个。")
+            if len(target) > 80 or re.search(r"[，,；;。！？!?\n]", target):
+                return Interaction("", True, "请单独告诉我具体的称呼或梗，最多80字。")
+            return Interaction(prefix + target, True)
     match = re.fullmatch(
         r"(?:让你|请你)?(?:安静|别插话|暂停插话)\s*(半小时|一小时|\d+\s*(?:分钟|小时))",
         value,

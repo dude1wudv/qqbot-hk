@@ -46,7 +46,12 @@ def metadata(row):
         return {}
 
 
-def select(rows, owner, query, *, now=None, cooldown=3600):
+def contains_blocked(text, blocked):
+    folded = text.casefold()
+    return any(word and word.casefold() in folded for word in blocked)
+
+
+def select(rows, owner, query, *, now=None, cooldown=3600, blocked=()):
     now = time.time() if now is None else now
     if not query or re.search(r"不要追问|别再问|别提旧事", query):
         return {"expressions": [], "open_threads": []}
@@ -58,6 +63,8 @@ def select(rows, owner, query, *, now=None, cooldown=3600):
         if now - info.get("last_used", 0) < cooldown:
             continue
         if row["kind"] == "expression" and not SERIOUS.search(query):
+            if contains_blocked(row["text"], blocked):
+                continue
             scene = info.get("scene", "")
             scene_query = _NEGATED_SUCCESS.sub("", query) if scene == "庆祝" else query
             matches = bool(SCENES[scene].search(scene_query)) if scene in SCENES else related(query, scene)
@@ -122,7 +129,9 @@ def command(character, db, scope, owner, name, arg):
 
 def record_usage(character, db, scope, owner, query, answer):
     rows = character._rows(db, scope, "expression") + character._rows(db, scope, "thread")
-    selected = select(rows, owner, query, cooldown=character.recall_cooldown)
+    feedback = character.feedback(scope, owner)
+    blocked = tuple(item["value"] for item in feedback if item["type"] in {"avoid_name", "avoid_meme"})
+    selected = select(rows, owner, query, cooldown=character.recall_cooldown, blocked=blocked)
     for row in rows:
         used = (row["kind"] == "expression" and row["text"] in answer
                 and any(item["text"] == row["text"] for item in selected["expressions"])) or (

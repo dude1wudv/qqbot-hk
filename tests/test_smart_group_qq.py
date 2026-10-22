@@ -98,6 +98,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.gateway = SimpleNamespace(
             adapters={},
             _session_key_for_source=lambda source: "qqbot:group:" + source.chat_id,
+            _resolve_session_reasoning_config=lambda **kwargs: {"enabled": True, "effort": "high"},
+            _peek_session_state=lambda key: None,
             _is_user_authorized_for_source=lambda source: True,
             _check_slash_access=lambda source, name: None,
             _handle_reset_command=self.native_reset,
@@ -553,7 +555,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_participation_disabled_keeps_ambient_history_without_reply(self):
         ctx = FakeContext({"ambient": {"participation": {"enabled": False}}})
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
 
@@ -571,8 +573,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_participation_rejection_and_classifier_error_are_silent(self):
         cases = (
-            ({"reply": False, "confidence": 1.0}, None),
-            ({"reply": True, "confidence": 0.69}, None),
+            ({"reply": False, "confidence": 1.0, "engaged": False}, None),
+            ({"reply": True, "confidence": 0.69, "engaged": False}, None),
             (None, RuntimeError("classifier unavailable")),
         )
         for index, (parsed, error) in enumerate(cases):
@@ -663,7 +665,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
         item = observer_payload("participation-selected", text="请帮我查一下发布状态")
@@ -688,7 +690,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             "enabled": True, "cooldown_seconds": 5, "max_age_seconds": 120, "debounce_seconds": 0, "max_wait_seconds": 0,
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
 
@@ -717,7 +719,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "debounce_seconds": 0.05, "max_wait_seconds": 0.05, "wake_words": [],
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
 
@@ -750,7 +752,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "wake_words": ["机器人"],
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
         order = []
@@ -790,7 +792,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "wake_words": ["机器人"],
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
 
@@ -823,7 +825,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "wake_words": ["机器人"],
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
 
@@ -843,7 +845,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "wake_words": ["机器人"],
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
 
@@ -867,7 +869,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "wake_words": ["机器人"],
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
 
@@ -900,7 +902,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "wake_words": ["机器人"],
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.99, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
 
@@ -936,7 +938,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "min_confidence": 0.70, "wake_words": [],
             }},
         })
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.70})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 0.70, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
         await qq_observer._observe_message(
@@ -952,7 +954,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "min_confidence": 0.70, "wake_words": [],
             }},
         })
-        ctx_low.llm = ParticipationLLM({"reply": True, "confidence": 0.69})
+        ctx_low.llm = ParticipationLLM({"reply": True, "confidence": 0.69, "engaged": False})
         handler_low = build_handler(ctx_low, self.store)
         adapter_low = ObserverAdapter()
         await qq_observer._observe_message(
@@ -975,7 +977,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_nonmention_slash_command_with_mention_prefix_is_not_executed(self):
         ctx = FakeContext({"ambient": {"participation": {"enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0}}})
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()
 
@@ -993,7 +995,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_allowlisted_group_never_classifies_or_dispatches(self):
         ctx = FakeContext({"ambient": {"participation": {"enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0}}})
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter(allowed=False)
 
@@ -1009,7 +1011,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stale_and_replayed_nonmention_never_trigger_participation(self):
         ctx = FakeContext({"ambient": {"participation": {"enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0}}})
-        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0})
+        ctx.llm = ParticipationLLM({"reply": True, "confidence": 1.0, "engaged": False})
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter(timestamp=datetime.now(timezone.utc) - timedelta(seconds=300))
         item = observer_payload("stale-or-replay")
@@ -1027,7 +1029,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         release = asyncio.Event()
         ctx = FakeContext({"ambient": {"participation": {"enabled": True, "debounce_seconds": 0, "max_wait_seconds": 0}}})
         ctx.llm = ParticipationLLM(
-            {"reply": True, "confidence": 1.0}, started=started, release=release,
+            {"reply": True, "confidence": 1.0, "engaged": False}, started=started, release=release,
         )
         handler = build_handler(ctx, self.store)
         adapter = ObserverAdapter()

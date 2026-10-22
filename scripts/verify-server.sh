@@ -45,7 +45,8 @@ doctor_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-
 dependency_pins_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.dependency-pins"}}' "$image_id")"
 test "$base_digest_label" = "sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7"
 test "$audio_patch_label" = "v2"
-test "$chat_reasoning_patch_label" = "v6"
+test "$chat_reasoning_patch_label" = "v7"
+test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.model-routing-patch"}}' "$image_id")" = "v1"
 test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.aux-budget-patch"}}' "$image_id")" = "v1"
 test "$qq_context_patch_label" = "v2"
 test "$qq_help_patch_label" = "v1"
@@ -54,87 +55,13 @@ test "$qq_recovery_patch_label" = "v1"
 test "$doctor_patch_label" = "v3"
 test "$dependency_pins_label" = "2026-10-21"
 
-docker exec -i hermes-qqbot python - <<'PY'
-import json
-import base64
-import io
-import os
-import urllib.error
-import urllib.request
-from PIL import Image
-
-env = {}
-with open("/opt/data/.env", encoding="utf-8") as handle:
-    for raw in handle:
-        if "=" in raw and not raw.lstrip().startswith("#"):
-            name, value = raw.split("=", 1)
-            env[name.strip()] = value.strip()
-deepseek_key = os.environ.get("SUB2API_DEEPSEEK_API_KEY") or env.get("SUB2API_DEEPSEEK_API_KEY", "")
-if not deepseek_key:
-    raise SystemExit("missing DeepSeek Sub2API key")
-
-def post(path, body, api_key):
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    request = urllib.request.Request(
-        "http://sub2api:8080" + path,
-        data=json.dumps(body).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=300) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as exc:
-        raise SystemExit(f"{body.get('model')}: HTTP {exc.code}") from exc
-
-
-deepseek = post(
-    "/v1/chat/completions",
-    {
-        "model": "deepseek/deepseek-v4.1-flash",
-        "messages": [{"role": "user", "content": "Reply only OK"}],
-        "reasoning_effort": "low",
-        "stream": False,
-    },
-    deepseek_key,
-)
-deepseek_choices = deepseek.get("choices") or []
-deepseek_text = (
-    ((deepseek_choices[0] if deepseek_choices else {}).get("message") or {}).get("content") or ""
-).strip()
-if "OK" not in deepseek_text.upper():
-    raise SystemExit("deepseek/deepseek-v4.1-flash: unexpected response")
-print("MODEL=deepseek/deepseek-v4.1-flash API_MODE=chat_completions EFFORT=low RESULT=OK")
-
-image_buffer = io.BytesIO()
-Image.new("RGB", (16, 16), (0, 120, 255)).save(image_buffer, format="PNG")
-image_base64 = base64.b64encode(image_buffer.getvalue()).decode("ascii")
-deepseek_vision = post(
-    "/v1/chat/completions",
-    {
-        "model": "deepseek/deepseek-v4.1-flash",
-        "messages": [{"role": "user", "content": [
-            {"type": "text", "text": "Reply only IMAGE_OK if you can inspect this image."},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
-        ]}],
-        "reasoning_effort": "low",
-        "stream": False,
-    },
-    deepseek_key,
-)
-vision_choices = deepseek_vision.get("choices") or []
-vision_content = (
-    ((vision_choices[0] if vision_choices else {}).get("message") or {}).get("content") or ""
-).strip()
-if not vision_content:
-    raise SystemExit("deepseek/deepseek-v4.1-flash: invalid vision response")
-print("VISION=deepseek/deepseek-v4.1-flash API_MODE=chat_completions RESULT=OK")
-PY
+docker exec hermes-qqbot python /opt/hermes/verify-live-models.py
 
 docker exec hermes-qqbot hermes config check >/dev/null
 docker exec hermes-qqbot hermes plugins doctor /opt/data/plugins/smart_group_qq --ci >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-audio.py --config /opt/data/config.yaml >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-chat-reasoning.py >/dev/null
+docker run --rm --init --network none --entrypoint python "$image_id" /opt/hermes/verify-hermes-model-routing.py
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-aux-budget.py
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-qq-context.py >/dev/null
 docker exec hermes-qqbot python /opt/hermes/verify-hermes-request-deadline.py >/dev/null
@@ -201,8 +128,9 @@ if not isinstance(model_config, Mapping):
     raise SystemExit("model config is missing")
 if model_config.get("provider") != "sub2api_deepseek":
     raise SystemExit("primary model provider must be sub2api_deepseek")
-if model_config.get("default") != "deepseek/deepseek-v4.1-flash":
-    raise SystemExit("primary model must be deepseek/deepseek-v4.1-flash")
+if model_config.get("default") != "deepseek/deepseek-v4.1-flash-fast":
+    raise SystemExit("primary model must be deepseek/deepseek-v4.1-flash-fast")
+allowed_models = {"deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-fast"}
 providers = config.get("providers") or {}
 if set(providers) != {"sub2api_deepseek"}:
     raise SystemExit("exactly one provider, sub2api_deepseek, must be configured")
@@ -211,23 +139,19 @@ if deepseek_provider.get("key_env") != "SUB2API_DEEPSEEK_API_KEY":
     raise SystemExit("DeepSeek provider key wiring is invalid")
 if deepseek_provider.get("api_mode") != "chat_completions":
     raise SystemExit("DeepSeek provider must use chat_completions")
-if set(deepseek_provider.get("models") or {}) != {
-    "deepseek/deepseek-v4.1-flash"
-}:
-    raise SystemExit("Only DeepSeek may be registered")
+if set(deepseek_provider.get("models") or {}) != allowed_models:
+    raise SystemExit("Both approved DeepSeek models must be registered")
 commands = config.get("quick_commands") or {}
 if "mimo" in commands:
     raise SystemExit("Retired MiMo alias remains enabled")
 agent_config = config.get("agent")
 if not isinstance(agent_config, Mapping) or agent_config.get("image_input_mode") != "native":
     raise SystemExit("image input must use native content parts")
-if agent_config.get("reasoning_effort") != "low":
-    raise SystemExit("agent.reasoning_effort must be low")
+if agent_config.get("reasoning_effort") != "high":
+    raise SystemExit("agent.reasoning_effort must be high")
 reasoning_overrides = agent_config.get("reasoning_overrides") or {}
-if reasoning_overrides.get("deepseek/deepseek-v4.1-flash") != "low":
-    raise SystemExit("DeepSeek reasoning override must be low")
-if set(reasoning_overrides) != {"deepseek/deepseek-v4.1-flash"}:
-    raise SystemExit("reasoning overrides must only cover DeepSeek")
+if reasoning_overrides != dict.fromkeys(allowed_models, "high"):
+    raise SystemExit("Both main dialogue model reasoning overrides must be high")
 if config.get("fallback_providers"):
     raise SystemExit("automatic fallback providers must be disabled")
 if (config.get("display") or {}).get("busy_ack_enabled") is not False:
@@ -277,12 +201,12 @@ try:
         override = (json.loads(raw).get("model_override") or {})
         if override and (
             override.get("provider") not in (None, "sub2api_deepseek")
-            or override.get("model") not in {"deepseek/deepseek-v4.1-flash"}
+            or override.get("model") not in allowed_models
         ):
             raise SystemExit("retired QQ model override remains after session rotation")
     stale = session_db.execute(
         "SELECT COUNT(*) FROM sessions WHERE source='qqbot' AND ended_at IS NULL "
-        "AND model IS NOT NULL AND model NOT IN ('deepseek/deepseek-v4.1-flash')"
+        "AND model IS NOT NULL AND model NOT IN ('deepseek/deepseek-v4.1-flash','deepseek/deepseek-v4.1-flash-fast')"
     ).fetchone()[0]
     if stale:
         raise SystemExit("retired QQ model sessions remain active after rotation")

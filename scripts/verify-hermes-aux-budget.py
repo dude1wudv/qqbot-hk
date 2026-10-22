@@ -14,6 +14,8 @@ def main():
                 base_url="http://sub2api:8080/v1/",
                 reasoning_config={"enabled": True, "effort": "low"},
             )
+            assert kwargs.get("model") == model, kwargs.keys()
+            assert kwargs.get("reasoning_effort") == "low", kwargs.keys()
             assert kwargs.get("max_tokens", kwargs.get("max_completion_tokens")) == budget, kwargs.keys()
             if budget is None:
                 assert "max_tokens" not in kwargs and "max_completion_tokens" not in kwargs

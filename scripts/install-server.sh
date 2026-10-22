@@ -22,6 +22,10 @@ for path in \
   "$project_dir/scripts/verify-hermes-audio.py" \
   "$project_dir/scripts/patch-hermes-chat-reasoning.py" \
   "$project_dir/scripts/verify-hermes-chat-reasoning.py" \
+  "$project_dir/runtime/qqbot_model_routing.py" \
+  "$project_dir/scripts/patch-hermes-model-routing.py" \
+  "$project_dir/scripts/verify-hermes-model-routing.py" \
+  "$project_dir/scripts/verify-live-models.py" \
   "$project_dir/scripts/patch-hermes-aux-budget.py" \
   "$project_dir/scripts/verify-hermes-aux-budget.py" \
   "$project_dir/scripts/patch-hermes-qq-context.py" \

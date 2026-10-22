@@ -14,10 +14,11 @@ _PROFILE_COMMAND = re.compile(
     re.DOTALL,
 )
 _MODEL_ALIAS_COMMAND = re.compile(
-    r"^[／/]\s*(deepseek)\s*$", re.IGNORECASE
+    r"^[／/]\s*(deepseek|fast|自动模型)\s*$", re.IGNORECASE
 )
 _MODEL_ALIASES = {
     "deepseek": "deepseek/deepseek-v4.1-flash",
+    "fast": "deepseek/deepseek-v4.1-flash-fast",
 }
 _REASONING_ALIAS_COMMAND = re.compile(
     r"^[／/]\s*(low|medium|high|xhigh|max)\s*$", re.IGNORECASE
@@ -98,6 +99,8 @@ def model_alias_rewrite(value: Any) -> str | None:
     match = _MODEL_ALIAS_COMMAND.fullmatch(normalize_command_text(value))
     if not match:
         return None
+    if match.group(1) == "自动模型":
+        return "/model auto"
     return f"/model {_MODEL_ALIASES[match.group(1).lower()]} --session"
 
 
@@ -137,20 +140,24 @@ def help_text() -> str:
         "/compress 立即重试上下文压缩（上下文过大时）\n工具执行无需额外审批。\n"
         "/status 运行状态\n/summary 查看或更新近期摘要（无新消息时用缓存）\n"
         "/summary status 查看整理进度；/summary retry 显式重试失败任务\n/rules 已启用规则\n"
-        "/deepseek 切回当前会话的 DeepSeek\n"
+        "/fast 使用 Fast；/deepseek 使用原 Flash；/model auto 或 /自动模型 恢复自动路由\n"
         "/low /medium /high /xhigh /max 切换当前会话推理强度（DeepSeek 的 xhigh 实际按 max 请求）\n"
         "/kb 知识库\n/我的记忆 [关键词] 查看或搜索个人记忆，例如 /我的记忆 项目\n/记住我：内容 保存或更新个人信息\n"
         "/纠正记忆：字段=新内容 以本人确认更正旧记忆\n"
         "/忘记我 删除个人记忆\n/停止记忆 禁止继续建立个人记忆\n"
+        "可以直接说：回答短一点、别叫我某称呼、对我别用某个梗。\n"
         "/值日表 查看本周轮值安排（仅群聊）"
     )
 
 
-def status_text(*, model: str, reasoning: str, allowlisted: bool = True) -> str:
+def status_text(*, model: str, reasoning: str, allowlisted: bool = True,
+                mode: str = "自动", reasoning_manual: bool = False) -> str:
     return (
         "【运行状态】\n"
-        f"配置默认模型：{model or '未配置'}\n配置默认推理：{reasoning or '默认'}\n"
-        "当前会话可能已有覆写，发送 /model 或 /reasoning 查看原生状态。\n"
+        f"模型模式：{mode}\n主回复：{model or '未配置'}\n"
+        f"主回复推理：{reasoning or '默认'}{'（手动）' if reasoning_manual else ''}\n"
+        "后台任务：deepseek/deepseek-v4.1-flash / low\n"
+        "自动模式可在首个回复或工具前回退一次；/model auto 恢复自动模型并保留聊天历史。\n"
         f"本群白名单：{'已启用' if allowlisted else '未启用'}"
     )
 
