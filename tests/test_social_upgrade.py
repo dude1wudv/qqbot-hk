@@ -160,7 +160,7 @@ class SocialIntegrationTests(unittest.IsolatedAsyncioTestCase):
         routing.clear_manual_model.assert_awaited_once_with(self.gateway, current.source)
         self.gateway._handle_reset_command.assert_not_awaited()
         self.assertTrue(any("已恢复自动模型" in item[1] for item in self.adapter.sent))
-        self.assertEqual(model_alias_rewrite("/fast"), "/model deepseek/deepseek-v4.1-flash-fast --session")
+        self.assertEqual(model_alias_rewrite("/deepseekfast"), "/model deepseek/deepseek-v4.1-flash-fast --session")
         self.assertEqual(model_alias_rewrite("/自动模型"), "/model auto")
 
 

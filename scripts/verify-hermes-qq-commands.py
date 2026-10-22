@@ -36,7 +36,7 @@ EXPECTED = {
     "xhigh": "/reasoning xhigh",
     "max": "/reasoning max",
     "deepseek": "/model deepseek/deepseek-v4.1-flash --session",
-    "fast": "/model deepseek/deepseek-v4.1-flash-fast --session",
+    "deepseekfast": "/model deepseek/deepseek-v4.1-flash-fast --session",
 }
 
 

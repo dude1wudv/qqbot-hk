@@ -27,7 +27,7 @@ quick_commands:
   deepseek:
     type: alias
     target: /model deepseek/deepseek-v4.1-flash --session
-  fast:
+  deepseekfast:
     type: alias
     target: /model deepseek/deepseek-v4.1-flash-fast --session
 

@@ -963,7 +963,7 @@ def build_handler(ctx: Any, store: Store):
             return {"action": "rewrite", "text": interaction.text}
         elif text == "/配置":
             claim_action = "interaction:configuration"
-            reply = CONFIG_ERROR + "\n/model 查看当前模型；/reasoning 查看当前推理；/status 查看主辅路由。\n可用 /fast /deepseek /自动模型 /low /medium /high /xhigh /max，以及 /模型、/推理、/配置 等中文写法。"
+            reply = CONFIG_ERROR + "\n/model 查看当前模型；/reasoning 查看当前推理；/status 查看主辅路由。\n可用 /deepseekfast /deepseek /自动模型 /low /medium /high /xhigh /max，以及 /模型、/推理、/配置 等中文写法。"
         elif text == "/自动模型":
             claim_action = "model:auto"
             from qqbot_model_routing import clear_manual_model, ModelRoutingBusy

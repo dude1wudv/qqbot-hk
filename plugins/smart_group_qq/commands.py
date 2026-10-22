@@ -14,11 +14,11 @@ _PROFILE_COMMAND = re.compile(
     re.DOTALL,
 )
 _MODEL_ALIAS_COMMAND = re.compile(
-    r"^[／/]\s*(deepseek|fast|自动模型)\s*$", re.IGNORECASE
+    r"^[／/]\s*(deepseek|deepseekfast|自动模型)\s*$", re.IGNORECASE
 )
 _MODEL_ALIASES = {
     "deepseek": "deepseek/deepseek-v4.1-flash",
-    "fast": "deepseek/deepseek-v4.1-flash-fast",
+    "deepseekfast": "deepseek/deepseek-v4.1-flash-fast",
 }
 _REASONING_ALIAS_COMMAND = re.compile(
     r"^[／/]\s*(low|medium|high|xhigh|max)\s*$", re.IGNORECASE
@@ -140,7 +140,7 @@ def help_text() -> str:
         "/compress 立即重试上下文压缩（上下文过大时）\n工具执行无需额外审批。\n"
         "/status 运行状态\n/summary 查看或更新近期摘要（无新消息时用缓存）\n"
         "/summary status 查看整理进度；/summary retry 显式重试失败任务\n/rules 已启用规则\n"
-        "/fast 使用 Fast；/deepseek 使用原 Flash；/model auto 或 /自动模型 恢复自动路由\n"
+        "/deepseekfast 使用 Fast；/deepseek 使用原 Flash；/model auto 或 /自动模型 恢复自动路由\n"
         "/low /medium /high /xhigh /max 切换当前会话推理强度（DeepSeek 的 xhigh 实际按 max 请求）\n"
         "/kb 知识库\n/我的记忆 [关键词] 查看或搜索个人记忆，例如 /我的记忆 项目\n/记住我：内容 保存或更新个人信息\n"
         "/纠正记忆：字段=新内容 以本人确认更正旧记忆\n"

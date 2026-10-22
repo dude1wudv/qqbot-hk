@@ -20,10 +20,11 @@ MODELS = {
     "deepseek/deepseek-v4.1-flash": "deepseek",
     "deepseek-v4.1-flash": "deepseek",
     "深度求索": "deepseek",
-    "fast": "fast",
-    "deepseek-fast": "fast",
-    "deepseek/deepseek-v4.1-flash-fast": "fast",
-    "deepseek-v4.1-flash-fast": "fast",
+    "fast": "deepseekfast",
+    "deepseekfast": "deepseekfast",
+    "deepseek-fast": "deepseekfast",
+    "deepseek/deepseek-v4.1-flash-fast": "deepseekfast",
+    "deepseek-v4.1-flash-fast": "deepseekfast",
     "auto": "自动模型",
     "自动": "自动模型",
     "自动模型": "自动模型",
@@ -84,7 +85,7 @@ REQUIRES_ARG = {
     "避称呼",
     "避梗",
 }
-CONFIG_ERROR = "默认自动路由：主回复 DeepSeek V4.1 Flash Fast / high，后台原 Flash / low。/fast 或 /deepseek 固定主会话模型；/model auto 或 /自动模型 恢复自动路由并保留聊天历史。推理强度支持 low、medium、high、xhigh、max；DeepSeek 的 xhigh 实际按 max 请求。例如：切到 Fast、推理调高，或 /配置 模型 DeepSeek。手动配置只作用于当前会话。"
+CONFIG_ERROR = "默认自动路由：主回复 DeepSeek V4.1 Flash Fast / high，后台原 Flash / low。/deepseekfast 或 /deepseek 固定主会话模型；/model auto 或 /自动模型 恢复自动路由并保留聊天历史。推理强度支持 low、medium、high、xhigh、max；DeepSeek 的 xhigh 实际按 max 请求。例如：切到 Fast、推理调高，或 /配置 模型 DeepSeek。手动配置只作用于当前会话。"
 
 
 @dataclass(frozen=True)
