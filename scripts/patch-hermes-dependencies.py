@@ -9,12 +9,12 @@ from pathlib import Path
 import sys
 
 ORIGINAL_LOCK_SHA256 = "193a3a3703499eb7c4b4ce48d3ba1e9dae2be62a48315c1e7ea9545e8be4a067"
-SAFE_LOCK_SHA256 = "9499ed1d2dd49ab11cf770ad0ac42af80d7ed1838154673716794258e5db817c"
+SAFE_LOCK_SHA256 = "8d5bb0b897e8a46b03eed0541fc03545af490a591748922ec9e737989f9ac5c1"
 MANIFESTS = {
     "package.json": (
         "8b5b2ea9721e8d4bdedea457f5b5bab038e7f3e11ea4e1381bd43f2e87ce04cd",
         (("overrides", "@xmldom/xmldom", None, "0.9.12"),
-         ("overrides", "sanitize-html", None, "2.18.0"),
+         ("overrides", "sanitize-html", None, "2.18.1"),
          ("overrides", "vite", None, "8.3.5"),
          ("overrides", "source-map-js", None, "1.2.2"),
          ("overrides", "brace-expansion", "5.0.9", "5.0.12"),
@@ -23,17 +23,17 @@ MANIFESTS = {
     ),
     "web/package.json": (
         "884fec6f6a1a3c4293be5192ed492a1aaac7acfe7cd9e6f8938ca5453d31a0e9",
-        (("devDependencies", "vitest", "4.1.10", "4.1.11"),
+        (("devDependencies", "vitest", "4.1.10", "4.1.12"),
          ("devDependencies", "vite", "8.2.0", "8.3.5")),
     ),
     "ui-tui/package.json": (
         "4753204cb018d78f203e4d2c9c1a8ca6f710563052c86df3c41f718b840f5418",
         (("dependencies", "undici", "6.28.0", "6.28.1"),
-         ("devDependencies", "vitest", "4.1.10", "4.1.11")),
+         ("devDependencies", "vitest", "4.1.10", "4.1.12")),
     ),
     "tests-js/package.json": (
         "08657cd581bcaacec53c834c703cd6254579db0223c45d2d9a21b629060acec5",
-        (("devDependencies", "vitest", "4.1.10", "4.1.11"),),
+        (("devDependencies", "vitest", "4.1.10", "4.1.12"),),
     ),
 }
 
@@ -77,7 +77,7 @@ def main() -> int:
     except (OSError, UnicodeError, ValueError, PatchError) as exc:
         print(f"ERROR: Hermes dependency patch failed: {exc}", file=sys.stderr)
         return 1
-    print("HERMES_DEPENDENCIES=xmldom:0.9.12,source-map-js:1.2.2,brace-expansion:5.0.12,undici:6.28.1/7.29.1,vitest:4.1.11,sanitize-html:2.18.0,vite:8.3.5")
+    print("HERMES_DEPENDENCIES=xmldom:0.9.12,source-map-js:1.2.2,brace-expansion:5.0.12,undici:6.28.1/7.29.1,vitest:4.1.12,sanitize-html:2.18.1,vite:8.3.5")
     return 0
 
 

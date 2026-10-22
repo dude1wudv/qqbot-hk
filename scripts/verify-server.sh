@@ -53,7 +53,7 @@ test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
 test "$qq_recovery_patch_label" = "v1"
 test "$doctor_patch_label" = "v3"
-test "$dependency_pins_label" = "2026-10-21"
+test "$dependency_pins_label" = "2026-10-22"
 test "$(docker image inspect -f '{{index .Config.Labels "security.emudhra.mitigated"}}' "$image_id")" = "2026-10-22"
 docker exec hermes-qqbot python /opt/hermes/patch-hermes-trust-store.py --check
 

@@ -12,7 +12,7 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.qq-output-patch="v1" \
       io.qqbot-hk.qq-recovery-patch="v1" \
       io.qqbot-hk.doctor-patch="v3" \
-      io.qqbot-hk.dependency-pins="2026-10-21"
+      io.qqbot-hk.dependency-pins="2026-10-22"
 
 # Preserve the CA/Node remediation already applied to the live QQ container.
 COPY --from=trusted-node /usr/local/bin/node /usr/local/bin/node

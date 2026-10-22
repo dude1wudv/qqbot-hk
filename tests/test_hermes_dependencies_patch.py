@@ -68,7 +68,7 @@ class HermesDependenciesPatchTests(unittest.TestCase):
         package = json.loads((self.root / "package.json").read_text(encoding="utf-8"))
         self.assertEqual(package["overrides"], {
             "@xmldom/xmldom": "0.9.12",
-            "sanitize-html": "2.18.0",
+            "sanitize-html": "2.18.1",
             "vite": "8.3.5",
             "source-map-js": "1.2.2",
             "brace-expansion": "5.0.12",
