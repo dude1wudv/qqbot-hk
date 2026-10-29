@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 
 ORIGINAL_LOCK_SHA256 = "193a3a3703499eb7c4b4ce48d3ba1e9dae2be62a48315c1e7ea9545e8be4a067"
-SAFE_LOCK_SHA256 = "8f2090b91e4a039359736eeb5362d7f98ba1971e1be34936bc06c49f52d514d8"
+SAFE_LOCK_SHA256 = "57106675dd69d7a620e60913dbf4f05311e2388f9ab140769957456f70182114"
 MANIFESTS = {
     "package.json": (
         "8b5b2ea9721e8d4bdedea457f5b5bab038e7f3e11ea4e1381bd43f2e87ce04cd",
@@ -18,7 +18,7 @@ MANIFESTS = {
          ("overrides", "vite", None, "8.3.5"),
          ("overrides", "source-map-js", None, "1.2.2"),
          ("overrides", "brace-expansion", "5.0.9", "5.0.12"),
-         ("overrides", "undici@^6", "6.28.0", "6.28.1"),
+         ("overrides", "undici@^6", "6.28.0", "6.29.1"),
          ("overrides", "undici@^7", "7.29.0", "7.29.1")),
     ),
     "web/package.json": (
@@ -28,7 +28,7 @@ MANIFESTS = {
     ),
     "ui-tui/package.json": (
         "4753204cb018d78f203e4d2c9c1a8ca6f710563052c86df3c41f718b840f5418",
-        (("dependencies", "undici", "6.28.0", "6.28.1"),
+        (("dependencies", "undici", "6.28.0", "6.29.1"),
          ("devDependencies", "vitest", "4.1.10", "4.1.12")),
     ),
     "tests-js/package.json": (
@@ -77,7 +77,7 @@ def main() -> int:
     except (OSError, UnicodeError, ValueError, PatchError) as exc:
         print(f"ERROR: Hermes dependency patch failed: {exc}", file=sys.stderr)
         return 1
-    print("HERMES_DEPENDENCIES=xmldom:0.9.12,source-map-js:1.2.2,brace-expansion:5.0.12,undici:6.28.1/7.29.1,vitest:4.1.12,sanitize-html:2.18.1,vite:8.3.5")
+    print("HERMES_DEPENDENCIES=xmldom:0.9.12,source-map-js:1.2.2,brace-expansion:5.0.12,undici:6.29.1/7.29.1,vitest:4.1.12,sanitize-html:2.18.1,vite:8.3.5")
     return 0
 
 

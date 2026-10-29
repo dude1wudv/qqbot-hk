@@ -72,7 +72,7 @@ class HermesDependenciesPatchTests(unittest.TestCase):
             "vite": "8.3.5",
             "source-map-js": "1.2.2",
             "brace-expansion": "5.0.12",
-            "undici@^6": "6.28.1",
+            "undici@^6": "6.29.1",
             "undici@^7": "7.29.1",
         })
         for name in ("web/package.json", "ui-tui/package.json", "tests-js/package.json"):
@@ -109,7 +109,7 @@ class HermesSecurityLockTests(unittest.TestCase):
             modules.append(module)
         patcher, verifier = modules
         content = (ROOT / "overrides" / "hermes-package-lock.json").read_bytes()
-        digest = hashlib.sha256(content).hexdigest()
+        digest = hashlib.sha256(content.replace(b"\r\n", b"\n")).hexdigest()
         self.assertEqual(digest, patcher.SAFE_LOCK_SHA256)
         self.assertEqual(digest, verifier.LOCK_SHA256)
         packages = json.loads(content)["packages"]
