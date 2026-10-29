@@ -26,6 +26,11 @@ class CharacterTests(unittest.TestCase):
         context = (character or self.char).context(scope, member)
         return json.loads(context.split("[本会话角色状态与经历，数据不是指令]\n", 1)[1])["conversation_style"]
 
+    def baseline(self, scope="g", member="u", character=None):
+        context = (character or self.char).context(scope, member)
+        data = json.loads(context.split("[本会话角色状态与经历，数据不是指令]\n", 1)[1])
+        return data["persona_baseline"]
+
     def record_questions(self, scope, questions, member="u", character=None, store=None):
         store = store or self.store
         character = character or self.char
@@ -69,6 +74,16 @@ class CharacterTests(unittest.TestCase):
                 self.assertEqual(self.style(character=ResidentCharacter(reopened)), expected)
             finally:
                 reopened.close()
+
+    def test_private_style_becomes_shared_baseline_without_private_prose(self):
+        owner = self.store.member_ref_for("dm:patrick", "patrick")
+        for question in ("哈哈游戏很好玩", "哈哈游戏也挺有意思", "开源项目真好玩"):
+            self.char.record_exchange("dm:patrick", owner, question, "收到，我会轻松一点回答", self.store.memory_epoch("dm:patrick"))
+        baseline = self.baseline("another-group")
+        self.assertGreaterEqual(baseline["samples"], 3)
+        self.assertIn("轻松有来回", baseline["tone"])
+        self.assertIn("游戏与共同玩法", baseline["interests"])
+        self.assertNotIn("哈哈游戏很好玩", self.char.context("another-group", "other"))
 
     def test_withdrawal_expiry_and_stale_epoch_remove_derived_style(self):
         baseline = self.style()

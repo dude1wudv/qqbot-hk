@@ -228,6 +228,12 @@ plugins:
               - qqbot
               - hermes
               - bot
+            # 主动点名追问已开启；QQ 开放平台仍需允许主动发送。
+            proactive_mentions:
+              enabled: true
+              cooldown_seconds: 3600
+              max_per_day: 3
+              target_ttl_seconds: 86400
         member_memory:
           enabled: true
           auto_extract: true
