@@ -704,12 +704,6 @@ def build_handler(ctx: Any, store: Store):
                 topic_id=record.topic_id, reference_id=record.reference_id,
                 focus_message_ids=record.focus_message_ids, mode_hint=record.mode_hint,
             )
-            if proactive.policy.enabled and record.group_id.startswith("dm:"):
-                # DM follow-ups have no QQ @ markup; keep the authorized
-                # transport route in process memory only.
-                proactive.register_target(
-                    record.group_id, record.member_ref, record.transport_chat_id
-                )
             for message_id in record.sent_message_ids:
                 if message_id != str(getattr(result, "message_id", "")):
                     attention.remember_reply(record.group_id, message_id, topic_id=record.topic_id)
@@ -772,10 +766,8 @@ def build_handler(ctx: Any, store: Store):
             candidate = proactive.candidate(group_id, attention.topic_context(group_id))
             if candidate is None or not proactive.claim(candidate):
                 continue
-            is_private = group_id.startswith("dm:")
-            transport_chat_id = group_id[3:] if is_private else group_id
             allowed = getattr(adapter, "_is_group_allowed", None)
-            if not is_private and callable(allowed):
+            if callable(allowed):
                 try:
                     if not bool(allowed(group_id, candidate["member_id"])):
                         continue
@@ -785,7 +777,7 @@ def build_handler(ctx: Any, store: Store):
             if not content:
                 continue
             try:
-                result = await adapter.send(transport_chat_id, content, reply_to=None)
+                result = await adapter.send(group_id, content, reply_to=None)
                 success = bool(getattr(result, "success", False))
             except Exception:
                 success = False
