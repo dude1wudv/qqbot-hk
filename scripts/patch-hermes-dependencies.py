@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 
 ORIGINAL_LOCK_SHA256 = "193a3a3703499eb7c4b4ce48d3ba1e9dae2be62a48315c1e7ea9545e8be4a067"
-SAFE_LOCK_SHA256 = "8d5bb0b897e8a46b03eed0541fc03545af490a591748922ec9e737989f9ac5c1"
+SAFE_LOCK_SHA256 = "717b026254c3ebb1ae9db80e30d0e68d2d2a853077c44936c98b8b6d4acd0371"
 MANIFESTS = {
     "package.json": (
         "8b5b2ea9721e8d4bdedea457f5b5bab038e7f3e11ea4e1381bd43f2e87ce04cd",
