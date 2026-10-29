@@ -46,8 +46,6 @@ from .private_scope import legacy_evidence
 from .polls import PollService, parse_poll_command
 from .store import Store
 from .stickers import StickerService
-from .chat_export import send_chat_export
-from .proactive import ProactiveMentionManager
 
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "smart_group_qq"
@@ -476,11 +474,6 @@ def _start_maintenance(
                 handler.character.maintain()
                 store.purge_group_stickers()
                 handler.scheduler.poll()
-                proactive_tick = getattr(handler, "proactive_tick", None)
-                if callable(proactive_tick):
-                    result = proactive_tick()
-                    if inspect.isawaitable(result):
-                        await result
                 registry = getattr(handler, "response_registry", None)
                 if registry is not None:
                     registry.cleanup()
@@ -685,7 +678,6 @@ def build_handler(ctx: Any, store: Store):
         max_interjections_per_minute=int(participation_cfg.get("max_interjections_per_minute", 2)),
         unanswered_pause_seconds=float(participation_cfg.get("unanswered_pause_seconds", 300)),
     )
-    proactive = ProactiveMentionManager(participation_cfg.get("proactive_mentions"))
 
     def delivered(record: ReplyRequest, result: Any) -> None:
         if record.record_on_success:
@@ -715,79 +707,6 @@ def build_handler(ctx: Any, store: Store):
 
     response_registry = ReplyRegistry(store.memory_epoch, store.record_audit, delivered)
     local_replies = LocalReplies(store, response_registry)
-
-    def remember_proactive_target(group_id: str, member_id: str, display_name: str = "") -> None:
-        """Keep a transport-only route for a member participating in a topic."""
-        if not group_id or not member_id or not proactive.policy.enabled:
-            return
-        try:
-            proactive.register_target(
-                group_id,
-                store.member_ref_for(group_id, member_id),
-                member_id,
-                display_name,
-            )
-        except Exception:
-            logger.debug("smart_group_qq proactive target registration failed", exc_info=True)
-
-    async def proactive_tick() -> None:
-        """Follow up one active topic with a bounded, explicit member mention."""
-        if not proactive.policy.enabled:
-            return
-        gateway = getattr(ctx, "_qq_gateway", None)
-        adapters = getattr(gateway, "adapters", {}) or {}
-        adapter = adapters.get("qqbot")
-        if adapter is None:
-            for key, value in adapters.items():
-                if str(getattr(key, "value", key)).lower() == "qqbot":
-                    adapter = value
-                    break
-        if adapter is None or not callable(getattr(adapter, "send", None)):
-            return
-        for group_id in proactive.groups():
-            if character.group_mode(group_id) == "only" or character.paused(group_id):
-                continue
-            # Do not interrupt a live model turn in this group.
-            records = getattr(response_registry, "_records", {})
-            lock = getattr(response_registry, "_lock", None)
-            if lock is not None:
-                with lock:
-                    busy = any(
-                        item.group_id == group_id and item.execution_active and not item.cancelled
-                        for item in records.values()
-                    )
-            else:
-                busy = any(
-                    item.group_id == group_id and item.execution_active and not item.cancelled
-                    for item in records.values()
-                )
-            if busy:
-                continue
-            candidate = proactive.candidate(group_id, attention.topic_context(group_id))
-            if candidate is None or not proactive.claim(candidate):
-                continue
-            allowed = getattr(adapter, "_is_group_allowed", None)
-            if callable(allowed):
-                try:
-                    if not bool(allowed(group_id, candidate["member_id"])):
-                        continue
-                except Exception:
-                    continue
-            content = proactive.render(candidate)
-            if not content:
-                continue
-            try:
-                result = await adapter.send(group_id, content, reply_to=None)
-                success = bool(getattr(result, "success", False))
-            except Exception:
-                success = False
-            store.record_audit(
-                "proactive_mention_sent" if success else "proactive_mention_failed",
-                chat_id=group_id,
-                source="topic_followup",
-            )
-
-    handle_proactive_tick = proactive_tick
 
     def atomic_command(scope, message_id, operation):
         with store.transaction():
@@ -985,8 +904,6 @@ def build_handler(ctx: Any, store: Store):
         if synthetic and text.startswith(("/", "／")):
             return {"action": "skip", "reason": "nonmention_command"}
         profiles.touch(group_id, member_id, display_name=_display_name(source), increment=False)
-        if is_group:
-            remember_proactive_target(group_id, member_id, _display_name(source))
         if official:
             _cancel_batch(group_id)
             response_registry.cancel_group(group_id, ordinary_only=True)
@@ -1167,10 +1084,6 @@ def build_handler(ctx: Any, store: Store):
                 claim_action = "command:" + command.name
                 if command.name == "help":
                     reply = help_text()
-                elif command.name == "chat_export":
-                    # The export is an image-only local command; it must not
-                    # pass through text delivery with an empty reply.
-                    reply = ""
                 elif command.name == "reset":
                     def reset():
                         memory.reset(group_id)
@@ -1257,40 +1170,6 @@ def build_handler(ctx: Any, store: Store):
                     generated.close()
                 local_replies.replay(group_id, message_id, adapter, transport_chat_id)
                 return {"action": "skip", "reason": "duplicate"}
-            if claim_action == "command:chat_export":
-                async def send_export() -> None:
-                    success = False
-                    try:
-                        success = await send_chat_export(
-                            store,
-                            group_id,
-                            adapter,
-                            transport_chat_id,
-                            reply_to=message_id or None,
-                            output_dir=str(ctx.get_config("chat_export_dir", "/opt/data/cache/chat-exports")),
-                            limit=int(ctx.get_config("chat_export_max_rows", 80)),
-                        )
-                        if not success:
-                            await _send_all(
-                                adapter,
-                                transport_chat_id,
-                                message_id or None,
-                                "聊天记录长图生成或发送失败，请稍后重试。",
-                            )
-                    except Exception:
-                        logger.warning("smart_group_qq chat export failed", exc_info=True)
-                    finally:
-                        store.finish_claim(*claim, success=success)
-                try:
-                    task = asyncio.create_task(send_export())
-                    task.add_done_callback(lambda done: done.cancelled() or done.exception())
-                except RuntimeError:
-                    store.finish_claim(*claim, success=False)
-                store.record_audit(
-                    "rule_dispatch", chat_id=group_id, message_id=message_id,
-                    action=claim_action, rule_id="chat_export", source="command_or_policy",
-                )
-                return {"action": "skip", "reason": "chat_export"}
             if claim_action == "character:表情" and character_command[1]:
                 async def send_expression():
                     if is_group:
@@ -1543,7 +1422,6 @@ def build_handler(ctx: Any, store: Store):
                 created_at=getattr(record.get("timestamp"), "timestamp", lambda: None)(),
             )
         profiles.touch(group_id, member_id, display_name=display_name, increment=False)
-        remember_proactive_target(group_id, member_id, display_name)
         if not fast_ingested:
             store.record_audit("ambient_ingest", chat_id=group_id, message_id=message_id, source="nonmention")
         if due:
@@ -2093,7 +1971,6 @@ def build_handler(ctx: Any, store: Store):
             created_at=getattr(timestamp, "timestamp", lambda: None)(),
         )
         profiles.touch(group_id, member_id, display_name=display_name[:200], increment=False)
-        remember_proactive_target(group_id, member_id, display_name[:200])
         store.record_audit("ambient_ingest", chat_id=group_id, message_id=message_id, source="fast_path")
         if due:
             _schedule_memory_refresh(ctx, memory, store, group_id)
@@ -2135,8 +2012,6 @@ def build_handler(ctx: Any, store: Store):
     handle.character = character
     handle.policy = policy
     handle.attention = attention
-    handle.proactive = proactive
-    handle.proactive_tick = proactive_tick
     handle.response_registry = response_registry
     handle.stickers = stickers
     handle.observe_nonmention = observe_nonmention
