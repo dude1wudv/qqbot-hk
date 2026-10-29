@@ -43,6 +43,14 @@ class ProactiveMentionTests(unittest.TestCase):
         self.assertEqual(policy.cooldown_seconds, 60)
         self.assertEqual(policy.max_per_day, 24)
 
+    def test_private_followup_has_no_mention_markup(self):
+        manager = ProactiveMentionManager({"enabled": True})
+        manager.register_target("dm:member", "m-ref", "member-openid", now=100)
+        candidate = manager.candidate(
+            "dm:member", [{"member_refs": ["m-ref"], "summary": "上次的项目"}], now=101
+        )
+        self.assertEqual(manager.render(candidate), "你前面提到的「上次的项目」后来怎么样了？")
+
 
 if __name__ == "__main__":
     unittest.main()

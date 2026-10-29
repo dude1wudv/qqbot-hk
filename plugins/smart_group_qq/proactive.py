@@ -195,6 +195,8 @@ class ProactiveMentionManager:
         summary = _bounded(message or candidate.get("summary"), 220)
         if not member_id or not summary:
             return ""
+        if _bounded(candidate.get("group_id"), 256).startswith("dm:"):
+            return f"你前面提到的「{summary[:160]}」后来怎么样了？"
         return f"<@{member_id}> 你前面提到的「{summary[:160]}」后来怎么样了？"
 
 
