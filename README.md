@@ -2,6 +2,8 @@
 
 Nous Research Hermes Agent 的 QQ Bot 在 Hytron HK 上的独立部署仓库，模型通过现有 Sub2API 提供。
 
+本项目是 **小栖 / Hermes QQ bot**，与 Patrick 的 `qq-bridge-patrick` 是两个独立项目，各自维护代码、配置和运行数据。本次项目源码发行标签为 **v0.21.5-hk.1**；下文 Hermes Agent v0.21.5 是上游基础版本，不是本项目的发行版本。发行记录见 [GitHub Releases](https://github.com/dude1wudv/qqbot-hk/releases)；源码发行不代表生产已更新。
+
 ## 配置
 
 生产秘密位于 `/opt/qqbot-hk-deploy/secrets`，不得提交：

@@ -2,5 +2,7 @@
 PyYAML==6.0.3
 # PNG expression tests; observed cached package metadata supports Python >=3.10.
 Pillow==12.3.0
+# Runtime-path verification imports the driver resolver; browser binaries are not used.
+playwright==1.64.0
 # Windows does not ship the IANA timezone database used by ZoneInfo.
 tzdata==2026.5; sys_platform == "win32"
