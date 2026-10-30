@@ -165,7 +165,7 @@ class PngAndRuntimeTests(unittest.TestCase):
         with patch.object(verify.os, "getuid", return_value=10000, create=True), patch.object(verify.importlib.metadata, "version", return_value="1.64.0"), patch.dict(verify.os.environ, {"PLAYWRIGHT_BROWSERS_PATH": "/root/.cache/ms-playwright"}, clear=True):
             with self.assertRaisesRegex(ValueError, "browser_cache"):
                 verify.inspect_runtime(10000)
-        with patch.object(verify.os, "getuid", return_value=10000, create=True), patch.object(verify.importlib.metadata, "version", return_value="1.64.0"), patch.dict(verify.os.environ, {"PLAYWRIGHT_BROWSERS_PATH": str(verify.BROWSERS_PATH)}, clear=True), patch.object(Path, "is_dir", return_value=True), patch.object(verify.os, "access", return_value=True):
+        with patch.object(verify.os, "getuid", return_value=10000, create=True), patch.object(verify.importlib.metadata, "version", return_value="1.64.0"), patch.dict(verify.os.environ, {"PLAYWRIGHT_BROWSERS_PATH": str(verify.BROWSERS_PATH)}, clear=True), patch.object(Path, "is_dir", return_value=True), patch.object(Path, "is_file", return_value=False), patch.object(verify.os, "access", return_value=True):
             with self.assertRaisesRegex(ValueError, "node_path"):
                 verify.inspect_runtime(10000)
 
