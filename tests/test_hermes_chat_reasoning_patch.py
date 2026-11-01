@@ -18,7 +18,7 @@ SPEC.loader.exec_module(PATCH)
 def fixture_source() -> str:
     return (
         "from agent.reasoning_effort import (\n"
-        "    KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, OPENAI_COMPAT_WIRE_EFFORTS, TOKENHUB_EFFORTS, clamp_effort,\n"
+        "    GEMINI4_THINKING_LEVELS, KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, OPENAI_COMPAT_WIRE_EFFORTS, clamp_effort,\n"
         ")\n"
         "def build(reasoning_config, params, api_kwargs, model, supports_reasoning, is_lmstudio):\n"
         "    params['reasoning_config'] = reasoning_config\n"
@@ -46,7 +46,7 @@ class HermesChatReasoningPatchTests(unittest.TestCase):
         compile(patched, "fixture_chat.py", "exec")
     def test_executed_patch_preserves_deepseek_and_mimo_effort_and_route_boundaries(self):
         effort = ModuleType("agent.reasoning_effort")
-        for name in ("KIMI_K3_EFFORTS", "OPENAI_COMPAT_WIRE_EFFORTS", "TOKENHUB_EFFORTS"):
+        for name in ("GEMINI4_THINKING_LEVELS", "KIMI_K3_EFFORTS", "OPENAI_COMPAT_WIRE_EFFORTS", "TOKENHUB_EFFORTS"):
             setattr(effort, name, ("low", "medium", "high"))
         effort.DEEPSEEK_V4_EFFORTS = ("low", "medium", "high", "max")
         effort.DEEPSEEK_V4_OVERRIDES = {"xhigh": "max"}

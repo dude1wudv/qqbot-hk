@@ -8,34 +8,28 @@ import json
 from pathlib import Path
 import sys
 
-ORIGINAL_LOCK_SHA256 = "193a3a3703499eb7c4b4ce48d3ba1e9dae2be62a48315c1e7ea9545e8be4a067"
-SAFE_LOCK_SHA256 = "57106675dd69d7a620e60913dbf4f05311e2388f9ab140769957456f70182114"
-MANIFESTS = {
-    "package.json": (
-        "8b5b2ea9721e8d4bdedea457f5b5bab038e7f3e11ea4e1381bd43f2e87ce04cd",
-        (("overrides", "@xmldom/xmldom", None, "0.9.12"),
-         ("overrides", "sanitize-html", None, "2.18.1"),
-         ("overrides", "vite", None, "8.3.5"),
-         ("overrides", "source-map-js", None, "1.2.2"),
-         ("overrides", "brace-expansion", "5.0.9", "5.0.12"),
-         ("overrides", "undici@^6", "6.28.0", "6.29.1"),
-         ("overrides", "undici@^7", "7.29.0", "7.29.1")),
-    ),
-    "web/package.json": (
-        "884fec6f6a1a3c4293be5192ed492a1aaac7acfe7cd9e6f8938ca5453d31a0e9",
-        (("devDependencies", "vitest", "4.1.10", "4.1.12"),
-         ("devDependencies", "vite", "8.2.0", "8.3.5")),
-    ),
-    "ui-tui/package.json": (
-        "4753204cb018d78f203e4d2c9c1a8ca6f710563052c86df3c41f718b840f5418",
-        (("dependencies", "undici", "6.28.0", "6.29.1"),
-         ("devDependencies", "vitest", "4.1.10", "4.1.12")),
-    ),
-    "tests-js/package.json": (
-        "08657cd581bcaacec53c834c703cd6254579db0223c45d2d9a21b629060acec5",
-        (("devDependencies", "vitest", "4.1.10", "4.1.12"),),
-    ),
-}
+ORIGINAL_LOCK_SHA256 = 'd439feaa570d5098f5479f2af154c001f48d5c2d95a938977cc235384978e37c'
+SAFE_LOCK_SHA256 = 'c50acc447e56bc2aad63dd295199ac26c648ba102fd7ea517cb7ea7a1d2045a3'
+MANIFESTS = {'package.json': ('1f2378a4d91f99fa1f407d017a27a09298d509664f8353261c3579d2ecf4d852',
+                  (('overrides', 'undici@^6', '6.29.0', '6.29.1'),
+                   ('overrides', 'undici@^7', '7.30.0', '7.30.1'),
+                   ('overrides', '@xmldom/xmldom', None, '0.9.12'),
+                   ('overrides', 'sanitize-html', None, '2.18.1'),
+                   ('overrides', 'vite', None, '8.3.5'),
+                   ('overrides', 'zod', None, '4.6.6'),
+                   ('overrides', 'fast-uri', None, '3.1.9'),
+                   ('overrides', 'follow-redirects', None, '1.16.2'),
+                   ('overrides', 'joi', None, '18.3.1'),
+                   ('overrides', 'glob', None, '14.0.3'),
+                   ('overrides', 'minimatch', None, '11.0.3'),
+                   ('overrides', '@isaacs/nonrecursive-glob-match', None, '1.0.3'),
+                   ('overrides', 'ink', None, '7.1.1'))),
+ 'web/package.json': ('30b1a6e95b603e736b7e06056248e93fd0369a6ec4540449e0c52461efa788d0',
+                      (('devDependencies', 'vite', '8.2.4', '8.3.5'),)),
+ 'ui-tui/package.json': ('03af8c8c2914f72ee91b1b5afe4f942c6d1614442d501d11d57e812750f30f34',
+                         (('dependencies', 'undici', '6.29.0', '6.29.1'),)),
+ 'tests-js/package.json': ('ba875b0aad7c4d555793f062e75ccf7bc9c90be6304ffc0f1cd44fc24ebd9cba',
+                           (('dependencies', 'zod', '4.4.3', '4.6.6'),))}
 
 
 class PatchError(RuntimeError):

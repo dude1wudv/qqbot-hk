@@ -28,17 +28,17 @@ class HermesDependenciesPatchTests(unittest.TestCase):
         self.manifests = {
             "package.json": {
                 "overrides": {
-                    "brace-expansion": "5.0.9",
-                    "undici@^6": "6.28.0",
-                    "undici@^7": "7.29.0",
+                    "brace-expansion": "5.0.12",
+                    "undici@^6": "6.29.0",
+                    "undici@^7": "7.30.0",
                 }
             },
-            "web/package.json": {"devDependencies": {"vitest": "4.1.10", "vite": "8.2.0"}},
+            "web/package.json": {"devDependencies": {"vitest": "4.1.10", "vite": "8.2.4"}},
             "ui-tui/package.json": {
-                "dependencies": {"undici": "6.28.0"},
+                "dependencies": {"undici": "6.29.0"},
                 "devDependencies": {"vitest": "4.1.10"},
             },
-            "tests-js/package.json": {"devDependencies": {"vitest": "4.1.10"}},
+            "tests-js/package.json": {"devDependencies": {"vitest": "4.1.10"}, "dependencies": {"zod": "4.4.3"}},
         }
         for name, manifest in self.manifests.items():
             path = self.root / name
@@ -70,10 +70,17 @@ class HermesDependenciesPatchTests(unittest.TestCase):
             "@xmldom/xmldom": "0.9.12",
             "sanitize-html": "2.18.1",
             "vite": "8.3.5",
-            "source-map-js": "1.2.2",
             "brace-expansion": "5.0.12",
             "undici@^6": "6.29.1",
-            "undici@^7": "7.29.1",
+            "undici@^7": "7.30.1",
+            "zod": "4.6.6",
+            "fast-uri": "3.1.9",
+            "follow-redirects": "1.16.2",
+            "joi": "18.3.1",
+            "glob": "14.0.3",
+            "minimatch": "11.0.3",
+            "@isaacs/nonrecursive-glob-match": "1.0.3",
+            "ink": "7.1.1",
         })
         for name in ("web/package.json", "ui-tui/package.json", "tests-js/package.json"):
             manifest = json.loads((self.root / name).read_text(encoding="utf-8"))

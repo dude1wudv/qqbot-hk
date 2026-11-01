@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 
 
-EXPECTED_ORIGINAL_SHA256 = "6d7225936c538f7378357552e909ad5298f9bc32a0717add17e045af66ccc8b7"
+EXPECTED_ORIGINAL_SHA256 = '725904c6affa34d490717b75e69f24e1f605ae38603fdfa1f2707c09901af2e3'
 PATCH_MARKER = 'QQBOT_HK_AUDIO_PATCH = "v2"'
 
 
@@ -158,7 +158,7 @@ def main() -> int:
     parser.add_argument(
         "path",
         nargs="?",
-        default="/opt/hermes/gateway/platforms/qqbot/adapter.py",
+        default="/opt/hermes/plugins/platforms/qqbot/adapter.py",
     )
     args = parser.parse_args()
     try:

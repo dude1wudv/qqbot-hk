@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import sys
 
-EXPECTED_SHA256 = "26bb1a43611d7487878a02cfcc9a33171f7524776e4815e4c170d19e5b1092c8"
+EXPECTED_SHA256 = '4fbeb3c6108509d0ede253f2ab5600960ecfe722946201a15c1dfe8a39d72c5d'
 MARKER = '# QQBOT_HK_DOCTOR_PATCH = "v2"'
 OLD = '    policy_id = str(runtime_provider or catalog_provider or "").strip().lower()\n'
 NEW = (
@@ -28,7 +28,7 @@ SEAMS = (
     ),
 )
 
-PLUGIN_DEV_SHA256 = "337b410bc9ae757414e64278f81b545c5b55105c4c0fca956a99525629339ede"
+PLUGIN_DEV_SHA256 = 'df7cc947fb9341271b9c85c98bd04bc04f608e7cfd86b4409e911822450a74cd'
 PLUGIN_DEV_MARKER = '# QQBOT_HK_PLUGIN_DOCTOR_PATCH = "v1"'
 PLUGIN_DEV_OLD = '        bundled = home / "bundled-plugins"\n'
 PLUGIN_DEV_NEW = (

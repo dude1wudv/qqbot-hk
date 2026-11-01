@@ -24,7 +24,7 @@ from smart_group_qq.store import Store
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import MessageEvent, SendResult
-from gateway.platforms.qqbot.adapter import QQAdapter
+from plugins.platforms.qqbot.adapter import QQAdapter
 from gateway.run_inbound import GatewayInboundMixin
 from gateway.slash_commands import GatewaySlashCommandsMixin
 

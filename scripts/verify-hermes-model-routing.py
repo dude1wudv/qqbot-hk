@@ -158,7 +158,7 @@ async def verify(home: Path):
     import qqbot_model_routing as routing
     from gateway.config import GatewayConfig, Platform, PlatformConfig
     from gateway.platforms.base import MessageEvent, SendResult
-    from gateway.platforms.qqbot.adapter import QQAdapter
+    from plugins.platforms.qqbot.adapter import QQAdapter
     from gateway.run import GatewayRunner
     from gateway.session import SessionStore
     from smart_group_qq import build_handler

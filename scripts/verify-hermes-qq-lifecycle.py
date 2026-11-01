@@ -33,7 +33,7 @@ async def verify(home: Path) -> None:
     from smart_group_qq.store import Store
     from gateway.config import GatewayConfig, Platform, PlatformConfig
     from gateway.platforms.base import MessageEvent, SendResult
-    from gateway.platforms.qqbot.adapter import QQAdapter
+    from plugins.platforms.qqbot.adapter import QQAdapter
     from gateway.run import GatewayRunner
     from gateway.session import SessionStore
     from qqbot_context import Compactor

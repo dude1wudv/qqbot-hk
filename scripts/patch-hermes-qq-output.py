@@ -8,70 +8,101 @@ from pathlib import Path
 import sys
 
 PATCH_MARKER = 'QQBOT_HK_OUTPUT_PATCH = "v1"'
-TARGETS = {
-    "/opt/hermes/agent/turn_finalizer.py": "77ca6c9e92cb7e887fd1d0d950da417e5540a865a6866af9ad0c23b784e7f6bf",
-    "/opt/hermes/gateway/run_turn_runner.py": "216bdca083b7d2bfae481d07bd0791a76834674b3614fd4ee0aafac5c58f30db",
-    "/opt/hermes/gateway/run_turn.py": "5bdee5c82c00e02f664516f9da0af99674e23493ec2a30eff06cb03afc6718a0",
-    "/opt/hermes/agent/turn_context.py": "85f857dc3c317366d918516bc8b37a022f1020b34da0c3966a31bd289b2942e1",
-}
+TARGETS = {'/opt/hermes/agent/turn_finalizer.py': '4c1e83c6a23bcb7fc10f942306459b54b130975fdce3d76d8fd7f2432698632e',
+ '/opt/hermes/gateway/run_turn_runner.py': '04f76f4857a8ba251b014d615b814f3920fef8212ad24e69b28fbbc4fdf2df39',
+ '/opt/hermes/gateway/run_turn.py': 'd26c177a4c0edcdd8f901d4b1b7db789c1aa534d72177645afdab32af5509b7d',
+ '/opt/hermes/agent/turn_context.py': '09a6159b0301da271f1a6bdcf15d924a05dee8d7d6b9e2f4ed46e406aac0aa4e',
+ '/opt/hermes/gateway/run_turn_persistence.py': '31d1d1869b5c9d9d08b8f57bd3ccde4dd9c2844c4a2f74fae991d28842363880'}
 
 
 class PatchError(RuntimeError):
     pass
 
 
-PATCHES = {
-    "turn_context.py": [(
-        """    original_user_message = persist_user_message if persist_user_message is not None else user_message\n""",
-        f"""    original_user_message = persist_user_message if persist_user_message is not None else user_message\n    # {PATCH_MARKER}\n    agent._qqbot_output_user_context = (turn_id, original_user_message)\n""",
-    )],
-    "turn_finalizer.py": [(
-        """    # First hook to return a string wins; None/empty leaves the text unchanged.\n""",
-        f"""    # {PATCH_MARKER}\n    user_context = getattr(agent, "_qqbot_output_user_context", None)\n    user_message = user_context[1] if user_context and user_context[0] == turn_id else None\n    # First hook to return a string wins; None/empty leaves the text unchanged.\n""",
-    ), (
-        """        response_text=final_response,\n        session_id=agent.session_id or "",\n""",
-        """        response_text=final_response,\n        user_message=user_message,\n        session_id=agent.session_id or "",\n""",
-    )],
-    "run_turn_runner.py": [(
-        """        from gateway.run import _collect_auto_append_media_tags\n        if \"MEDIA:\" in final_response:\n""",
-        f"""        from gateway.run import _collect_auto_append_media_tags\n        from gateway.response_filters import is_intentional_silence_response\n        {PATCH_MARKER}\n        if self._ctx.source.platform == Platform.QQBOT and is_intentional_silence_response(final_response):\n            return final_response\n        if \"MEDIA:\" in final_response:\n""",
-    )],
-    "run_turn.py": [(
-        """        _intentional_silence = self._is_intentional_silence(agent_result, response)\n""",
-        f"""        _intentional_silence = self._is_intentional_silence(agent_result, response)\n        from gateway.response_filters import is_intentional_silence_response\n        {PATCH_MARKER}\n        if source.platform == Platform.QQBOT and is_intentional_silence_response(response):\n            _intentional_silence = True\n""",
-    ), (
-        """        if _intentional_silence and not is_machinery_display_kind(_silence_kind):\n""",
-        """        if _intentional_silence and source.platform != Platform.QQBOT and not is_machinery_display_kind(_silence_kind):\n""",
-    ), (
-        """        if _intentional_silence:\n            logger.info("Suppressing intentional silence marker for session %s", session_entry.session_id)\n            response = ""\n\n        adapter = self._delivery_adapter_for(source)\n""",
-        """        if _intentional_silence:\n            logger.info("Suppressing intentional silence marker for session %s", session_entry.session_id)\n            if source.platform == Platform.QQBOT:\n                return None\n            response = ""\n\n        adapter = self._delivery_adapter_for(source)\n""",
-    ), (
-        """        # Same silence predicate as the normal path, else this branch leaks the literal marker.\n        if self._is_intentional_silence(_delivery_result, first_response):\n""",
-        """        # Same silence predicate as the normal path, else this branch leaks the literal marker.\n        from gateway.response_filters import is_intentional_silence_response\n        _qq_silence = (\n            turn_ctx.source.platform == Platform.QQBOT\n            and is_intentional_silence_response(first_response)\n        )\n        if _qq_silence or self._is_intentional_silence(_delivery_result, first_response):\n""",
-    ), (
-        """            if is_machinery_display_kind(turn_ctx.persist_user_display_kind):\n""",
-        """            if turn_ctx.source.platform == Platform.QQBOT or is_machinery_display_kind(turn_ctx.persist_user_display_kind):\n""",
-    )],
-}
+PATCHES = {'turn_context.py': [('    original_user_message = persist_user_message if persist_user_message is not '
+                      'None else user_message\n',
+                      '    original_user_message = persist_user_message if persist_user_message is not '
+                      'None else user_message\n'
+                      '    # QQBOT_HK_OUTPUT_PATCH = "v1"\n'
+                      '    agent._qqbot_output_user_context = (turn_id, original_user_message)\n')],
+ 'turn_finalizer.py': [('    # First hook to return a string wins; None/empty leaves the text unchanged.\n',
+                        '    # QQBOT_HK_OUTPUT_PATCH = "v1"\n'
+                        '    user_context = getattr(agent, "_qqbot_output_user_context", None)\n'
+                        '    user_message = user_context[1] if user_context and user_context[0] == turn_id '
+                        'else None\n'
+                        '    # First hook to return a string wins; None/empty leaves the text '
+                        'unchanged.\n'),
+                       ('        response_text=final_response,\n'
+                        '        session_id=agent.session_id or "",\n',
+                        '        response_text=final_response,\n'
+                        '        user_message=user_message,\n'
+                        '        session_id=agent.session_id or "",\n')],
+ 'run_turn_runner.py': [('        from gateway.run import _collect_auto_append_media_tags\n'
+                         '        if "MEDIA:" in final_response:\n',
+                         '        from gateway.run import _collect_auto_append_media_tags\n'
+                         '        from gateway.response_filters import is_intentional_silence_response\n'
+                         '        QQBOT_HK_OUTPUT_PATCH = "v1"\n'
+                         '        if self._ctx.source.platform == Platform.QQBOT and '
+                         'is_intentional_silence_response(final_response):\n'
+                         '            return final_response\n'
+                         '        if "MEDIA:" in final_response:\n')],
+ 'run_turn.py': [('        # Same silence predicate as the normal path, else this branch leaks the literal '
+                  'marker.\n'
+                  '        if self._is_intentional_silence(_delivery_result, first_response):\n',
+                  '        # Same silence predicate as the normal path, else this branch leaks the literal '
+                  'marker.\n'
+                  '        from gateway.response_filters import is_intentional_silence_response\n'
+                  '        QQBOT_HK_OUTPUT_PATCH = "v1"\n'
+                  '        _qq_silence = (\n'
+                  '            turn_ctx.source.platform == Platform.QQBOT\n'
+                  '            and is_intentional_silence_response(first_response)\n'
+                  '        )\n'
+                  '        if _qq_silence or self._is_intentional_silence(_delivery_result, '
+                  'first_response):\n'),
+                 ('            if silence_allowed(turn_ctx.persist_user_display_kind, '
+                  'turn_ctx.reply_expected):\n',
+                  '            if turn_ctx.source.platform == Platform.QQBOT or '
+                  'silence_allowed(turn_ctx.persist_user_display_kind, turn_ctx.reply_expected):\n')],
+ 'run_turn_persistence.py': [('        _intentional_silence = self._is_intentional_silence(agent_result, '
+                              'response)\n',
+                              '        _intentional_silence = self._is_intentional_silence(agent_result, '
+                              'response)\n'
+                              '        from gateway.response_filters import '
+                              'is_intentional_silence_response\n'
+                              '        QQBOT_HK_OUTPUT_PATCH = "v1"\n'
+                              '        if source.platform == Platform.QQBOT and '
+                              'is_intentional_silence_response(response):\n'
+                              '            _intentional_silence = True\n'),
+                             ('        if _intentional_silence and not silence_allowed(_silence_kind, '
+                              '_silence_reply_expected):\n',
+                              '        if _intentional_silence and source.platform != Platform.QQBOT and '
+                              'not silence_allowed(_silence_kind, _silence_reply_expected):\n'),
+                             ('        if _intentional_silence:\n'
+                              '            logger.info("Suppressing intentional silence marker for session '
+                              '%s", session_entry.session_id)\n'
+                              '            response = ""\n'
+                              '\n'
+                              '        adapter = self._delivery_adapter_for(source)\n',
+                              '        if _intentional_silence:\n'
+                              '            logger.info("Suppressing intentional silence marker for session '
+                              '%s", session_entry.session_id)\n'
+                              '            if source.platform == Platform.QQBOT:\n'
+                              '                return None\n'
+                              '            response = ""\n'
+                              '\n'
+                              '        adapter = self._delivery_adapter_for(source)\n')]}
 
-VERIFY_SENTINELS = {
-    "turn_context.py": (
-        "agent._qqbot_output_user_context = (turn_id, original_user_message)",
-    ),
-    "turn_finalizer.py": (
-        'user_context = getattr(agent, "_qqbot_output_user_context", None)',
-        "user_message=user_message,",
-    ),
-    "run_turn_runner.py": (
-        "self._ctx.source.platform == Platform.QQBOT and is_intentional_silence_response(final_response)",
-    ),
-    "run_turn.py": (
-        "source.platform == Platform.QQBOT and is_intentional_silence_response(response)",
-        "if source.platform == Platform.QQBOT:\n                return None",
-        "if _qq_silence or self._is_intentional_silence",
-        "turn_ctx.source.platform == Platform.QQBOT or is_machinery_display_kind(turn_ctx.persist_user_display_kind)",
-    ),
-}
+VERIFY_SENTINELS = {'turn_context.py': ('agent._qqbot_output_user_context = (turn_id, original_user_message)',),
+ 'turn_finalizer.py': ('user_context = getattr(agent, "_qqbot_output_user_context", None)',
+                       'user_message=user_message,'),
+ 'run_turn_runner.py': ('self._ctx.source.platform == Platform.QQBOT and '
+                        'is_intentional_silence_response(final_response)',),
+ 'run_turn.py': ('if _qq_silence or self._is_intentional_silence',
+                 'turn_ctx.source.platform == Platform.QQBOT or '
+                 'silence_allowed(turn_ctx.persist_user_display_kind, turn_ctx.reply_expected)'),
+ 'run_turn_persistence.py': ('source.platform == Platform.QQBOT and '
+                             'is_intentional_silence_response(response)',
+                             'if source.platform == Platform.QQBOT:\n                return None')}
 
 
 def verify_patched_source(path: Path, source: str) -> None:

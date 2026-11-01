@@ -8,12 +8,24 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path("/opt/hermes")
-LOCK_SHA256 = "57106675dd69d7a620e60913dbf4f05311e2388f9ab140769957456f70182114"
-PINS = {"brace-expansion": {"5.0.12"}, "undici": {"6.29.1", "7.29.1"},
-        "vitest": {"4.1.12"}, "@vitest/mocker": {"4.1.12"},
-        "@xmldom/xmldom": {"0.9.12"}, "source-map-js": {"1.2.2"},
-        "sanitize-html": {"2.18.1"}, "vite": {"8.3.5"},
-        "zod": {"4.6.6"}}
+LOCK_SHA256 = 'c50acc447e56bc2aad63dd295199ac26c648ba102fd7ea517cb7ea7a1d2045a3'
+PINS = {'undici': {'7.30.1', '6.29.1'},
+ 'minipass': {'3.3.6', '7.1.3'},
+ 'brace-expansion': {'5.0.12'},
+ 'vitest': {'4.1.12'},
+ '@vitest/mocker': {'4.1.12'},
+ '@xmldom/xmldom': {'0.9.12'},
+ 'source-map-js': {'1.2.2'},
+ 'sanitize-html': {'2.18.1'},
+ 'vite': {'8.3.5'},
+ 'zod': {'4.6.6'},
+ 'fast-uri': {'3.1.9'},
+ 'follow-redirects': {'1.16.2'},
+ 'joi': {'18.3.1'},
+ 'glob': {'14.0.3'},
+ 'minimatch': {'11.0.3'},
+ '@isaacs/nonrecursive-glob-match': {'1.0.3'},
+ 'path-scurry': {'3.0.0'}}
 
 
 def main() -> None:

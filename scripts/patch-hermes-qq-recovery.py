@@ -7,7 +7,7 @@ import os
 import sys
 
 TARGET = Path('/opt/hermes/gateway/delivery_ledger.py')
-EXPECTED_SHA = '2454f213f94484ffaf4d61b24b17c0b3eec85e30c8bb5bf38d2eb159c7be7875'
+EXPECTED_SHA = 'f36088a84cdbb2abdb366684c0e8e382560babd911ee4ad6dba9e24604430f8d'
 MARKER = 'QQBOT_HK_RECOVERY_PATCH = "v1"'
 HELPER = '''QQBOT_HK_RECOVERY_PATCH = "v1"
 

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 
-EXPECTED_SHA256 = "8f5761948f135faf5f75c112fcd0a819d8c44eb0652dcbc46517563961764ac3"
+EXPECTED_SHA256 = '4b7590f92ea7a3058515bd4266b1dec1a8a07ad9e095e0d0d1e66031c98e58ad'
 MARKER = '# QQBOT_HK_PLUGIN_SCOPE_PATCH = "v1"'
 OLD = '''@contextmanager
 def _plugin_home_scope(home: Path):

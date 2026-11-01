@@ -14,12 +14,11 @@ class HermesQQOutputPatchTests(unittest.TestCase):
     def test_targets_are_the_verified_fixed_image_sha256_values(self):
         self.assertEqual(
             patcher.TARGETS,
-            {
-                "/opt/hermes/agent/turn_finalizer.py": "77ca6c9e92cb7e887fd1d0d950da417e5540a865a6866af9ad0c23b784e7f6bf",
-                "/opt/hermes/gateway/run_turn_runner.py": "216bdca083b7d2bfae481d07bd0791a76834674b3614fd4ee0aafac5c58f30db",
-                "/opt/hermes/gateway/run_turn.py": "5bdee5c82c00e02f664516f9da0af99674e23493ec2a30eff06cb03afc6718a0",
-                "/opt/hermes/agent/turn_context.py": "85f857dc3c317366d918516bc8b37a022f1020b34da0c3966a31bd289b2942e1",
-            },
+            {'/opt/hermes/agent/turn_finalizer.py': '4c1e83c6a23bcb7fc10f942306459b54b130975fdce3d76d8fd7f2432698632e',
+ '/opt/hermes/gateway/run_turn_runner.py': '04f76f4857a8ba251b014d615b814f3920fef8212ad24e69b28fbbc4fdf2df39',
+ '/opt/hermes/gateway/run_turn.py': 'd26c177a4c0edcdd8f901d4b1b7db789c1aa534d72177645afdab32af5509b7d',
+ '/opt/hermes/agent/turn_context.py': '09a6159b0301da271f1a6bdcf15d924a05dee8d7d6b9e2f4ed46e406aac0aa4e',
+ '/opt/hermes/gateway/run_turn_persistence.py': '31d1d1869b5c9d9d08b8f57bd3ccde4dd9c2844c4a2f74fae991d28842363880'},
         )
 
     def test_hash_helper_matches_standard_sha256(self):
@@ -38,7 +37,7 @@ class HermesQQOutputPatchTests(unittest.TestCase):
             'source.platform == Platform.QQBOT and is_intentional_silence_response(response)\n'
             'if source.platform == Platform.QQBOT:\n                return None\n'
             'if _qq_silence or self._is_intentional_silence\n'
-            'turn_ctx.source.platform == Platform.QQBOT or is_machinery_display_kind(turn_ctx.persist_user_display_kind)"""\n'
+            'turn_ctx.source.platform == Platform.QQBOT or silence_allowed(turn_ctx.persist_user_display_kind, turn_ctx.reply_expected)"""\n'
         )
         self.assertIs(patcher.patch_source(Path("/opt/hermes/gateway/run_turn.py"), source, "wrong"), source)
     def test_each_patch_declares_exactly_one_marker_in_replacement(self):

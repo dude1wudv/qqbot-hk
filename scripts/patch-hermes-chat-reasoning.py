@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 
 
-EXPECTED_ORIGINAL_SHA256 = "63fb637d702c77f924f599df5624be7ff3813b4b2d8d60583330b9f10614d01a"
+EXPECTED_ORIGINAL_SHA256 = '6793be69882fad0eae48f02b2fcc959c0e9718af625202b1095565a2ba1c74de'
 PATCH_MARKER = '# QQBOT_HK_CHAT_REASONING_PATCH = "v7"'
 SUB2API_BASE_URL = "http://sub2api:8080/v1"
 
@@ -19,41 +19,36 @@ class PatchError(RuntimeError):
     pass
 
 
-PATCHES = (
-    (
-        "    KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, OPENAI_COMPAT_WIRE_EFFORTS, TOKENHUB_EFFORTS, clamp_effort,\n",
-        "    DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES, KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES,\n"
-        "    OPENAI_COMPAT_WIRE_EFFORTS, TOKENHUB_EFFORTS, clamp_effort,\n",
-        "DeepSeek effort imports",
-    ),
-    (
-        "    _add_prompt_cache_key(\n",
-        f"    {PATCH_MARKER}\n"
-        "    model = str(api_kwargs.get(\"model\") or \"\").lower()\n"
-        f"    is_sub2api = str(params.get(\"base_url\") or \"\").strip().rstrip(\"/\") == \"{SUB2API_BASE_URL}\"\n"
-        "    is_sub2api_deepseek = is_sub2api and \"deepseek-v4\" in model\n"
-        "    is_sub2api_mimo = is_sub2api and model == \"xiaomi/mimo-v2.6-flash\"\n"
-        "    if is_sub2api_deepseek or is_sub2api_mimo:\n"
-        "        reasoning_config = params.get(\"reasoning_config\")\n"
-        "        thinking_off = isinstance(reasoning_config, dict) and reasoning_config.get(\"enabled\") is False\n"
-        "        _e = requested_effort(reasoning_config)\n"
-        "        if thinking_off:\n"
-        "            api_kwargs.pop(\"reasoning_effort\", None)\n"
-        "        elif is_sub2api_deepseek:\n"
-        "            api_kwargs[\"reasoning_effort\"] = clamp_effort(\n"
-        "                _e or \"high\", DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES\n"
-        "            )\n"
-        "        else:\n"
-        "            api_kwargs[\"reasoning_effort\"] = _e or \"medium\"\n"
-        "        extra_body = api_kwargs.get(\"extra_body\")\n"
-        "        if isinstance(extra_body, dict):\n"
-        "            extra_body.pop(\"reasoning\", None)\n"
-        "            if not extra_body:\n"
-        "                api_kwargs.pop(\"extra_body\", None)\n"
-        "    _add_prompt_cache_key(\n",
-        "Sub2API shared final kwargs reasoning policy",
-    ),
-)
+PATCHES = (('    GEMINI4_THINKING_LEVELS, KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, OPENAI_COMPAT_WIRE_EFFORTS, '
+  'clamp_effort,\n',
+  '    DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES, GEMINI4_THINKING_LEVELS,\n'
+  '    KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, OPENAI_COMPAT_WIRE_EFFORTS, clamp_effort,\n',
+  'DeepSeek effort imports'),
+ ('    _add_prompt_cache_key(\n',
+  '    # QQBOT_HK_CHAT_REASONING_PATCH = "v7"\n'
+  '    model = str(api_kwargs.get("model") or "").lower()\n'
+  '    is_sub2api = str(params.get("base_url") or "").strip().rstrip("/") == "http://sub2api:8080/v1"\n'
+  '    is_sub2api_deepseek = is_sub2api and "deepseek-v4" in model\n'
+  '    is_sub2api_mimo = is_sub2api and model == "xiaomi/mimo-v2.6-flash"\n'
+  '    if is_sub2api_deepseek or is_sub2api_mimo:\n'
+  '        reasoning_config = params.get("reasoning_config")\n'
+  '        thinking_off = isinstance(reasoning_config, dict) and reasoning_config.get("enabled") is False\n'
+  '        _e = requested_effort(reasoning_config)\n'
+  '        if thinking_off:\n'
+  '            api_kwargs.pop("reasoning_effort", None)\n'
+  '        elif is_sub2api_deepseek:\n'
+  '            api_kwargs["reasoning_effort"] = clamp_effort(\n'
+  '                _e or "high", DEEPSEEK_V4_EFFORTS, DEEPSEEK_V4_OVERRIDES\n'
+  '            )\n'
+  '        else:\n'
+  '            api_kwargs["reasoning_effort"] = _e or "medium"\n'
+  '        extra_body = api_kwargs.get("extra_body")\n'
+  '        if isinstance(extra_body, dict):\n'
+  '            extra_body.pop("reasoning", None)\n'
+  '            if not extra_body:\n'
+  '                api_kwargs.pop("extra_body", None)\n'
+  '    _add_prompt_cache_key(\n',
+  'Sub2API shared final kwargs reasoning policy'))
 
 
 def sha256_text(source: str) -> str:

@@ -1,0 +1,164 @@
+{
+  "upstream_commit": "bf0203a794a07aac3ff764972ab9087baa4e4f4e",
+  "base_digest": "sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d",
+  "chain": [
+    {
+      "patch": "doctor",
+      "path": "hermes_cli/doctor_config.py",
+      "input_sha256": "4fbeb3c6108509d0ede253f2ab5600960ecfe722946201a15c1dfe8a39d72c5d",
+      "output_sha256": "7ff43a755c55570fb42b85a8e1c267c678273a4ee393f8299475c86b7c7beadd"
+    },
+    {
+      "patch": "doctor",
+      "path": "hermes_cli/plugin_dev.py",
+      "input_sha256": "df7cc947fb9341271b9c85c98bd04bc04f608e7cfd86b4409e911822450a74cd",
+      "output_sha256": "cc23f04cd95a3e5a518e75041306129b6a954a5dba5003b077c71cb82e05c289"
+    },
+    {
+      "patch": "plugin-scope",
+      "path": "hermes_cli/plugins_loader.py",
+      "input_sha256": "4b7590f92ea7a3058515bd4266b1dec1a8a07ad9e095e0d0d1e66031c98e58ad",
+      "output_sha256": "fc5f66d231fada4efe69d07ed3880d35750890802c2797f7723e229aa7634aaf"
+    },
+    {
+      "patch": "audio",
+      "path": "plugins/platforms/qqbot/adapter.py",
+      "input_sha256": "725904c6affa34d490717b75e69f24e1f605ae38603fdfa1f2707c09901af2e3",
+      "output_sha256": "7ec18a27c521f38c713dcc004a91ad7b842c344f389aa9eba60895cc3712f425"
+    },
+    {
+      "patch": "chat-reasoning",
+      "path": "agent/transports/chat_completions.py",
+      "input_sha256": "6793be69882fad0eae48f02b2fcc959c0e9718af625202b1095565a2ba1c74de",
+      "output_sha256": "d72411935a185801fa2caa37551840e79f12aceb8f56d4f6f95b90c63a36f69b"
+    },
+    {
+      "patch": "aux-budget",
+      "path": "agent/auxiliary_client.py",
+      "input_sha256": "053078416f2b2d94256584a5c1ed6176bfbd3f3de88a8ca858e8257274a04bb5",
+      "output_sha256": "033955c1f66a6c0f0af22da021d00d35b579dfb071e19c039512a66301922870"
+    },
+    {
+      "patch": "qq-help",
+      "path": "gateway/slash_commands.py",
+      "input_sha256": "a6cf0f3942e1c3d1602ad30149c2ac88f1e66ea923ffc0967061ef4cbf03a193",
+      "output_sha256": "f87a64672491d5d2c9c603e89aa33c4ac59c1cbbf695e2ec7a659ba754cabed5"
+    },
+    {
+      "patch": "qq-output",
+      "path": "agent/turn_finalizer.py",
+      "input_sha256": "4c1e83c6a23bcb7fc10f942306459b54b130975fdce3d76d8fd7f2432698632e",
+      "output_sha256": "c5be09f61e55c0a82fc8f29550c55decc25ffb8728671534b16571b222566c39"
+    },
+    {
+      "patch": "qq-output",
+      "path": "gateway/run_turn_runner.py",
+      "input_sha256": "04f76f4857a8ba251b014d615b814f3920fef8212ad24e69b28fbbc4fdf2df39",
+      "output_sha256": "887c34cbacce687093735a08bcfe28b71f47b39f7c16c9dcde8656eafe97d3eb"
+    },
+    {
+      "patch": "qq-output",
+      "path": "gateway/run_turn.py",
+      "input_sha256": "d26c177a4c0edcdd8f901d4b1b7db789c1aa534d72177645afdab32af5509b7d",
+      "output_sha256": "e997f1c0fc0471085ef5651eaa64bf97e3757ce926099c157a21390ca4c7a75f"
+    },
+    {
+      "patch": "qq-output",
+      "path": "agent/turn_context.py",
+      "input_sha256": "09a6159b0301da271f1a6bdcf15d924a05dee8d7d6b9e2f4ed46e406aac0aa4e",
+      "output_sha256": "1fd47628c05a13ff9bc3144cff6b7d7c5c483e84dd1d1cfa1f96db142ceda64c"
+    },
+    {
+      "patch": "qq-output",
+      "path": "gateway/run_turn_persistence.py",
+      "input_sha256": "31d1d1869b5c9d9d08b8f57bd3ccde4dd9c2844c4a2f74fae991d28842363880",
+      "output_sha256": "a0445f90dac913b1b07ec8c416944f6425aeb84aa93a67010d01342db3ff9031"
+    },
+    {
+      "patch": "qq-recovery",
+      "path": "gateway/delivery_ledger.py",
+      "input_sha256": "f36088a84cdbb2abdb366684c0e8e382560babd911ee4ad6dba9e24604430f8d",
+      "output_sha256": "ed03201e8b7a1b9da42566c73b6145bb5fc0159ec96ad7805ffd9b5db07151a3"
+    },
+    {
+      "patch": "qq-context",
+      "path": "gateway/run_turn.py",
+      "input_sha256": "e997f1c0fc0471085ef5651eaa64bf97e3757ce926099c157a21390ca4c7a75f",
+      "output_sha256": "aeeae982010e7d87c841e503cdbb8efdf5c73e8dc04a8909e493b700828dd30d"
+    },
+    {
+      "patch": "qq-context",
+      "path": "gateway/run_turn_runner.py",
+      "input_sha256": "887c34cbacce687093735a08bcfe28b71f47b39f7c16c9dcde8656eafe97d3eb",
+      "output_sha256": "51318d28c7ad56c8a3931a8616823aed1651d979c6a92b20d2133a572a063341"
+    },
+    {
+      "patch": "qq-context",
+      "path": "gateway/slash_commands_session.py",
+      "input_sha256": "265df12e6a442a7d744d429c3acf73358070b34a0059a896c3c98f95a81b2a9d",
+      "output_sha256": "b831e593facc0b50341f45ce1d91e88e5f5eaba5da84e1588de9e48f476a55ad"
+    },
+    {
+      "patch": "qq-context",
+      "path": "agent/chat_completion_helpers.py",
+      "input_sha256": "d5ac7612af5819891293c4ec182f71a1a9e59f6aa32e98f15266a85fca64e4a8",
+      "output_sha256": "e520c85402364da7d385ae4d3fd5a7b9a37c58429108cd3a58987226381c0299"
+    },
+    {
+      "patch": "qq-context",
+      "path": "agent/chat_completion_stream_monitor.py",
+      "input_sha256": "5b03c94adbc01eefa2d5ea7cccc1548ffd46c6f57e129095d7234bc41fee763a",
+      "output_sha256": "4df9954f45d420c98248abccf21036d134b8724054ad1802656e8e8914b4ca94"
+    },
+    {
+      "patch": "qq-context",
+      "path": "agent/chat_completion_nonstream.py",
+      "input_sha256": "34d4afad0a0c7228a0518eed4a2521ba1a340f509c83784c74abceb56f1becb7",
+      "output_sha256": "81b9f9b6b299535d6383cdf9e2cc41dac88b544d6cd670a6bea3ece572c07528"
+    },
+    {
+      "patch": "qq-context",
+      "path": "agent/conversation_loop.py",
+      "input_sha256": "36dd6f02b169a544a95598dee74cb775914420dc700cc88cc946effd103b72bc",
+      "output_sha256": "76a4689a9c4ee7da543473ce051bafc034d43e2110bbcf4838418682c562b086"
+    },
+    {
+      "patch": "qq-context",
+      "path": "hermes_state_compression.py",
+      "input_sha256": "b41cb7af654c38db96b91d8bb39ea0736ab25fe638c81d100d28e663a0a34798",
+      "output_sha256": "dc732c4e70ef59d488ca30965b36eb491b3c24b12699c142856cd881248c393b"
+    },
+    {
+      "patch": "qq-context",
+      "path": "gateway/run_turn_prepare.py",
+      "input_sha256": "d78059989e24fc3c15f282c41bccd3e07913dde3f0ad457b0d7117e6b084e9d6",
+      "output_sha256": "ca327d44e7fea9787721e7daa1077e914d6e3de225345794d235c1610c9dc32d"
+    },
+    {
+      "patch": "qq-context",
+      "path": "plugins/platforms/qqbot/adapter.py",
+      "input_sha256": "7ec18a27c521f38c713dcc004a91ad7b842c344f389aa9eba60895cc3712f425",
+      "output_sha256": "5ec3e67919d3ed7c5fb380845a4aa82ac5c2779ec8058da318dcd2c2f1cab668"
+    },
+    {
+      "patch": "model-routing",
+      "path": "gateway/run_turn_runner.py",
+      "input_sha256": "51318d28c7ad56c8a3931a8616823aed1651d979c6a92b20d2133a572a063341",
+      "output_sha256": "5b4a3ddd1b557c4d27eea54f8a648f164d577b7449e41e5140e1bc82bb71b259"
+    },
+    {
+      "patch": "model-routing",
+      "path": "agent/chat_completion_helpers.py",
+      "input_sha256": "e520c85402364da7d385ae4d3fd5a7b9a37c58429108cd3a58987226381c0299",
+      "output_sha256": "2c1f595bcb28aa52021a2cdfa0a262ef359d2e323465d780a5684fba069ecaa3"
+    },
+    {
+      "patch": "model-routing",
+      "path": "agent/conversation_loop.py",
+      "input_sha256": "76a4689a9c4ee7da543473ce051bafc034d43e2110bbcf4838418682c562b086",
+      "output_sha256": "de646f7ae485b654703570ff60fa2994bc78457e70730e1c36ea0416dd3957a7"
+    }
+  ],
+  "dependency_lock_sha256": "c50acc447e56bc2aad63dd295199ac26c648ba102fd7ea517cb7ea7a1d2045a3",
+  "dependency_audit": "npm@11.17.0 package-lock-only: total=0 exit=0"
+}

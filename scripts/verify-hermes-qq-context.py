@@ -19,10 +19,11 @@ def require(condition: bool, message: str) -> None:
 
 def check_patched_source(root: Path) -> None:
     seams = {
-        "gateway/run_turn.py": ("context_boundary", "after_turn", "await notify_turn(self, 'started'", "await notify_turn(self, 'finished'"),
+        "gateway/run_turn_prepare.py": ("context_boundary",),
+        "gateway/run_turn.py": ("after_turn", "await notify_turn(self, 'started'", "await notify_turn(self, 'finished'"),
         "gateway/run_turn_runner.py": ("agent.compression_enabled = False", "_micro_compact_enabled = False"),
         "agent/conversation_loop.py": ("trim_images(s.messages)", "trim_images(s.api_messages)"),
-        "gateway/platforms/qqbot/adapter.py": ("limit_attachments(attachments)", "image_urls[-5:]"),
+        "plugins/platforms/qqbot/adapter.py": ("limit_attachments(attachments)", "image_urls[-5:]"),
         "hermes_state_compression.py": ("expected_parent_watermark", "QQ compression parent changed"),
         "gateway/slash_commands_session.py": ("return await manual_compress", "await cancel_context_scope(self, source, session_key)"),
         "agent/chat_completion_helpers.py": ("kwargs = request_policy(agent, kwargs)", "start_request(self)"),

@@ -84,6 +84,7 @@ async def verify_queued_followup_boundary() -> None:
         _status_thread_metadata={},
         mute_notification_reply=False,
         persist_user_display_kind="user",
+        reply_expected=True,
     )
     silent = {"final_response": "[SILENT]", "failed": True}
     await harness._run_agent_deliver_first_response(turn_ctx, None, silent, silent, None)
@@ -97,7 +98,7 @@ async def verify_queued_followup_boundary() -> None:
 
 async def verify_first_bubble_quote() -> None:
     from gateway.config import PlatformConfig
-    from gateway.platforms.qqbot.adapter import QQAdapter
+    from plugins.platforms.qqbot.adapter import QQAdapter
 
     adapter = QQAdapter(PlatformConfig(enabled=True, extra={"markdown_support": False}))
     adapter._chat_type_map["group-smoke"] = "group"
@@ -122,7 +123,7 @@ async def verify_first_bubble_quote() -> None:
 
 async def verify_native_receipt_delivery() -> None:
     from gateway.config import PlatformConfig
-    from gateway.platforms.qqbot.adapter import QQAdapter
+    from plugins.platforms.qqbot.adapter import QQAdapter
     from smart_group_qq.store import Store
     from smart_group_qq.response import ReplyRegistry
     from smart_group_qq.delivery import LocalReplies

@@ -96,6 +96,7 @@ class NativeSandbox:
         signature.file_signature = lambda stat: (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
         utils.file_signature = signature.file_signature
         utils.env_var_enabled = lambda name: bool(os.getenv(name))
+        utils.fast_safe_load = lambda *args, **kwargs: {}
         sys.modules["utils"] = utils
         sys.modules["utils.file_signature"] = signature
 

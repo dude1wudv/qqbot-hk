@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 from gateway.platforms.base import PlatformConfig
-from gateway.platforms.qqbot.adapter import QQAdapter, QQBOT_HK_AUDIO_PATCH
+from plugins.platforms.qqbot.adapter import QQAdapter, QQBOT_HK_AUDIO_PATCH
 
 
 def require(condition: bool, message: str) -> None:

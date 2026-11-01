@@ -1,8 +1,10 @@
 FROM node@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS trusted-node
-FROM nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
+FROM nousresearch/hermes-agent@sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d
 
 LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
-      io.qqbot-hk.hermes-base-digest="sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7" \
+      io.qqbot-hk.hermes-base-digest="sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d" \
+      io.qqbot-hk.hermes-version="0.22.5" \
+      io.qqbot-hk.hermes-revision="bf0203a794a07aac3ff764972ab9087baa4e4f4e" \
       io.qqbot-hk.audio-patch="v2" \
       io.qqbot-hk.chat-reasoning-patch="v7" \
       io.qqbot-hk.model-routing-patch="v1" \
@@ -14,7 +16,7 @@ LABEL org.opencontainers.image.title="qqbot-hk Hermes policy image" \
       io.qqbot-hk.doctor-patch="v3" \
       io.qqbot-hk.plugin-scope-patch="v1" \
       io.qqbot-hk.playwright="1.64.0" \
-      io.qqbot-hk.dependency-pins="2026-10-22"
+      io.qqbot-hk.dependency-pins="2026-11-01"
 
 # Preserve the CA/Node remediation already applied to the live QQ container.
 COPY --from=trusted-node /usr/local/bin/node /usr/local/bin/node
@@ -24,7 +26,8 @@ LABEL security.emudhra.mitigated="2026-10-22"
 
 # Python terminal tasks need their own Playwright package, alongside Hermes'
 # existing Node browser tools. Keep both browser revisions and the trusted Node.
-ENV PLAYWRIGHT_NODEJS_PATH=/usr/local/bin/node \
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright \
+    PLAYWRIGHT_NODEJS_PATH=/usr/local/bin/node \
     PLAYWRIGHT_SKIP_BROWSER_GC=1
 COPY --chmod=0644 overrides/hermes-playwright-requirements.txt /tmp/hermes-playwright-requirements.txt
 # The base's 14-day cutoff hides the reviewed 1.64.0 release; scope the fixed

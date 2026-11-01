@@ -43,7 +43,7 @@ qq_output_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqb
 qq_recovery_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.qq-recovery-patch"}}' "$image_id")"
 doctor_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.doctor-patch"}}' "$image_id")"
 dependency_pins_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.dependency-pins"}}' "$image_id")"
-test "$base_digest_label" = "sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7"
+test "$base_digest_label" = "sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d"
 test "$audio_patch_label" = "v2"
 test "$chat_reasoning_patch_label" = "v7"
 test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.model-routing-patch"}}' "$image_id")" = "v1"
@@ -53,10 +53,10 @@ test "$qq_help_patch_label" = "v1"
 test "$qq_output_patch_label" = "v1"
 test "$qq_recovery_patch_label" = "v1"
 test "$doctor_patch_label" = "v3"
-test "$dependency_pins_label" = "2026-10-22"
+test "$dependency_pins_label" = "2026-11-01"
 test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.plugin-scope-patch"}}' "$image_id")" = "v1"
 test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.playwright"}}' "$image_id")" = "1.64.0"
-test "$(docker image inspect -f '{{index .Config.Labels "security.emudhra.mitigated"}}' "$image_id")" = "2026-10-22"
+test "$(docker image inspect -f '{{index .Config.Labels "security.emudhra.mitigated"}}' "$image_id")" = "2026-11-01"
 docker exec hermes-qqbot python /opt/hermes/patch-hermes-trust-store.py --check
 docker run --rm --init --network none --entrypoint python "$image_id" /opt/hermes/verify-hermes-plugin-scope.py
 docker exec --user 10000:10000 hermes-qqbot python /opt/hermes/verify-hermes-playwright.py
@@ -420,7 +420,7 @@ if "QQ_SANDBOX" in env:
 if env.get("QQ_ALLOW_ALL_USERS", "").lower() in {"true", "1", "yes"}:
     raise SystemExit("QQ allow-all bypass must be disabled while pairing is active")
 
-from gateway.platforms.qqbot.constants import API_BASE
+from plugins.platforms.qqbot.constants import API_BASE
 if API_BASE.rstrip("/") != "https://api.sgroup.qq.com":
     raise SystemExit("QQ API base is not the production gateway")
 
@@ -503,7 +503,7 @@ with sqlite3.connect(db_path) as connection:
     if not required_indexes.issubset(indexes):
         raise SystemExit("member/poll indexes are incomplete")
 from gateway.config import Platform
-from gateway.platforms.qqbot.adapter import QQAdapter
+from plugins.platforms.qqbot.adapter import QQAdapter
 from gateway.run import GatewayRunner, load_gateway_config_for_runner
 from gateway.session import SessionSource
 
