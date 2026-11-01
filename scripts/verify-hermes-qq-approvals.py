@@ -3,7 +3,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
-import yaml
+import hermes_yaml as yaml
 from tools import approval, approval_context
 
 config = yaml.safe_load(Path('/opt/hermes/qqbot-hk/hermes-config.yaml').read_text())

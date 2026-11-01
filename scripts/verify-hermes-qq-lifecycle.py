@@ -12,7 +12,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import yaml
+import hermes_yaml as yaml
 
 
 def require(condition, message):

@@ -44,8 +44,15 @@ class ScheduleConfigError(ValueError):
 
 def _yaml_load(path: Path) -> Any:
     try:
-        import yaml
-    except ImportError as exc:  # pragma: no cover - the Hermes image includes PyYAML
+        try:
+            import hermes_yaml as yaml
+        except ModuleNotFoundError as exc:
+            if exc.name != "hermes_yaml":
+                raise
+            # Standalone config tests have PyYAML; Hermes 0.22.5 provides its
+            # own YAML 1.1 API on ruamel and does not install PyYAML.
+            import yaml
+    except ImportError as exc:  # pragma: no cover - both parsers are unavailable
         raise ScheduleConfigError("YAML support is unavailable") from exc
 
     try:

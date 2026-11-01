@@ -150,7 +150,7 @@ plugin = next((item for item in items if item.get("name") == "smart_group_qq"), 
 if plugin is None or plugin.get("status") not in {"enabled", "loaded"}:
     raise SystemExit("smart_group_qq is not enabled")
 
-import yaml
+import hermes_yaml as yaml
 config = yaml.safe_load(Path("/opt/data/config.yaml").read_text(encoding="utf-8")) or {}
 model_config = config.get("model")
 if not isinstance(model_config, Mapping):

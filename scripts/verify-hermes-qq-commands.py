@@ -8,7 +8,7 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import yaml
+import hermes_yaml as yaml
 
 
 # Import the shipped plugin, never a stand-in package. No connect() is called.

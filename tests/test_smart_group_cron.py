@@ -4,6 +4,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +96,15 @@ class SmartGroupCronTests(unittest.TestCase):
 
     def reconcile(self, api):
         return cron_reconciler.reconcile(data_dir=self.data, cron_api=api)
+
+    def test_hermes_yaml_api_is_used_without_pyyaml_in_the_runtime(self):
+        import yaml
+
+        parser = SimpleNamespace(safe_load=Mock(wraps=yaml.safe_load), YAMLError=yaml.YAMLError)
+        with patch.dict(sys.modules, {"hermes_yaml": parser, "yaml": None}):
+            result = self.reconcile(FakeCronJobs())
+        self.assertEqual(result["created"], 2)
+        parser.safe_load.assert_called_once()
 
     def test_idempotent_and_uses_one_owned_job_per_unique_group(self):
         api = FakeCronJobs()

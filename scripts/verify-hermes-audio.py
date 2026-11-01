@@ -8,7 +8,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-import yaml
+import hermes_yaml as yaml
 
 from gateway.platforms.base import PlatformConfig
 from plugins.platforms.qqbot.adapter import QQAdapter, QQBOT_HK_AUDIO_PATCH
