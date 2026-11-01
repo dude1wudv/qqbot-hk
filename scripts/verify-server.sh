@@ -514,34 +514,47 @@ from gateway.session import SessionSource
 # Exercise the real adapter and central GatewayRunner gates with a synthetic source.
 # The profile loader resolves secrets in the normal scope, but no secret is printed.
 loaded_config = load_gateway_config_for_runner()
-qq_config = loaded_config.platforms[Platform.QQBOT]
-runner = GatewayRunner(loaded_config)
-adapter = QQAdapter(qq_config)
-runner.adapters[Platform.QQBOT] = adapter
-unknown_group = "synthetic-group-not-in-env"
-group_source = SessionSource(
-    Platform.QQBOT,
-    unknown_group,
-    chat_type="group",
-    user_id="synthetic-member",
-)
-dm_source = SessionSource(
-    Platform.QQBOT,
-    "synthetic-unapproved-dm",
-    chat_type="dm",
-    user_id="synthetic-unapproved-dm",
-)
-if unknown_group in groups:
-    raise SystemExit("synthetic group unexpectedly appears in QQ_SCHEDULE_GROUPS")
-if adapter._is_group_allowed(unknown_group, group_source.user_id) is not True:
-    raise SystemExit("QQ adapter wildcard did not authorize the synthetic group")
-if runner._is_user_authorized(group_source) is not True:
-    raise SystemExit("GatewayRunner did not authorize the synthetic group")
-if adapter._is_dm_allowed(dm_source.user_id) is not False:
-    raise SystemExit("QQ adapter admitted an unapproved DM")
-if runner._is_user_authorized(dm_source) is not False:
-    raise SystemExit("GatewayRunner admitted an unapproved DM")
-print("QQ_AUTH_SMOKE=passed GROUP=adapter_acl+central_authorized DM=unapproved_refused")
+import tempfile
+from unittest.mock import patch
+from hermes_constants import set_hermes_home_override, reset_hermes_home_override
+
+# Constructor probes publish status and open a SessionDB in Hermes 0.22.
+# Keep their writes in a disposable home while testing the loaded production ACL.
+with tempfile.TemporaryDirectory(prefix="qq-auth-probe-") as probe_home:
+    with patch.dict(os.environ, {"HERMES_HOME": probe_home, "HOME": probe_home}):
+        home_token = set_hermes_home_override(probe_home)
+        try:
+            loaded_config.sessions_dir = Path(probe_home) / "sessions"
+            qq_config = loaded_config.platforms[Platform.QQBOT]
+            runner = GatewayRunner(loaded_config)
+            adapter = QQAdapter(qq_config)
+            runner.adapters[Platform.QQBOT] = adapter
+            unknown_group = "synthetic-group-not-in-env"
+            group_source = SessionSource(
+                Platform.QQBOT,
+                unknown_group,
+                chat_type="group",
+                user_id="synthetic-member",
+            )
+            dm_source = SessionSource(
+                Platform.QQBOT,
+                "synthetic-unapproved-dm",
+                chat_type="dm",
+                user_id="synthetic-unapproved-dm",
+            )
+            if unknown_group in groups:
+                raise SystemExit("synthetic group unexpectedly appears in QQ_SCHEDULE_GROUPS")
+            if adapter._is_group_allowed(unknown_group, group_source.user_id) is not True:
+                raise SystemExit("QQ adapter wildcard did not authorize the synthetic group")
+            if runner._is_user_authorized(group_source) is not True:
+                raise SystemExit("GatewayRunner did not authorize the synthetic group")
+            if adapter._is_dm_allowed(dm_source.user_id) is not False:
+                raise SystemExit("QQ adapter admitted an unapproved DM")
+            if runner._is_user_authorized(dm_source) is not False:
+                raise SystemExit("GatewayRunner admitted an unapproved DM")
+            print("QQ_AUTH_SMOKE=passed GROUP=adapter_acl+central_authorized DM=unapproved_refused")
+        finally:
+            reset_hermes_home_override(home_token)
 
 
 gateway = json.loads(Path("/opt/data/gateway_state.json").read_text(encoding="utf-8"))
