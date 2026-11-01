@@ -1,8 +1,9 @@
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
 
 import sys
 
@@ -92,6 +93,49 @@ def discovery_payload(event_type, *, group="unknown-group", member="member-1"):
             "author": {"member_openid": member},
         },
     }
+
+
+class AdapterResolutionTests(TestCase):
+    def test_new_official_bundled_adapter_is_preferred(self):
+        with patch.object(qq_observer.importlib, "import_module", return_value=SimpleNamespace(QQAdapter=FakeQQAdapter)) as importer:
+            self.assertIs(qq_observer._resolve_adapter_class(), FakeQQAdapter)
+        importer.assert_called_once_with("plugins.platforms.qqbot.adapter")
+
+    def test_both_legacy_layouts_remain_optional_fallbacks(self):
+        for target in ("gateway.platforms.qqbot", "gateway.platforms.qqbot.adapter"):
+            with self.subTest(target=target):
+                def import_adapter(name):
+                    if name == target:
+                        return SimpleNamespace(QQBotAdapter=FakeQQAdapter)
+                    raise ModuleNotFoundError(f"No module named {name}", name=name)
+
+                with patch.object(qq_observer.importlib, "import_module", side_effect=import_adapter):
+                    self.assertIs(qq_observer._resolve_adapter_class(), FakeQQAdapter)
+
+    def test_missing_parent_package_can_fall_back(self):
+        with patch.object(qq_observer.importlib, "import_module", side_effect=[
+            ModuleNotFoundError("No module named plugins.platforms", name="plugins.platforms"),
+            SimpleNamespace(QQAdapter=FakeQQAdapter),
+        ]):
+            self.assertIs(qq_observer._resolve_adapter_class(), FakeQQAdapter)
+
+    def test_installed_adapter_import_errors_are_not_hidden_by_legacy_fallback(self):
+        for error in (ModuleNotFoundError("Missing adapter dependency", name="aiohttp"),
+                      ImportError("Installed adapter API mismatch"), RuntimeError("Broken adapter")):
+            with self.subTest(error=type(error).__name__):
+                with patch.object(qq_observer.importlib, "import_module", side_effect=error) as importer:
+                    with self.assertRaises(type(error)) as caught:
+                        qq_observer._resolve_adapter_class()
+                self.assertIs(caught.exception, error)
+                self.assertEqual(importer.call_count, 1)
+
+    def test_no_installed_adapter_fails_clearly(self):
+        def missing(name):
+            raise ModuleNotFoundError(f"No module named {name}", name=name)
+
+        with patch.object(qq_observer.importlib, "import_module", side_effect=missing):
+            with self.assertRaisesRegex(ImportError, "Hermes QQAdapter is unavailable"):
+                qq_observer._resolve_adapter_class()
 
 
 class ObserverTests(IsolatedAsyncioTestCase):

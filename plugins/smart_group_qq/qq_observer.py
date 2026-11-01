@@ -59,10 +59,18 @@ def _resolve_adapter_class() -> type[Any]:
     """Return the fixed Hermes QQ adapter without importing it at module load."""
 
     errors: list[Exception] = []
-    for module_name in ("gateway.platforms.qqbot", "gateway.platforms.qqbot.adapter"):
+    for module_name in (
+        "plugins.platforms.qqbot.adapter",  # Official bundled adapter since Hermes 0.22.
+        "gateway.platforms.qqbot",
+        "gateway.platforms.qqbot.adapter",
+    ):
         try:
             module = importlib.import_module(module_name)
-        except Exception as exc:  # pragma: no cover - exercised by non-Hermes hosts
+        except ModuleNotFoundError as exc:
+            # An absent optional layout permits the old path. A dependency
+            # failure inside an installed adapter must remain visible.
+            if exc.name is None or not (module_name == exc.name or module_name.startswith(exc.name + ".")):
+                raise
             errors.append(exc)
             continue
         for class_name in ("QQAdapter", "QQBotAdapter"):

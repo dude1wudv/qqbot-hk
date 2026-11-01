@@ -44,6 +44,8 @@ qq_recovery_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.q
 doctor_patch_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.doctor-patch"}}' "$image_id")"
 dependency_pins_label="$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.dependency-pins"}}' "$image_id")"
 test "$base_digest_label" = "sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d"
+test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.hermes-version"}}' "$image_id")" = "0.22.5"
+test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.hermes-revision"}}' "$image_id")" = "bf0203a794a07aac3ff764972ab9087baa4e4f4e"
 test "$audio_patch_label" = "v2"
 test "$chat_reasoning_patch_label" = "v7"
 test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.model-routing-patch"}}' "$image_id")" = "v1"
@@ -56,7 +58,8 @@ test "$doctor_patch_label" = "v3"
 test "$dependency_pins_label" = "2026-11-01"
 test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.plugin-scope-patch"}}' "$image_id")" = "v1"
 test "$(docker image inspect -f '{{index .Config.Labels "io.qqbot-hk.playwright"}}' "$image_id")" = "1.64.0"
-test "$(docker image inspect -f '{{index .Config.Labels "security.emudhra.mitigated"}}' "$image_id")" = "2026-11-01"
+# Date of the original remediation; the live check below revalidates its result.
+test "$(docker image inspect -f '{{index .Config.Labels "security.emudhra.mitigated"}}' "$image_id")" = "2026-10-22"
 docker exec hermes-qqbot python /opt/hermes/patch-hermes-trust-store.py --check
 docker run --rm --init --network none --entrypoint python "$image_id" /opt/hermes/verify-hermes-plugin-scope.py
 docker exec --user 10000:10000 hermes-qqbot python /opt/hermes/verify-hermes-playwright.py
