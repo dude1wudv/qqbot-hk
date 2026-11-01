@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 MARKER = '# QQBOT_HK_MODEL_ROUTING_PATCH = "v1"'
-FALLBACK_SIGNATURE = 'def try_activate_fallback(agent, reason: "FailoverReason | None" = None, reset_at=None) -> bool:\n'
+FALLBACK_SIGNATURE = 'def try_activate_fallback(agent, reason: FailoverReason | None = None, reset_at=None) -> bool:\n'
 
 PATCHES = {'gateway/run_turn_runner.py': ('51318d28c7ad56c8a3931a8616823aed1651d979c6a92b20d2133a572a063341',
                                 [('        self._wire_turn_agent_callbacks(agent, turn_route, '
@@ -20,9 +20,9 @@ PATCHES = {'gateway/run_turn_runner.py': ('51318d28c7ad56c8a3931a8616823aed1651d
                                   '        configure_turn(agent, runner, source=ctx.source, '
                                   'session_key=ctx.session_key)\n')]),
  'agent/chat_completion_helpers.py': ('e520c85402364da7d385ae4d3fd5a7b9a37c58429108cd3a58987226381c0299',
-                                      [('def try_activate_fallback(agent, reason: "FailoverReason | None" = '
+                                      [('def try_activate_fallback(agent, reason: FailoverReason | None = '
                                         'None, reset_at=None) -> bool:\n',
-                                        'def try_activate_fallback(agent, reason: "FailoverReason | None" = '
+                                        'def try_activate_fallback(agent, reason: FailoverReason | None = '
                                         'None, reset_at=None) -> bool:\n'
                                         '    from qqbot_model_routing import guarded_fallback\n'
                                         '    return guarded_fallback(agent, reason, reset_at, '
@@ -30,7 +30,7 @@ PATCHES = {'gateway/run_turn_runner.py': ('51318d28c7ad56c8a3931a8616823aed1651d
                                         '\n'
                                         '\n'
                                         'def _qq_native_try_activate_fallback(agent, reason: '
-                                        '"FailoverReason | None" = None, reset_at=None) -> bool:\n'),
+                                        'FailoverReason | None = None, reset_at=None) -> bool:\n'),
                                        ('    try:\n'
                                         '        # Re-resolve reasoning_config for the new fallback model '
                                         '(Closes #21256). Wrapped in try/except\n',

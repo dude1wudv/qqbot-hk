@@ -280,10 +280,14 @@ class RoutingPatchTests(unittest.TestCase):
             PATCH.patch_source(result.replace("return 2", "return 3"), digest, anchors)
 
     def test_real_patched_fallback_wrapper_delegates_once_and_blocks_after_tool(self):
-        old, new = PATCH.PATCHES["agent/chat_completion_helpers.py"][1][0]
-        source = old + "    agent.native_calls += 1\n    agent.model = 'deepseek/deepseek-v4.1-flash'\n    return True\n"
-        namespace = {}
-        exec(compile(source.replace(old, new, 1), "native_fallback_fixture.py", "exec"), namespace)
+        # Literal from v0.22.5, independent of the configured replacement: a
+        # quoted annotation here would miss the real upstream source seam.
+        signature = "def try_activate_fallback(agent, reason: FailoverReason | None = None, reset_at=None) -> bool:\n"
+        source = signature + "    agent.native_calls += 1\n    agent.model = 'deepseek/deepseek-v4.1-flash'\n    return True\n"
+        replacement = PATCH.PATCHES["agent/chat_completion_helpers.py"][1][0]
+        patched = PATCH.patch_source(source, hashlib.sha256(source.encode()).hexdigest(), [replacement])
+        namespace = {"FailoverReason": Reason}
+        exec(compile(patched, "native_fallback_fixture.py", "exec"), namespace)
         value = configure(agent(native_calls=0))
         fallback = namespace["try_activate_fallback"]
         self.assertTrue(fallback(value, Reason.timeout))
