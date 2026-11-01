@@ -49,6 +49,7 @@ RUN python -c "import os, sys; from pm import uv_launcher; uv = uv_launcher('uv'
 COPY --chmod=0755 scripts/patch-hermes-dependencies.py /tmp/patch-hermes-dependencies.py
 COPY --chmod=0644 overrides/hermes-package-lock.json /tmp/hermes-package-lock.json
 RUN python /tmp/patch-hermes-dependencies.py --lockfile /tmp/hermes-package-lock.json \
+    && test "$(npm --version)" = "12.0.2" \
     && npm ci --prefix /opt/hermes --ignore-scripts --no-audit --no-fund \
     && rm -f /tmp/patch-hermes-dependencies.py /tmp/hermes-package-lock.json
 

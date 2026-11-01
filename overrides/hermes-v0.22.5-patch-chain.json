@@ -159,6 +159,6 @@
       "output_sha256": "de646f7ae485b654703570ff60fa2994bc78457e70730e1c36ea0416dd3957a7"
     }
   ],
-  "dependency_lock_sha256": "c50acc447e56bc2aad63dd295199ac26c648ba102fd7ea517cb7ea7a1d2045a3",
-  "dependency_audit": "npm@11.17.0 package-lock-only: total=0 exit=0"
+  "dependency_lock_sha256": "5aef655b889628002cc870a1e339b50afe688e1d67f71d5f0becfa5d51d6e0d8",
+  "dependency_audit": "npm@12.0.2 strict lock; root/web/ui-tui/all-workspaces audits: total=0 exit=0"
 }

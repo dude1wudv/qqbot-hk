@@ -14,12 +14,16 @@ CA/Node trust remediation, Playwright 1.64.0 with the fixed Node executable, gro
 
 ## Dependencies
 
-The 0.22.5 package tree was regenerated through `npm@11.17.0` with the proxy. Exact security overrides include `undici` 6.29.1/7.30.1, `fast-uri` 3.1.9, `follow-redirects` 1.16.2, `joi` 18.3.1, `glob` 14.0.3, `minimatch` 11.0.3, `@isaacs/nonrecursive-glob-match` 1.0.3, `zod` 4.6.6, `vite` 8.3.5 and the previously reviewed pins. Package-lock-only `npm audit` reports 0 vulnerabilities (exit 0) for the regenerated workspace. `overrides/hermes-package-lock.json` contains that generated lock and the chain records its SHA-256.
+The initial npm 11 lock was generated with legacy peer resolution and failed the real base image's npm 12.0.2 frozen install. It has been replaced by a strict `npm@12.0.2 install --package-lock-only --ignore-scripts --no-audit --no-fund` lock, generated through the required proxy without legacy/force flags. The original upstream manifests plus declared security edits were used; Babel 7.29.7 at the root and Babel 8.0.1 in desktop/web now have separate correct placements. The Dockerfile checks the immutable base's npm version before its unchanged frozen `npm ci`.
+
+Exact security overrides include `undici` 6.29.1/7.30.1, `fast-uri` 3.1.9, `follow-redirects` 1.16.2, `joi` 18.3.1, `glob` 14.0.3, `minimatch` 11.0.3, `@isaacs/nonrecursive-glob-match` 1.0.3, `zod` 4.6.6, `vite` 8.3.5 and the previously reviewed pins. All installed-version allowlists remain unchanged. Package-lock-only `npm audit` reports 0 vulnerabilities (exit 0) independently for root, web, ui-tui and all workspaces. `overrides/hermes-package-lock.json` contains the strict 1,557-entry lock and the chain records SHA-256 `5aef655b889628002cc870a1e339b50afe688e1d67f71d5f0becfa5d51d6e0d8`. The upstream 14-day age policy was retained during resolution with only reviewed security-package exceptions.
 
 ## Verification
 
 - `python -m unittest discover -s tests -p 'test_hermes_*patch.py' -q`: 41/41 passed after fixture and patch-chain updates.
 - `python -m unittest discover -s tests -q`: **534/534 passed**, exit 0, 53.3 seconds. This includes the updated plugin-scope/dependency/model-routing fixtures against the 0.22.5 seams.
+- npm 12.0.2 frozen `ci --dry-run --ignore-scripts --no-audit --no-fund`: exit 0 against the strict regenerated lock. This validates lock consistency, not a Linux installed tree; server isolated build remains required.
+- Strict-lock follow-up: dependency patch tests **3/3**, exit 0; replay from the four original upstream manifests and original lock produces exactly the manifests and strict lock used by the npm checks. Frozen dry-run also passes with the base's `npm_config_install_links=false`, exit 0.
 - Docker build and image verification remain pending because Docker Desktop is unavailable. Server-side isolated build must execute `docker build --progress=plain`, all Dockerfile `verify-*` scripts, `plugins doctor --ci`, four npm audits, and UID10000 Playwright before deployment.
 
 This repository is a candidate source update only; no commit, push, SSH, or deployment was performed.
