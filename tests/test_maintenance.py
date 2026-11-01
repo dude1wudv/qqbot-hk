@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 from pathlib import Path
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
@@ -49,7 +50,11 @@ class MaintenanceTests(unittest.TestCase):
         event, start = ctx.subscribe.call_args.args
         self.assertEqual(event, "smart_group_qq:gateway_startup")
         api = ModuleType("hermes_cli.plugins")
-        api.get_plugin_subscriptions = lambda: {event: [start]}
+        manager = SimpleNamespace(
+            _event_lock=threading.RLock(),
+            _subscriptions={event: [SimpleNamespace(owner="smart_group_qq", callback=start)]},
+        )
+        api.get_plugin_manager = lambda: manager
 
         async def run():
             real_sleep = asyncio.sleep
@@ -88,10 +93,39 @@ class MaintenanceTests(unittest.TestCase):
 
     def test_missing_subscription_is_visible(self):
         api = ModuleType("hermes_cli.plugins")
-        api.get_plugin_subscriptions = lambda: {}
+        api.get_plugin_manager = lambda: SimpleNamespace(
+            _event_lock=threading.RLock(), _subscriptions={},
+        )
         with patch.dict(sys.modules, {"hermes_cli.plugins": api}):
             with self.assertRaisesRegex(RuntimeError, "subscription unavailable"):
                 asyncio.run(hook.handle("gateway:startup", {}))
+
+    def test_only_active_owner_subscription_runs_on_gateway_loop(self):
+        api = ModuleType("hermes_cli.plugins")
+        observed = []
+        event = "smart_group_qq:gateway_startup"
+        manager = SimpleNamespace(_event_lock=threading.RLock(), _subscriptions={})
+
+        async def first(context):
+            observed.append(("first", asyncio.get_running_loop(), context))
+            manager._subscriptions[event].remove(second)
+
+        second = SimpleNamespace(owner="smart_group_qq", callback=lambda _: observed.append("removed"))
+        manager._subscriptions[event] = [
+            SimpleNamespace(owner="other", callback=lambda _: observed.append("other")),
+            SimpleNamespace(owner="smart_group_qq", callback=first),
+            second,
+        ]
+        api.get_plugin_manager = lambda: manager
+
+        async def run():
+            loop = asyncio.get_running_loop()
+            context = {"synthetic": True}
+            await hook.handle("gateway:startup", context)
+            self.assertEqual(observed, [("first", loop, context)])
+
+        with patch.dict(sys.modules, {"hermes_cli.plugins": api}):
+            asyncio.run(run())
 
 
 if __name__ == "__main__":

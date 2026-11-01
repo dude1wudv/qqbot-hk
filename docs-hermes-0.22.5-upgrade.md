@@ -30,3 +30,9 @@ Exact security overrides include `undici` 6.29.1/7.30.1, `fast-uri` 3.1.9, `foll
 - Docker build and image verification remain pending because Docker Desktop is unavailable. Server-side isolated build must execute `docker build --progress=plain`, all Dockerfile `verify-*` scripts, `plugins doctor --ci`, four npm audits, and UID10000 Playwright before deployment.
 
 This repository is a candidate source update only; no commit, push, SSH, or deployment was performed.
+
+## Final runtime compatibility fixes
+
+The startup bridge now snapshots owner-tagged subscriptions from the active profile plugin manager and awaits callbacks on the gateway loop. Removed subscriptions are rechecked by identity before invocation. The former get_plugin_subscriptions API does not exist in 0.22.5.
+
+The immutable server base omits apps/desktop, while its full npm lock retains that workspace. Four pinned lock paths (fast-uri, follow-redirects, joi and nested node-gyp/undici) are desktop-only and absent from the installed tree. Their exact safe locked versions remain mandatory; an exemption additionally requires the desktop manifest to be absent and the path to be unreachable from every deployed workspace dependency graph. Missing runtime dependencies still fail. All installed versions, exact lock digest and four zero-finding npm audits remain required. The real isolated installed-tree check passed with exactly four such absent paths. Three scope regressions and three maintenance tests passed.

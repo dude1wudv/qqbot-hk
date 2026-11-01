@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 
 ROOT = Path("/opt/hermes")
@@ -27,19 +27,68 @@ PINS = {'undici': {'7.30.1', '6.29.1'},
  '@isaacs/nonrecursive-glob-match': {'1.0.3'},
  'path-scurry': {'3.0.0'}}
 
+DESKTOP_ONLY_PATHS = {
+    "node_modules/fast-uri",
+    "node_modules/follow-redirects",
+    "node_modules/joi",
+    "node_modules/node-gyp/node_modules/undici",
+}
 
-def main() -> None:
-    content = (ROOT / "package-lock.json").read_bytes()
-    if hashlib.sha256(content).hexdigest() != LOCK_SHA256:
-        raise SystemExit("Hermes security lockfile checksum mismatch")
-    lock = json.loads(content)
+
+def deployed_dependency_paths(lock, root):
+    packages = lock["packages"]
+    pending = [
+        name for name in packages
+        if "node_modules" not in PurePosixPath(name).parts
+        and (root / name / "package.json").is_file()
+    ]
     found = set()
+    while pending:
+        name = pending.pop()
+        if name in found:
+            continue
+        found.add(name)
+        data = packages[name]
+        if data.get("link"):
+            target = data["resolved"]
+            if target in packages:
+                pending.append(target)
+            continue
+        sections = ["dependencies", "optionalDependencies", "peerDependencies"]
+        if "node_modules" not in PurePosixPath(name).parts:
+            sections.append("devDependencies")
+        for section in sections:
+            for dependency in data.get(section, {}):
+                prefix = PurePosixPath(name)
+                while True:
+                    candidate = str(prefix / "node_modules" / dependency)
+                    if candidate in packages:
+                        pending.append(candidate)
+                        break
+                    if prefix == PurePosixPath("."):
+                        break
+                    prefix = prefix.parent
+    return found
+
+
+def verify_installed_pins(lock, root):
+    deployed = deployed_dependency_paths(lock, root)
+    found = set()
+    absent_desktop = []
     for name, data in lock["packages"].items():
         package = next((key for key in PINS if name.endswith("node_modules/" + key)), None)
         if package is None:
             continue
-        manifest_path = ROOT / name / "package.json"
+        if data["version"] not in PINS[package]:
+            raise SystemExit(f"Unsafe locked package: {package}")
+        manifest_path = root / name / "package.json"
         if not manifest_path.is_file():
+            if (name in DESKTOP_ONLY_PATHS and name not in deployed
+                    and "apps/desktop" in lock["packages"]
+                    and not (root / "apps/desktop/package.json").exists()):
+                absent_desktop.append(name)
+                found.add(package)
+                continue
             raise SystemExit(f"Pinned package missing from installed tree: {package}")
         installed = json.loads(manifest_path.read_text())["version"]
         if installed != data["version"] or installed not in PINS[package]:
@@ -47,6 +96,15 @@ def main() -> None:
         found.add(package)
     if found != set(PINS):
         raise SystemExit("Security pins are missing from the installed workspace")
+    print("HERMES_DESKTOP_ONLY_PINS=locked-safe NOT_DEPLOYED=" + str(len(absent_desktop)))
+
+
+def main() -> None:
+    content = (ROOT / "package-lock.json").read_bytes()
+    if hashlib.sha256(content).hexdigest() != LOCK_SHA256:
+        raise SystemExit("Hermes security lockfile checksum mismatch")
+    lock = json.loads(content)
+    verify_installed_pins(lock, ROOT)
     for scope, args in [("root", ["--workspaces=false"]),
                         ("web", ["--workspace", "web"]),
                         ("ui-tui", ["--workspace", "ui-tui"]),
