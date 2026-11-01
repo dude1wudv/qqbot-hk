@@ -30,9 +30,12 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright \
     PLAYWRIGHT_NODEJS_PATH=/usr/local/bin/node \
     PLAYWRIGHT_SKIP_BROWSER_GC=1
 COPY --chmod=0644 overrides/hermes-playwright-requirements.txt /tmp/hermes-playwright-requirements.txt
+# Hermes 0.22.5 keeps its checksum-pinned uv in PM's immutable tool store,
+# without a PATH launcher. Resolve that installed tool; do not fetch another uv.
 # The base's 14-day cutoff hides the reviewed 1.64.0 release; scope the fixed
 # cutoff exception to these three exact pins rather than the whole environment.
-RUN uv pip install --python /opt/hermes/.venv/bin/python --no-deps \
+RUN python -c "import os, sys; from pm import uv_launcher; uv = uv_launcher('uv'); assert uv is not None, 'Pinned PM uv is missing'; os.execv(str(uv), [str(uv), *sys.argv[1:]])" \
+        pip install --python /opt/hermes/.venv/bin/python --no-deps \
         --exclude-newer-package playwright=2026-10-22 \
         --exclude-newer-package pyee=2026-10-22 \
         --exclude-newer-package greenlet=2026-10-22 \
